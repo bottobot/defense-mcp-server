@@ -4,11 +4,15 @@
 >
 > This tool is designed **exclusively** for defensive security operations, system hardening, compliance auditing, and blue team activities. It is **NOT** intended for offensive security, penetration testing, exploitation, or any unauthorized access to systems. Use responsibly and only on systems you own or have explicit authorization to audit and harden.
 
-This MCP Server was originally developed to use the defensive tools already available in a Kali OS installation. However, it's evolved to be a tool I can use on many more systems as I experiment with system and network hardening on my homelab. I hope you'll find it as helpful as I have!
+This MCP Server was originally developed to use the defensive tools already available in a Kali OS installation. Inspired by other MCP tools like HexStrike however, it's evolved to be a tool I can use on many more systems as I experiment with system and network hardening on my homelab. I hope you'll find it as helpful as I have. I've tried to make it as thorough and easy to use as possible. You basically just ask your LLM to use it and do a full audit. Then it will spit out a pretty thorough report that prioritizes various issues it finds. After that you can ask it to do a dry run, make backups etc before you do a full or partial security remediation. 
 
-A defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides **130+ security tools** across **26 categories** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+I'm curious if people will find this helpful or not, let me know in the issues here if there are some glaring holes or problems with it. I am a total noob when it comes to sucurity and software development in general so that's why I developed this tool to help me.
 
-I've only tested this using the Roo Code extension in VS Code and VS Codium. So your experience may vary from mine. Here's how I use it, in the chat I just say "run a full audit using the Kali Defense MCP Server". It will spit out a full report, after which you can ask it to do a full remediation on your system or parts of your system depending on what you want hardened or not. It's pretty flexible and straightforward.
+This is a defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides **130+ security tools** across **26 categories** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+
+*** I've only tested this using the Roo Code extension in VS Code and VS Codium. So your experience may vary from mine. *** 
+
+Here's how I use it, in the chat I just say "run a full audit using the Kali Defense MCP Server". It will spit out a full report, after which you can ask it to do a full remediation on your system or parts of your system depending on what you want hardened or not. It's pretty flexible and straightforward.
 
 ---
 
