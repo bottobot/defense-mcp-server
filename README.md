@@ -4,7 +4,9 @@
 >
 > This tool is designed **exclusively** for defensive security operations, system hardening, compliance auditing, and blue team activities. It is **NOT** intended for offensive security, penetration testing, exploitation, or any unauthorized access to systems. Use responsibly and only on systems you own or have explicit authorization to audit and harden.
 
-The defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides **130+ security tools** across **26 categories** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+This MCP Server was originally developed to use the defensive tools already available in a Kali OS installation. However, it's evolved to be a tool I can use on many more systems as I experiment with system and network hardening on my homelab. I hope you'll find it as helpful as I have!
+
+A defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides **130+ security tools** across **26 categories** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
 
 ---
 
