@@ -38,6 +38,7 @@ import { registerContainerAdvancedTools } from "./tools/container-advanced.js";
 import { registerComplianceExtendedTools } from "./tools/compliance-extended.js";
 import { registerEbpfSecurityTools } from "./tools/ebpf-security.js";
 import { registerAutomationWorkflowTools } from "./tools/automation-workflows.js";
+import { registerAppHardeningTools } from "./tools/app-hardening.js";
 
 async function main() {
   const server = new McpServer({
@@ -117,13 +118,14 @@ async function main() {
   registerComplianceExtendedTools(server);
   registerEbpfSecurityTools(server);
   registerAutomationWorkflowTools(server);
+  registerAppHardeningTools(server);
 
   // ── Phase 3: Connect transport ───────────────────────────────────────────
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Kali Defense MCP Server v2.1.0 running on stdio");
-  console.error("Registered 26 tool modules with 130+ defensive security tools");
+  console.error("Registered 27 tool modules with 134+ defensive security tools");
 }
 
 main().catch((error) => {

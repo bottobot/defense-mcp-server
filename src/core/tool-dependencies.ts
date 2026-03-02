@@ -760,6 +760,27 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     toolName: "get_audit_history",
     requiredBinaries: ["cat"],
   },
+
+  // ── Application Hardening Tools ──────────────────────────────────────────
+  {
+    toolName: "app_harden_audit",
+    requiredBinaries: ["ps"],
+    optionalBinaries: ["ss", "systemctl"],
+  },
+  {
+    toolName: "app_harden_recommend",
+    requiredBinaries: [],
+  },
+  {
+    toolName: "app_harden_firewall",
+    requiredBinaries: [],
+    optionalBinaries: ["iptables"],
+  },
+  {
+    toolName: "app_harden_systemd",
+    requiredBinaries: [],
+    optionalBinaries: ["systemctl"],
+  },
 ];
 
 // ── Lookup helpers ───────────────────────────────────────────────────────────
