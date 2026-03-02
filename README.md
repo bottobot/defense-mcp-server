@@ -1,20 +1,116 @@
-# Kali Defense MCP Server
+# 🛡️ Kali Defense MCP Server
 
-The defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides 130+ security tools across 26 categories for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+> **⚠️ DEFENSIVE & HARDENING PURPOSES ONLY**
+>
+> This tool is designed **exclusively** for defensive security operations, system hardening, compliance auditing, and blue team activities. It is **NOT** intended for offensive security, penetration testing, exploitation, or any unauthorized access to systems. Use responsibly and only on systems you own or have explicit authorization to audit and harden.
+
+The defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides **130+ security tools** across **26 categories** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+
+---
+
+## How It Works
+
+```mermaid
+flowchart TD
+    A["🚀 Server Start"] --> B["📋 Load Config"]
+    
+    B --> C["🔍 Phase 1: Dependency Validation"]
+    
+    C --> D["Detect Linux Distro<br/>Debian · RHEL · Arch · Alpine · SUSE"]
+    D --> E["Check 32+ System Binaries<br/>parallel batches of 10"]
+    
+    E --> F{"All binaries<br/>available?"}
+    
+    F -->|Yes| K["✅ All dependencies satisfied"]
+    F -->|No| G{"AUTO_INSTALL<br/>enabled?"}
+    
+    G -->|Yes| H["📦 Auto-Install Missing Tools<br/>via system package manager"]
+    H --> I{"Install<br/>succeeded?"}
+    I -->|Yes| J["✅ Installed & verified"]
+    I -->|No| L["⚠️ Log failure, continue"]
+    
+    G -->|No| M["⚠️ Report missing tools<br/>with package names"]
+    
+    J --> K
+    L --> K
+    M --> K
+    
+    K --> N["🔧 Phase 2: Register 26 Tool Modules<br/>130+ defensive security tools"]
+    
+    N --> O["📡 Phase 3: Connect MCP Transport"]
+    O --> P["🛡️ Server Running"]
+    
+    P --> Q["🤖 AI Agent Calls Tool"]
+    
+    Q --> R["ensureDependencies check"]
+    R --> S{"Binary<br/>available?"}
+    S -->|Yes| T["✅ Execute Tool"]
+    S -->|No + AutoInstall| U["📦 Install on-the-fly"]
+    S -->|No| V["❌ Return error with<br/>install instructions"]
+    U --> T
+    
+    T --> W["📤 Return Results"]
+```
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph "Core Engine"
+        CONFIG["config.ts<br/>⚙️ Environment vars"]
+        DISTRO["distro.ts<br/>🐧 OS detection"]
+        EXEC["executor.ts<br/>⚡ Command runner"]
+        INSTALL["installer.ts<br/>📦 Package installer<br/>55+ tool definitions"]
+    end
+    
+    subgraph "Dependency System"
+        DEPS["tool-dependencies.ts<br/>🗺️ Tool→Binary map<br/>130+ tools mapped"]
+        VALID["dependency-validator.ts<br/>✅ Startup validation<br/>🔄 Runtime checks<br/>💾 Binary cache"]
+    end
+    
+    subgraph "26 Tool Modules"
+        FW["firewall.ts"]
+        HARD["hardening.ts"]
+        IDS["ids.ts"]
+        MAL["malware.ts"]
+        DOT["... 22 more"]
+    end
+    
+    INDEX["index.ts<br/>🚀 Entry point"] --> VALID
+    VALID --> DEPS
+    VALID --> INSTALL
+    INSTALL --> DISTRO
+    INSTALL --> EXEC
+    INDEX --> FW
+    INDEX --> HARD
+    INDEX --> IDS
+    INDEX --> MAL
+    INDEX --> DOT
+    FW --> EXEC
+    HARD --> EXEC
+    IDS --> EXEC
+    MAL --> EXEC
+```
+
+---
 
 ## Features
 
+- **🛡️ Defensive Only** — Built exclusively for blue team operations and system hardening
 - **130+ Defensive Security Tools** across 26 specialized modules
+- **🔍 Automatic Dependency Validation** — Checks all required system binaries at startup
+- **📦 Auto-Install Missing Tools** — Installs missing security tools via the system package manager
 - **Dry-Run by Default** — All modifying operations preview changes before applying
 - **Full Audit Trail** — Every change logged with before/after state and rollback commands
 - **Auto-Backup** — Files automatically backed up to `~/.kali-mcp-backups/` before modification
 - **Application Safeguards** — Detects VS Code, Docker, MCP servers, databases, and web servers before executing changes
 - **Cross-Distribution** — Supports Debian/Ubuntu, RHEL/CentOS/Fedora, Kali Linux, Arch, Alpine
 - **WSL2 Compatible** — Most read-only audit tools work in WSL2; modifying tools require Linux kernel
-- **Tool Auto-Installation** — Detects and installs missing security tools
 - **Policy Engine** — Custom compliance policies with declarative rule definitions
 - **CIS Benchmark** — Built-in CIS benchmark checks for Linux systems
 - **Multi-Framework Compliance** — PCI-DSS v4, HIPAA, SOC 2, ISO 27001, GDPR checks
+
+---
 
 ## Quick Start
 
@@ -30,6 +126,56 @@ Development mode with hot reload:
 ```bash
 npm run dev
 ```
+
+### Enable Auto-Install of Missing Tools
+
+```bash
+KALI_DEFENSE_AUTO_INSTALL=true npm start
+```
+
+On startup, the server will:
+1. Detect your Linux distribution and package manager
+2. Check all 32+ required system binaries
+3. Automatically install any missing tools
+4. Report a detailed validation summary
+
+```
+╔══════════════════════════════════════════════════════════╗
+║       Kali Defense MCP — Dependency Validation          ║
+╚══════════════════════════════════════════════════════════╝
+
+  Binaries checked:    32
+  Available:           32
+  Auto-installed:      21
+    ✅ iptables
+    ✅ lynis
+    ✅ nmap
+    ...
+
+  Auto-install: ENABLED
+  Duration: 45s
+```
+
+---
+
+## ⚠️ Defensive Use Only — Disclaimer
+
+This MCP server is a **defensive security toolkit** designed for:
+
+| ✅ Intended Use | ❌ NOT Intended For |
+|----------------|---------------------|
+| System hardening & CIS benchmarks | Penetration testing |
+| Compliance auditing (PCI-DSS, HIPAA, SOC2) | Exploitation or vulnerability exploitation |
+| Intrusion detection & rootkit scanning | Unauthorized access to systems |
+| Firewall configuration & policy enforcement | Network attacks or reconnaissance against others |
+| Incident response & forensic collection | Any illegal or unauthorized activity |
+| Blue team operations & threat hunting | Offensive security operations |
+| Security posture assessment & scoring | |
+| Malware scanning & quarantine | |
+
+**You are solely responsible for ensuring you have proper authorization before running any security tools on any system.**
+
+---
 
 ## OS Compatibility Matrix
 
@@ -57,6 +203,8 @@ npm run dev
 - WSL2 does not have a real Linux kernel init (systemd limited), which affects service management, auditd, and some sysctl settings
 - macOS support is limited to tools that run OpenSSL, curl, or Python — no kernel-level operations
 - "Partial" indicates most functionality works with some commands unavailable
+
+---
 
 ## Tool Categories
 
@@ -339,6 +487,50 @@ npm run dev
 
 ---
 
+## Dependency Auto-Installation
+
+The server includes a built-in dependency validation system that ensures all required security tools are installed.
+
+### How It Works
+
+```mermaid
+flowchart LR
+    A["Server Startup"] --> B["tool-dependencies.ts<br/>130+ tool→binary mappings"]
+    B --> C["dependency-validator.ts<br/>Check each binary via 'which'"]
+    C --> D{"Missing<br/>binaries?"}
+    D -->|No| E["✅ Ready"]
+    D -->|Yes| F{"AUTO_INSTALL?"}
+    F -->|Yes| G["installer.ts<br/>apt/dnf/pacman install"]
+    G --> H["Verify installation"]
+    H --> E
+    F -->|No| I["⚠️ Report missing<br/>with package names"]
+    I --> E
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KALI_DEFENSE_AUTO_INSTALL` | `false` | Set to `true` to auto-install missing tools at startup |
+| `KALI_DEFENSE_DRY_RUN` | `false` | Set to `true` to preview all operations without executing |
+
+### What Gets Installed
+
+The system maps **every MCP tool** to its required system binaries. For example:
+
+| MCP Tool | Required Binary | Package (Debian) |
+|----------|----------------|------------------|
+| `ids_rkhunter_scan` | `rkhunter` | `rkhunter` |
+| `malware_clamav_scan` | `clamscan` | `clamav` |
+| `compliance_lynis_audit` | `lynis` | `lynis` |
+| `harden_sysctl_audit` | `sysctl` | `procps` |
+| `log_auditd_rules` | `auditctl` | `auditd` |
+| `netdef_self_scan` | `nmap` | `nmap` |
+| `crypto_tls_audit` | `openssl` | `openssl` |
+| `firewall_iptables_list` | `iptables` | `iptables` |
+
+---
+
 ## Application Safeguards
 
 The server includes a `SafeguardRegistry` that detects running applications and warns operators before potentially disruptive operations proceed.
@@ -352,17 +544,6 @@ The server includes a `SafeguardRegistry` that detects running applications and 
 | MCP Servers | `.mcp.json` configuration file, node processes with `mcp` in command line |
 | Databases | TCP port probing: PostgreSQL (5432), MySQL (3306), MongoDB (27017), Redis (6379) |
 | Web Servers | Process check for `nginx`, `apache2`, `httpd` |
-
-### Warning Examples
-
-When you add a firewall rule while Docker is running:
-```
-Warning: Docker is active (Docker socket exists; 3 container(s): web, db, cache)
-Warning: Firewall changes may disrupt Docker networking
-Warning: Web server traffic may be affected (Running: nginx)
-```
-
-Warnings are non-blocking — they appear in the tool response but do not prevent execution. All modifying tools also support a `dry_run` parameter to preview changes before applying.
 
 ### Dry-Run Mode
 
@@ -380,192 +561,6 @@ See [SAFEGUARDS.md](SAFEGUARDS.md) for complete documentation.
 
 ---
 
-## Quick-Start Examples by Category
-
-### Run a Security Posture Assessment
-
-```json
-{"tool": "calculate_security_score", "params": {}}
-```
-
-```json
-{"tool": "generate_posture_dashboard", "params": {"format": "json"}}
-```
-
-### Audit and Harden Firewall
-
-```json
-{"tool": "firewall_policy_audit", "params": {}}
-```
-
-```json
-{
-  "tool": "firewall_set_policy",
-  "params": {"chain": "INPUT", "policy": "DROP", "ipv6": true, "dry_run": true}
-}
-```
-
-```json
-{
-  "tool": "firewall_persistence",
-  "params": {"action": "status"}
-}
-```
-
-### CIS Benchmark Hardening
-
-```json
-{"tool": "harden_sysctl_audit", "params": {}}
-```
-
-```json
-{"tool": "log_auditd_cis_rules", "params": {"action": "check"}}
-```
-
-```json
-{
-  "tool": "log_auditd_cis_rules",
-  "params": {"action": "deploy", "dry_run": true}
-}
-```
-
-### Compliance Framework Checks
-
-```json
-{
-  "tool": "run_compliance_check",
-  "params": {"framework": "pci-dss-v4", "dryRun": false}
-}
-```
-
-```json
-{
-  "tool": "run_compliance_check",
-  "params": {"framework": "hipaa"}
-}
-```
-
-### Secret and Vulnerability Scanning
-
-```json
-{
-  "tool": "scan_for_secrets",
-  "params": {"directory": "/home"}
-}
-```
-
-```json
-{
-  "tool": "scan_packages_cves",
-  "params": {}
-}
-```
-
-```json
-{
-  "tool": "lookup_cve",
-  "params": {"cve_id": "CVE-2024-1234"}
-}
-```
-
-### Drift Detection and Baseline
-
-```json
-{
-  "tool": "create_baseline",
-  "params": {"directories": ["/etc", "/usr/bin", "/usr/sbin"], "label": "pre-patch"}
-}
-```
-
-```json
-{
-  "tool": "compare_to_baseline",
-  "params": {}
-}
-```
-
-### Zero-Trust Network Setup
-
-```json
-{
-  "tool": "setup_wireguard",
-  "params": {"interface": "wg0", "address": "10.0.0.1/24", "port": 51820, "dry_run": true}
-}
-```
-
-```json
-{
-  "tool": "configure_microsegmentation",
-  "params": {
-    "services": [
-      {"name": "web", "port": 80, "protocol": "tcp"},
-      {"name": "api", "port": 8080, "protocol": "tcp"}
-    ],
-    "dry_run": true
-  }
-}
-```
-
-### Supply Chain Security
-
-```json
-{
-  "tool": "generate_sbom",
-  "params": {"target": "system", "format": "spdx"}
-}
-```
-
-```json
-{
-  "tool": "verify_package_integrity",
-  "params": {}
-}
-```
-
-### Incident Response
-
-```json
-{"tool": "ir_volatile_collect", "params": {}}
-```
-
-```json
-{"tool": "ir_ioc_scan", "params": {}}
-```
-
-```json
-{
-  "tool": "ir_timeline_generate",
-  "params": {"directory": "/", "hours": 24}
-}
-```
-
-### Automated Scheduled Audits
-
-```json
-{
-  "tool": "setup_scheduled_audit",
-  "params": {
-    "name": "nightly-security",
-    "schedule": "0 2 * * *",
-    "tools": ["calculate_security_score", "patch_update_audit", "ids_rootkit_summary"],
-    "type": "cron",
-    "dry_run": true
-  }
-}
-```
-
-### eBPF Runtime Security
-
-```json
-{"tool": "check_falco", "params": {}}
-```
-
-```json
-{"tool": "get_ebpf_events", "params": {"limit": 20}}
-```
-
----
-
 ## Configuration
 
 All configuration is via environment variables:
@@ -573,6 +568,7 @@ All configuration is via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KALI_DEFENSE_DRY_RUN` | `false` | Dry-run mode (true = preview only, no changes) |
+| `KALI_DEFENSE_AUTO_INSTALL` | `false` | Auto-install missing tools at startup |
 | `KALI_DEFENSE_TIMEOUT_DEFAULT` | `120` | Default command timeout (seconds) |
 | `KALI_DEFENSE_MAX_OUTPUT_SIZE` | `10485760` | Max output buffer (bytes, 10 MB) |
 | `KALI_DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log,/etc` | Allowed file operation directories |
@@ -580,14 +576,11 @@ All configuration is via environment variables:
 | `KALI_DEFENSE_BACKUP_DIR` | `~/.kali-defense/backups` | Auto-backup storage directory |
 | `KALI_DEFENSE_QUARANTINE_DIR` | `~/.kali-defense/quarantine` | Malware quarantine directory |
 | `KALI_DEFENSE_POLICY_DIR` | `~/.kali-defense/policies` | Custom policy directory |
-| `KALI_DEFENSE_AUTO_INSTALL` | `false` | Auto-install missing tools |
 | `KALI_DEFENSE_PROTECTED_PATHS` | `/boot,/usr/lib/systemd,...` | Paths protected from modification |
 | `KALI_DEFENSE_REQUIRE_CONFIRMATION` | `true` | Require confirmation for changes |
 | `KALI_DEFENSE_LOG_LEVEL` | `info` | Log verbosity (debug/info/warn/error) |
 
 Per-tool timeout overrides: `KALI_DEFENSE_TIMEOUT_<TOOLNAME>` (value in seconds). Supported tools: `lynis`, `aide`, `clamav`, `oscap`, `snort`, `suricata`, `rkhunter`, `chkrootkit`, `tcpdump`, `auditd`, `nmap`, `fail2ban-client`, `debsums`, `yara`.
-
-BackupManager uses a separate storage path: `~/.kali-mcp-backups/` (not configurable via env, set at class instantiation).
 
 ## MCP Configuration
 
@@ -598,9 +591,10 @@ Add to `.mcp.json` or MCP settings:
   "mcpServers": {
     "kali-defense": {
       "command": "node",
-      "args": ["/home/robert/kali-mcp-workspace/kali-defense-mcp-server/build/index.js"],
+      "args": ["/path/to/kali-defense-mcp-server/build/index.js"],
       "env": {
-        "KALI_DEFENSE_DRY_RUN": "true"
+        "KALI_DEFENSE_DRY_RUN": "true",
+        "KALI_DEFENSE_AUTO_INSTALL": "true"
       }
     }
   }
@@ -614,15 +608,17 @@ For live changes (disable dry-run):
   "mcpServers": {
     "kali-defense": {
       "command": "node",
-      "args": ["/home/robert/kali-mcp-workspace/kali-defense-mcp-server/build/index.js"],
+      "args": ["/path/to/kali-defense-mcp-server/build/index.js"],
       "env": {
         "KALI_DEFENSE_DRY_RUN": "false",
-        "KALI_DEFENSE_AUTO_INSTALL": "false"
+        "KALI_DEFENSE_AUTO_INSTALL": "true"
       }
     }
   }
 }
 ```
+
+---
 
 ## Security Model
 
@@ -637,6 +633,8 @@ For live changes (disable dry-run):
 - **Buffer Capping** — Output capped at configurable max size (default 10 MB)
 - **Timeout Enforcement** — All commands have configurable timeouts (default 120s)
 
+---
+
 ## Documentation
 
 | Document | Purpose |
@@ -647,6 +645,12 @@ For live changes (disable dry-run):
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture and module structure |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 
+---
+
 ## License
 
 MIT
+
+---
+
+> **Remember:** This tool is for **defensive security and system hardening only**. Always ensure you have proper authorization before auditing or modifying any system. Use responsibly.
