@@ -1,6 +1,6 @@
 {
   "name": "kali-defense-mcp-server",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "description": "Ultimate Kali Defensive Security & System Hardening MCP Server",
   "type": "module",
   "main": "build/index.js",

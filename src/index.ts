@@ -2,6 +2,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
+// ── Core: Dependency validation ──────────────────────────────────────────────
+import {
+  validateAllDependencies,
+  formatValidationReport,
+} from "./core/dependency-validator.js";
+import { getConfig } from "./core/config.js";
+
 // ── Original tool modules ────────────────────────────────────────────────────
 import { registerFirewallTools } from "./tools/firewall.js";
 import { registerHardeningTools } from "./tools/hardening.js";
@@ -35,10 +42,53 @@ import { registerAutomationWorkflowTools } from "./tools/automation-workflows.js
 async function main() {
   const server = new McpServer({
     name: "kali-defense-mcp-server",
-    version: "2.0.0",
+    version: "2.1.0",
   });
 
-  // Register all defensive tool modules (original)
+  // ── Phase 1: Dependency Validation & Auto-Install ────────────────────────
+  //
+  // Before registering tools, validate that all required system binaries
+  // are present. If KALI_DEFENSE_AUTO_INSTALL=true, missing tools will be
+  // automatically installed via the system package manager.
+  //
+  const config = getConfig();
+  console.error("Kali Defense MCP Server v2.1.0 starting...");
+  console.error(
+    `[startup] Auto-install: ${config.autoInstall ? "ENABLED" : "DISABLED"} | ` +
+    `Dry-run: ${config.dryRun ? "YES" : "NO"}`
+  );
+
+  try {
+    const report = await validateAllDependencies();
+    console.error(formatValidationReport(report));
+
+    if (report.criticalMissing.length > 0 && !config.autoInstall) {
+      console.error(
+        "[startup] ⚠️  Some critical tools are missing. The server will start, " +
+        "but affected tools may fail at runtime."
+      );
+      console.error(
+        "[startup] 💡 To auto-install: set KALI_DEFENSE_AUTO_INSTALL=true"
+      );
+    }
+
+    if (report.installed.length > 0) {
+      console.error(
+        `[startup] ✅ Auto-installed ${report.installed.length} missing tools: ` +
+        report.installed.join(", ")
+      );
+    }
+  } catch (err) {
+    // Dependency validation failure should NOT prevent server startup
+    console.error(
+      `[startup] ⚠️  Dependency validation failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+    console.error("[startup] Continuing with server startup...");
+  }
+
+  // ── Phase 2: Register all defensive tool modules ─────────────────────────
+
+  // Original tool modules
   registerFirewallTools(server);
   registerHardeningTools(server);
   registerIdsTools(server);
@@ -55,7 +105,7 @@ async function main() {
   registerSecretsManagementTools(server);
   registerIncidentResponseTools(server);
 
-  // Register new tool modules
+  // New tool modules
   registerSupplyChainSecurityTools(server);
   registerMemoryProtectionTools(server);
   registerDriftDetectionTools(server);
@@ -68,9 +118,11 @@ async function main() {
   registerEbpfSecurityTools(server);
   registerAutomationWorkflowTools(server);
 
+  // ── Phase 3: Connect transport ───────────────────────────────────────────
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Kali Defense MCP Server v2.0.0 running on stdio");
+  console.error("Kali Defense MCP Server v2.1.0 running on stdio");
   console.error("Registered 26 tool modules with 130+ defensive security tools");
 }
 
