@@ -51,7 +51,7 @@ export function registerMemoryProtectionTools(server: McpServer): void {
 
           const result = await executeCommand({
             command: "readelf",
-            args: ["-Wl", "-Wd", binary],
+            args: ["-h", "-Wl", "-Wd", binary],
             timeout: 10000,
           });
 
@@ -61,7 +61,31 @@ export function registerMemoryProtectionTools(server: McpServer): void {
           }
 
           const output = result.stdout;
-          const pie = output.includes("Type:") && output.includes("DYN") ? "enabled" : "disabled";
+
+          // PIE detection: check ELF header Type field
+          // PIE binaries: "Type: DYN" (may say "Position-Independent Executable" or "Shared object file")
+          // Non-PIE binaries: "Type: EXEC (Executable file)"
+          let pie = "unknown";
+          const typeMatch = output.match(/^\s*Type:\s+(EXEC|DYN)\b/m);
+          if (typeMatch) {
+            pie = typeMatch[1] === "DYN" ? "enabled" : "disabled";
+          } else {
+            // Fallback: use `file` command to detect PIE
+            const fileResult = await executeCommand({
+              command: "file",
+              args: [binary],
+              timeout: 5000,
+            });
+            if (fileResult.exitCode === 0) {
+              const fileOut = fileResult.stdout;
+              if (fileOut.includes("pie executable") || fileOut.includes("shared object")) {
+                pie = "enabled";
+              } else if (fileOut.includes("executable")) {
+                pie = "disabled";
+              }
+            }
+          }
+
           const relro = output.includes("GNU_RELRO")
             ? (output.includes("BIND_NOW") ? "full" : "partial")
             : "disabled";

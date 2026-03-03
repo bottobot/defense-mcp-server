@@ -25,6 +25,14 @@ import {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/** Reject paths containing `..` directory-traversal sequences. */
+const PATH_TRAVERSAL_RE = /(^|[\/\\])\.\.([\/\\]|$)/;
+function assertNoTraversal(p: string): void {
+  if (PATH_TRAVERSAL_RE.test(p)) {
+    throw new Error("Path contains forbidden directory traversal (..)");
+  }
+}
+
 const WEAK_CIPHERS = [
   "RC4",
   "DES",
@@ -612,6 +620,7 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             sanitizeArgs([file_path]);
+            assertNoTraversal(file_path);
 
             if (dry_run ?? getConfig().dryRun) {
               sections.push(
@@ -667,6 +676,7 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             sanitizeArgs([file_path]);
+            assertNoTraversal(file_path);
 
             const result = await executeCommand({
               command: "gpg",
@@ -767,6 +777,7 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             sanitizeArgs([device]);
+            assertNoTraversal(device);
 
             const result = await executeCommand({
               command: "sudo",
@@ -804,6 +815,7 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             sanitizeArgs([device, name]);
+            assertNoTraversal(device);
 
             if (dry_run ?? getConfig().dryRun) {
               sections.push(
@@ -967,6 +979,7 @@ export function registerEncryptionTools(server: McpServer): void {
     async ({ path, algorithm, recursive }) => {
       try {
         sanitizeArgs([path]);
+        assertNoTraversal(path);
 
         const sections: string[] = [];
         const hashCmd = `${algorithm}sum`;

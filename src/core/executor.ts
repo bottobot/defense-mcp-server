@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { getConfig, getToolTimeout } from "./config.js";
+import { SudoSession } from "./sudo-session.js";
 
 /**
  * Options for executing a command.
@@ -21,6 +22,8 @@ export interface ExecuteOptions {
   maxBuffer?: number;
   /** Tool name for timeout lookup */
   toolName?: string;
+  /** Skip automatic sudo credential injection (used internally) */
+  skipSudoInjection?: boolean;
 }
 
 /**
@@ -40,8 +43,51 @@ export interface CommandResult {
 }
 
 /**
+ * Prepares sudo command options by injecting `-S -p ""` flags and
+ * piping the stored password via stdin when a SudoSession is active.
+ *
+ * This is transparent to callers — tool code continues to use
+ * `command: "sudo", args: ["iptables", ...]` and the password is
+ * automatically injected if the session is elevated.
+ */
+function prepareSudoOptions(options: ExecuteOptions): ExecuteOptions {
+  // Only transform calls where the command is "sudo"
+  if (options.command !== "sudo") return options;
+
+  // Skip if the caller explicitly opted out (e.g. sudo-session.ts itself)
+  if (options.skipSudoInjection) return options;
+
+  // Skip if the caller already supplied `-S` (manual control)
+  if (options.args.includes("-S")) return options;
+
+  const session = SudoSession.getInstance();
+  const password = session.getPassword();
+
+  if (!password) {
+    // No active session — let sudo run normally (will likely fail without TTY)
+    return options;
+  }
+
+  // Inject -S (read from stdin) and -p "" (suppress prompt) before the
+  // existing arguments.  We also prepend --stdin so there is no ambiguity.
+  const newArgs = ["-S", "-p", "", ...options.args];
+
+  // Combine password with any existing stdin the caller provided
+  const stdinPayload = options.stdin
+    ? password + "\n" + options.stdin
+    : password + "\n";
+
+  return {
+    ...options,
+    args: newArgs,
+    stdin: stdinPayload,
+  };
+}
+
+/**
  * Executes a command safely using spawn with shell: false.
  *
+ * - Transparently injects sudo credentials from SudoSession when available
  * - Uses AbortController for timeout enforcement
  * - Caps stdout/stderr buffers to maxBuffer
  * - Tracks execution duration
@@ -59,6 +105,9 @@ export async function executeCommand(
       : config.defaultTimeout);
   const maxBuffer = options.maxBuffer ?? config.maxBuffer;
 
+  // ── Transparent sudo credential injection ────────────────────────────
+  const effectiveOptions = prepareSudoOptions(options);
+
   return new Promise<CommandResult>((resolve) => {
     const startTime = Date.now();
     let timedOut = false;
@@ -67,15 +116,15 @@ export async function executeCommand(
     const { signal } = controller;
 
     let spawnEnv: NodeJS.ProcessEnv | undefined;
-    if (options.env) {
-      spawnEnv = { ...process.env, ...options.env };
+    if (effectiveOptions.env) {
+      spawnEnv = { ...process.env, ...effectiveOptions.env };
     }
 
     let child;
     try {
-      child = spawn(options.command, options.args, {
+      child = spawn(effectiveOptions.command, effectiveOptions.args, {
         shell: false,
-        cwd: options.cwd,
+        cwd: effectiveOptions.cwd,
         env: spawnEnv,
         signal,
         stdio: ["pipe", "pipe", "pipe"],
@@ -133,8 +182,8 @@ export async function executeCommand(
       }
     });
 
-    if (options.stdin && child.stdin) {
-      child.stdin.write(options.stdin);
+    if (effectiveOptions.stdin && child.stdin) {
+      child.stdin.write(effectiveOptions.stdin);
       child.stdin.end();
     }
 

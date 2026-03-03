@@ -384,8 +384,8 @@ export function registerIdsTools(server: McpServer): void {
     "Quick file integrity check using SHA-256 hashes. Create, verify against, or display file baselines.",
     {
       paths: z
-        .string()
-        .describe("Comma-separated list of file paths to check"),
+        .union([z.string(), z.array(z.string())])
+        .describe("File path(s) to check — accepts a single comma-separated string or an array of paths"),
       baseline_path: z
         .string()
         .optional()
@@ -398,8 +398,9 @@ export function registerIdsTools(server: McpServer): void {
     },
     async ({ paths, baseline_path, create_baseline }) => {
       try {
-        const filePaths = paths
-          .split(",")
+        const filePaths = (Array.isArray(paths)
+          ? paths
+          : paths.split(","))
           .map((p) => p.trim())
           .filter((p) => p.length > 0);
 

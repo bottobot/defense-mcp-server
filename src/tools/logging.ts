@@ -13,6 +13,8 @@ import { getConfig, getToolTimeout } from "../core/config.js";
 import { createTextContent, createErrorContent, parseAuditdOutput, parseFail2banOutput, formatToolOutput } from "../core/parsers.js";
 import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
 import { sanitizeArgs, validateFilePath, validateAuditdKey, validateTarget } from "../core/sanitizer.js";
+import { getDistroAdapter } from "../core/distro-adapter.js";
+import { existsSync } from "node:fs";
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -562,8 +564,7 @@ export function registerLoggingTools(server: McpServer): void {
       log_file: z
         .string()
         .optional()
-        .default("/var/log/syslog")
-        .describe("Path to the log file to analyze"),
+        .describe("Path to the log file to analyze (auto-detected per distro if omitted)"),
       pattern: z
         .enum(["auth_failures", "ssh_brute", "privilege_escalation", "service_changes", "all"])
         .optional()
@@ -573,6 +574,29 @@ export function registerLoggingTools(server: McpServer): void {
     },
     async ({ log_file, pattern, lines }) => {
       try {
+        // Resolve log file path: user-specified > distro adapter > fallbacks
+        let effectiveLogFile: string;
+        if (log_file) {
+          effectiveLogFile = log_file;
+        } else {
+          const adapterPath = (await getDistroAdapter()).paths.syslog;
+          const candidates = [adapterPath];
+          if (adapterPath !== "/var/log/messages") candidates.push("/var/log/messages");
+          if (adapterPath !== "/var/log/syslog") candidates.push("/var/log/syslog");
+
+          const found = candidates.find((p) => existsSync(p));
+          if (!found) {
+            return {
+              content: [createErrorContent(
+                `No syslog file found (tried: ${candidates.join(", ")}). ` +
+                `This system may use journald exclusively — use log_journalctl_query instead.`
+              )],
+              isError: true,
+            };
+          }
+          effectiveLogFile = found;
+        }
+
         // Build grep pattern based on selected type
         const patterns: Record<string, string> = {
           auth_failures: "authentication failure|Failed password|pam_unix.*failed",
@@ -589,7 +613,7 @@ export function registerLoggingTools(server: McpServer): void {
         }
 
         // Use grep -E with -m to limit matches, -c is count
-        const args = ["-E", grepPattern, log_file, "-m", String(lines)];
+        const args = ["-E", grepPattern, effectiveLogFile, "-m", String(lines)];
 
         const result = await executeCommand({
           command: "grep",
@@ -601,7 +625,7 @@ export function registerLoggingTools(server: McpServer): void {
         // grep exits with 1 when no matches found
         if (result.exitCode === 1 && result.stdout.trim() === "") {
           return {
-            content: [createTextContent(`No matching security events found in ${log_file} for pattern '${pattern}'.`)],
+            content: [createTextContent(`No matching security events found in ${effectiveLogFile} for pattern '${pattern}'.`)],
           };
         }
 
