@@ -8,7 +8,7 @@ This MCP Server was originally developed to use the defensive tools already avai
 
 I'm curious if people will find this helpful or not, let me know in the issues here if there are some glaring holes or problems with it. I am a total noob when it comes to sucurity and software development in general so that's why I developed this tool to help me.
 
-This is a defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides **130+ security tools** across **26 categories** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+This is a defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides **155 defensive security tools** across **28 modules** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
 
 *** I've only tested this using the Roo Code extension in VS Code and VS Codium. So your experience may vary from mine. *** 
 
@@ -43,7 +43,7 @@ flowchart TD
     L --> K
     M --> K
     
-    K --> N["🔧 Phase 2: Register 26 Tool Modules<br/>130+ defensive security tools"]
+    K --> N["🔧 Phase 2: Register 28 Tool Modules<br/>155 defensive security tools"]
     
     N --> O["📡 Phase 3: Connect MCP Transport"]
     O --> P["🛡️ Server Running"]
@@ -72,16 +72,16 @@ graph LR
     end
     
     subgraph "Dependency System"
-        DEPS["tool-dependencies.ts<br/>🗺️ Tool→Binary map<br/>130+ tools mapped"]
+        DEPS["tool-dependencies.ts<br/>🗺️ Tool→Binary map<br/>155 tools mapped"]
         VALID["dependency-validator.ts<br/>✅ Startup validation<br/>🔄 Runtime checks<br/>💾 Binary cache"]
     end
     
-    subgraph "26 Tool Modules"
+    subgraph "28 Tool Modules"
         FW["firewall.ts"]
         HARD["hardening.ts"]
         IDS["ids.ts"]
         MAL["malware.ts"]
-        DOT["... 22 more"]
+        DOT["... 24 more"]
     end
     
     INDEX["index.ts<br/>🚀 Entry point"] --> VALID
@@ -105,14 +105,17 @@ graph LR
 ## Features
 
 - **🛡️ Defensive Only** — Built exclusively for blue team operations and system hardening
-- **130+ Defensive Security Tools** across 26 specialized modules
+- **155 Defensive Security Tools** across 28 specialized modules
+- **🔒 Security Model** — All commands via `spawn()` with `shell: false`; 17+ input validators blocking shell metacharacters, control characters, and path traversal (`..`)
 - **🔍 Automatic Dependency Validation** — Checks all required system binaries at startup
 - **📦 Auto-Install Missing Tools** — Installs missing security tools via the system package manager
 - **Dry-Run by Default** — All modifying operations preview changes before applying
-- **Full Audit Trail** — Every change logged with before/after state and rollback commands
+- **Full Audit Trail** — Every change logged with UUID, timestamps, before/after state, and rollback commands
 - **Auto-Backup** — Files automatically backed up to `~/.kali-mcp-backups/` before modification
+- **Rollback Support** — Per-operation and per-session rollback for file, sysctl, service, and firewall changes
+- **🔑 Sudo Session Management** — Zeroable buffer password storage, auto-expiry, session extend
 - **Application Safeguards** — Detects VS Code, Docker, MCP servers, databases, and web servers before executing changes
-- **Cross-Distribution** — Supports Debian/Ubuntu, RHEL/CentOS/Fedora, Kali Linux, Arch, Alpine
+- **🐧 Cross-Distribution** — Debian/Ubuntu/Kali, RHEL/CentOS/Fedora, Arch/Manjaro, Alpine, openSUSE/SLES
 - **WSL2 Compatible** — Most read-only audit tools work in WSL2; modifying tools require Linux kernel
 - **Policy Engine** — Custom compliance policies with declarative rule definitions
 - **CIS Benchmark** — Built-in CIS benchmark checks for Linux systems
@@ -215,6 +218,38 @@ This MCP server is a **defensive security toolkit** designed for:
 ---
 
 ## Tool Categories
+
+| Category | Tools |
+|----------|------:|
+| Firewall Management | 12 |
+| System Hardening | 19 |
+| Intrusion Detection | 5 |
+| Logging & Monitoring | 10 |
+| Network Defense | 8 |
+| Compliance | 7 |
+| Malware Analysis | 6 |
+| Backup & Recovery | 5 |
+| Access Control | 9 |
+| Encryption & PKI | 6 |
+| Container Security | 9 |
+| Meta & Orchestration | 5 |
+| Patch Management | 4 |
+| Secrets Management | 3 |
+| Incident Response | 3 |
+| Supply Chain Security | 4 |
+| Memory Protection | 3 |
+| Drift Detection | 3 |
+| Vulnerability Intel | 3 |
+| Security Posture | 3 |
+| Secrets Scanner | 3 |
+| Zero-Trust Network | 4 |
+| Container Advanced | 4 |
+| Compliance Extended | 1 |
+| eBPF Security | 4 |
+| Automation Workflows | 4 |
+| Sudo Management | 4 |
+| Application Hardening | 4 |
+| **Total** | **155** |
 
 ### Firewall Management (12 tools)
 
@@ -493,6 +528,24 @@ This MCP server is a **defensive security toolkit** designed for:
 | `remove_scheduled_audit` | Remove a scheduled audit |
 | `get_audit_history` | Read historical audit job output |
 
+### Sudo Management (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `sudo_elevate` | Elevate privileges by caching sudo credentials securely |
+| `sudo_status` | Check current sudo session status and remaining time |
+| `sudo_drop` | Drop elevated privileges and zero the password buffer |
+| `sudo_extend` | Extend an active sudo session timeout (default: 15 min, max: 480 min) |
+
+### Application Hardening (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `app_harden_audit` | Detect and audit running applications for security risks |
+| `app_harden_recommend` | Generate hardening recommendations for a specific application |
+| `app_harden_firewall` | Generate/apply firewall rules to restrict an app's network exposure |
+| `app_harden_systemd` | Apply systemd sandboxing to an application's service unit |
+
 ---
 
 ## Dependency Auto-Installation
@@ -503,7 +556,7 @@ The server includes a built-in dependency validation system that ensures all req
 
 ```mermaid
 flowchart LR
-    A["Server Startup"] --> B["tool-dependencies.ts<br/>130+ tool→binary mappings"]
+    A["Server Startup"] --> B["tool-dependencies.ts<br/>155 tool→binary mappings"]
     B --> C["dependency-validator.ts<br/>Check each binary via 'which'"]
     C --> D{"Missing<br/>binaries?"}
     D -->|No| E["✅ Ready"]
@@ -578,6 +631,7 @@ All configuration is via environment variables:
 | `KALI_DEFENSE_DRY_RUN` | `false` | Dry-run mode (true = preview only, no changes) |
 | `KALI_DEFENSE_AUTO_INSTALL` | `false` | Auto-install missing tools at startup |
 | `KALI_DEFENSE_TIMEOUT_DEFAULT` | `120` | Default command timeout (seconds) |
+| `KALI_DEFENSE_SUDO_TIMEOUT` | `15` | Sudo session timeout (minutes) |
 | `KALI_DEFENSE_MAX_OUTPUT_SIZE` | `10485760` | Max output buffer (bytes, 10 MB) |
 | `KALI_DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log,/etc` | Allowed file operation directories |
 | `KALI_DEFENSE_CHANGELOG_PATH` | `~/.kali-defense/changelog.json` | Audit log location |
@@ -631,11 +685,13 @@ For live changes (disable dry-run):
 ## Security Model
 
 - **shell: false** — All commands executed via `spawn()` with no shell interpretation
+- **Path Traversal Protection** — `..` segments blocked in all file path inputs (new in v0.3.0)
 - **Input Sanitization** — 17+ validators block shell metacharacters, path traversal, control characters
 - **Dry-Run Default** — All modifying operations support preview mode
 - **Audit Trail** — Every change logged with UUID, timestamp, before/after state, rollback command
 - **Auto-Backup** — Files backed up to `~/.kali-mcp-backups/` before modification, tracked in `manifest.json`
 - **Rollback Support** — RollbackManager tracks file, sysctl, service, and firewall changes for per-operation or per-session rollback
+- **Sudo Session Security** — Password stored in zeroable Buffer, never logged, auto-expires after configurable timeout
 - **Application Safeguards** — SafeguardRegistry detects Docker, MCP servers, databases, and web servers; emits pre-execution warnings
 - **Protected Paths** — Configurable list of paths that cannot be modified
 - **Buffer Capping** — Output capped at configurable max size (default 10 MB)
@@ -648,10 +704,33 @@ For live changes (disable dry-run):
 | Document | Purpose |
 |----------|---------|
 | [SAFEGUARDS.md](SAFEGUARDS.md) | SafeguardRegistry detection, dry-run usage, backup storage, rollback guide |
-| [TOOLS-REFERENCE.md](TOOLS-REFERENCE.md) | Alphabetical table of all 130+ tools with parameters, dryRun support, OS compatibility |
+| [TOOLS-REFERENCE.md](TOOLS-REFERENCE.md) | Alphabetical table of all 155 tools with parameters, dryRun support, OS compatibility |
 | [STANDARDS.md](STANDARDS.md) | CIS, NIST SP 800-53, PCI-DSS, HIPAA, SOC 2, ISO 27001, GDPR control mapping |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture and module structure |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
+
+---
+
+## Changelog
+
+### v0.3.0 (2026-03-03)
+
+**Bug Fixes (13):**
+- 🔴 **CRITICAL**: Fixed path traversal vulnerability — `..` segments now blocked in all file path inputs
+- 🟠 **HIGH**: Fixed `ss` output parser column misalignment — network connections now show correct ports/addresses
+- 🟠 **HIGH**: Fixed `netdef_port_scan_detect` — grep pattern pipes no longer rejected by sanitizer
+- 🟠 **HIGH**: Fixed `access_pam_audit` — now reports `FILE_UNREADABLE` warnings instead of misleading "0 findings"
+- 🟡 **MEDIUM**: Fixed inconsistent security scores between `calculate_security_score` and `generate_posture_dashboard`
+- 🟡 **MEDIUM**: Fixed `log_syslog_analyze` — now uses distro-adapter paths with fallback chain
+- 🟡 **MEDIUM**: Registered `sudo_extend` tool (was documented but missing)
+- 🟡 **MEDIUM**: Fixed `ids_file_integrity_check` — `paths` parameter now accepts arrays
+- 🟡 **MEDIUM**: Fixed PIE detection in `audit_memory_protections` for modern Debian/Ubuntu
+- 🟡 **MEDIUM**: Fixed `create_baseline` — now captures 1000+ files and 17 sysctl keys via `/proc/sys/` fallback
+- 🟡 **MEDIUM**: Fixed `backup_verify` — now performs actual SHA256 integrity checking
+- 🟢 **LOW**: Fixed `firewall_nftables_list` — returns `isError: true` on failures (consistent with other firewall tools)
+- 🟢 **LOW**: Fixed `netdef_port_scan_detect` — standardized `threshold` and `timeframe` to both use `number` type
+
+**Testing:** 74 comprehensive tests across all 155 tools with 0 failures.
 
 ---
 
