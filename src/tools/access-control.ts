@@ -11,6 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
+import { getDistroAdapter } from "../core/distro-adapter.js";
 import {
   createTextContent,
   createErrorContent,
@@ -955,7 +956,7 @@ export function registerAccessControlTools(server: McpServer): void {
           // Read PAM common-password
           const pamResult = await executeCommand({
             command: "cat",
-            args: ["/etc/pam.d/common-password"],
+            args: [(await getDistroAdapter()).paths.pamPassword],
             toolName: "access_password_policy",
           });
 
@@ -1265,12 +1266,8 @@ export function registerAccessControlTools(server: McpServer): void {
         }
 
         if (check_all) {
-          filesToCheck.push(
-            "/etc/pam.d/common-auth",
-            "/etc/pam.d/common-password",
-            "/etc/pam.d/common-session",
-            "/etc/pam.d/common-account"
-          );
+          const daPam = await getDistroAdapter();
+          filesToCheck.push(...daPam.paths.pamAllConfigs);
         }
 
         if (filesToCheck.length === 0) {
@@ -1288,6 +1285,7 @@ export function registerAccessControlTools(server: McpServer): void {
         const uniqueFiles = [...new Set(filesToCheck)];
 
         const fileContents: Record<string, string> = {};
+        let unreadableCount = 0;
         for (const filePath of uniqueFiles) {
           const result = await executeCommand({
             command: "sudo",
@@ -1307,12 +1305,26 @@ export function registerAccessControlTools(server: McpServer): void {
         const findings: Array<{
           file: string;
           type: string;
-          severity: "critical" | "high" | "medium" | "low" | "info";
+          severity: "critical" | "high" | "medium" | "low" | "info" | "warning";
           detail: string;
         }> = [];
 
         for (const [filePath, content] of Object.entries(fileContents)) {
-          if (content.startsWith("[ERROR:")) continue;
+          if (content.startsWith("[ERROR:")) {
+            unreadableCount++;
+            const isPermissionDenied =
+              content.toLowerCase().includes("permission denied") ||
+              content.toLowerCase().includes("operation not permitted");
+            findings.push({
+              file: filePath,
+              type: "FILE_UNREADABLE",
+              severity: isPermissionDenied ? "warning" : "medium",
+              detail: isPermissionDenied
+                ? `Permission denied — could not read ${filePath}. Results may be incomplete.`
+                : `Could not read ${filePath}: ${content}. Results may be incomplete.`,
+            });
+            continue;
+          }
 
           // Check for password hashing algorithm
           if (content.includes("pam_unix.so")) {
@@ -1446,7 +1458,13 @@ export function registerAccessControlTools(server: McpServer): void {
         const output = {
           filesChecked: uniqueFiles,
           totalFindings: findings.length,
+          unreadableFiles: unreadableCount,
           findings,
+          ...(unreadableCount > 0
+            ? {
+                warning: `${unreadableCount} file(s) could not be read (insufficient permissions?). Audit results may be incomplete.`,
+              }
+            : {}),
           fileContents: Object.fromEntries(
             Object.entries(fileContents).map(([k, v]) => [
               k,
@@ -1813,7 +1831,7 @@ export function registerAccessControlTools(server: McpServer): void {
           fail_interval: settings?.fail_interval ?? defaults.fail_interval,
         };
 
-        const targetFile = "/etc/pam.d/common-auth";
+        const targetFile = (await getDistroAdapter()).paths.pamAuth;
         const failArgs = `deny=${merged.deny} unlock_time=${merged.unlock_time} fail_interval=${merged.fail_interval}`;
         const preLine = `auth    required    pam_faillock.so preauth silent ${failArgs}`;
         const authLine = `auth    [default=die] pam_faillock.so authfail ${failArgs}`;

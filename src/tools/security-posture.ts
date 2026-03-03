@@ -27,9 +27,13 @@ interface DomainScore {
   checks: { name: string; passed: boolean; detail: string }[];
 }
 
-async function checkSysctl(key: string, expected: string): Promise<boolean> {
+async function checkSysctl(key: string, expected: string): Promise<{ passed: boolean; assessable: boolean; actual: string }> {
   const r = await executeCommand({ command: "sysctl", args: ["-n", key], timeout: 5000 });
-  return r.exitCode === 0 && r.stdout.trim() === expected;
+  if (r.exitCode !== 0) {
+    return { passed: false, assessable: false, actual: r.stderr.trim() || "command failed" };
+  }
+  const actual = r.stdout.trim();
+  return { passed: actual === expected, assessable: true, actual };
 }
 
 export function registerSecurityPostureTools(server: McpServer): void {
@@ -60,18 +64,26 @@ export function registerSecurityPostureTools(server: McpServer): void {
           { name: "Core dumps restricted", key: "fs.suid_dumpable", expected: "0" },
         ];
         const kernelResults = await Promise.all(
-          kernelChecks.map(async (c) => ({
-            name: c.name,
-            passed: await checkSysctl(c.key, c.expected),
-            detail: c.key,
-          }))
+          kernelChecks.map(async (c) => {
+            const result = await checkSysctl(c.key, c.expected);
+            return {
+              name: c.name,
+              passed: result.passed,
+              assessable: result.assessable,
+              detail: result.assessable ? c.key : `${c.key} (unable to assess)`,
+            };
+          })
         );
+        const assessableKernelCount = kernelResults.filter((r) => r.assessable).length;
         const kernelPassed = kernelResults.filter((r) => r.passed).length;
+        const kernelScore = assessableKernelCount > 0
+          ? Math.round((kernelPassed / assessableKernelCount) * 100)
+          : -1;
         domains.push({
           domain: "kernel-hardening",
-          score: Math.round((kernelPassed / kernelChecks.length) * 100),
+          score: kernelScore,
           maxScore: 100,
-          checks: kernelResults,
+          checks: kernelResults.map((r) => ({ name: r.name, passed: r.passed, detail: r.detail })),
         });
 
         // ── Firewall (weight: 15) ──
@@ -163,11 +175,12 @@ export function registerSecurityPostureTools(server: McpServer): void {
         let weightedSum = 0;
         let totalWeight = 0;
         for (const d of domains) {
+          if (d.score < 0) continue; // Skip domains that couldn't be assessed
           const w = weights[d.domain] ?? 10;
           weightedSum += d.score * w;
           totalWeight += w;
         }
-        const overallScore = Math.round(weightedSum / totalWeight);
+        const overallScore = totalWeight > 0 ? Math.round(weightedSum / totalWeight) : 0;
 
         // Save score history
         ensurePostureDir();
@@ -262,7 +275,9 @@ export function registerSecurityPostureTools(server: McpServer): void {
 
         const recommendations: string[] = [];
         for (const [domain, score] of Object.entries(latestEntry.domains)) {
-          if (score < 50) {
+          if (score < 0) {
+            recommendations.push(`INFO: ${domain} could not be assessed (sysctl unavailable)`);
+          } else if (score < 50) {
             recommendations.push(`CRITICAL: ${domain} score is ${score}/100 — immediate attention required`);
           } else if (score < 80) {
             recommendations.push(`MODERATE: ${domain} score is ${score}/100 — improvements recommended`);
@@ -273,13 +288,37 @@ export function registerSecurityPostureTools(server: McpServer): void {
           recommendations.push("All domains scoring above 80. Maintain current security posture.");
         }
 
+        // Build display-friendly domain scores: replace -1 with "N/A"
+        const displayDomainScores: Record<string, number | string> = {};
+        for (const [domain, score] of Object.entries(latestEntry.domains)) {
+          displayDomainScores[domain] = score < 0 ? "N/A" : score;
+        }
+
+        // Recompute overall score excluding unknown (-1) domains
+        let weightedSum = 0;
+        let totalWeight = 0;
+        const weights: Record<string, number> = {
+          "kernel-hardening": 25,
+          "firewall": 20,
+          "services": 15,
+          "users": 20,
+          "filesystem": 20,
+        };
+        for (const [domain, score] of Object.entries(latestEntry.domains)) {
+          if (score < 0) continue;
+          const w = weights[domain] ?? 10;
+          weightedSum += score * w;
+          totalWeight += w;
+        }
+        const overallScore = totalWeight > 0 ? Math.round(weightedSum / totalWeight) : 0;
+
         return {
           content: [formatToolOutput({
             dashboard: {
               timestamp: latestEntry.timestamp,
-              overallScore: latestEntry.score,
-              rating: latestEntry.score >= 80 ? "GOOD" : latestEntry.score >= 60 ? "FAIR" : latestEntry.score >= 40 ? "POOR" : "CRITICAL",
-              domainScores: latestEntry.domains,
+              overallScore,
+              rating: overallScore >= 80 ? "GOOD" : overallScore >= 60 ? "FAIR" : overallScore >= 40 ? "POOR" : "CRITICAL",
+              domainScores: displayDomainScores,
               recommendations,
               nextSteps: [
                 "Run calculate_security_score for detailed per-check breakdown",

@@ -21,6 +21,10 @@ import {
   restoreFile,
 } from "../core/changelog.js";
 import { validateFilePath } from "../core/sanitizer.js";
+import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 // ── Default critical configuration files ─────────────────────────────────
 
@@ -471,11 +475,30 @@ export function registerBackupTools(server: McpServer): void {
         .boolean()
         .optional()
         .default(true)
-        .describe("Compute and display SHA256 checksum (default: true)"),
+        .describe("Compute and verify SHA256 checksums against manifest (default: true)"),
     },
     async ({ backup_path, check_integrity }) => {
       try {
         const config = getConfig();
+
+        // Load backup manifest for hash comparison if available
+        const manifestPath = join(homedir(), ".kali-mcp-backups", "manifest.json");
+        let manifestHashes: Map<string, string> | null = null;
+        if (check_integrity) {
+          try {
+            if (existsSync(manifestPath)) {
+              const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
+              if (raw && Array.isArray(raw.backups)) {
+                manifestHashes = new Map<string, string>();
+                for (const entry of raw.backups) {
+                  if (entry.backupPath && entry.sha256) {
+                    manifestHashes.set(entry.backupPath, entry.sha256);
+                  }
+                }
+              }
+            }
+          } catch { /* manifest unreadable */ }
+        }
 
         if (backup_path) {
           // Verify a specific backup
@@ -498,20 +521,38 @@ export function registerBackupTools(server: McpServer): void {
           }
 
           let sha256 = "";
+          let integrity = "not_checked";
           if (check_integrity) {
-            const hashResult = await executeCommand({
-              command: "sha256sum",
-              args: [backup_path],
-              toolName: "backup_verify",
-              timeout: getToolTimeout("backup_verify"),
-            });
-            sha256 = hashResult.stdout.trim().split(/\s+/)[0] ?? "";
+            try {
+              const content = readFileSync(backup_path);
+              sha256 = createHash("sha256").update(content).digest("hex");
+            } catch {
+              const hashResult = await executeCommand({
+                command: "sha256sum",
+                args: [backup_path],
+                toolName: "backup_verify",
+                timeout: getToolTimeout("backup_verify"),
+              });
+              sha256 = hashResult.stdout.trim().split(/\s+/)[0] ?? "";
+            }
+
+            if (sha256 && manifestHashes) {
+              const stored = manifestHashes.get(backup_path);
+              if (stored) {
+                integrity = stored === sha256 ? "verified" : "corrupted";
+              } else {
+                integrity = "no_baseline";
+              }
+            } else if (sha256) {
+              integrity = "no_baseline";
+            }
           }
 
           const output = {
             file: backup_path,
             exists: true,
             sha256: sha256 || undefined,
+            integrity,
             stat: statResult.stdout,
           };
 
@@ -537,29 +578,76 @@ export function registerBackupTools(server: McpServer): void {
           };
         }
 
-        const files = findResult.stdout
+        const backupEntries: Array<{
+          path: string;
+          size: number;
+          modified: string;
+          ageHours: number;
+          sha256?: string;
+          integrity?: string;
+        }> = [];
+
+        const fileLines = findResult.stdout
           .split("\n")
           .map((l) => l.trim())
-          .filter((l) => l.length > 0)
-          .map((line) => {
-            const parts = line.split(/\s+/);
-            const timestamp = parseFloat(parts[0]) || 0;
-            const size = parseInt(parts[1], 10) || 0;
-            const path = parts.slice(2).join(" ");
-            return {
-              path,
-              size,
-              modified: new Date(timestamp * 1000).toISOString(),
-              ageHours: Math.round(
-                (Date.now() - timestamp * 1000) / (1000 * 60 * 60)
-              ),
-            };
-          });
+          .filter((l) => l.length > 0);
+
+        for (const line of fileLines) {
+          const parts = line.split(/\s+/);
+          const timestamp = parseFloat(parts[0]) || 0;
+          const size = parseInt(parts[1], 10) || 0;
+          const filePath = parts.slice(2).join(" ");
+
+          const entry: {
+            path: string;
+            size: number;
+            modified: string;
+            ageHours: number;
+            sha256?: string;
+            integrity?: string;
+          } = {
+            path: filePath,
+            size,
+            modified: new Date(timestamp * 1000).toISOString(),
+            ageHours: Math.round(
+              (Date.now() - timestamp * 1000) / (1000 * 60 * 60)
+            ),
+          };
+
+          if (check_integrity && filePath && !filePath.endsWith("manifest.json")) {
+            try {
+              const content = readFileSync(filePath);
+              const hash = createHash("sha256").update(content).digest("hex");
+              entry.sha256 = hash;
+
+              if (manifestHashes) {
+                const stored = manifestHashes.get(filePath);
+                if (stored) {
+                  entry.integrity = stored === hash ? "verified" : "corrupted";
+                } else {
+                  entry.integrity = "no_baseline";
+                }
+              } else {
+                entry.integrity = "no_baseline";
+              }
+            } catch {
+              entry.integrity = "unreadable";
+            }
+          }
+
+          backupEntries.push(entry);
+        }
+
+        const verified = backupEntries.filter((b) => b.integrity === "verified").length;
+        const corrupted = backupEntries.filter((b) => b.integrity === "corrupted").length;
+        const noBaseline = backupEntries.filter((b) => b.integrity === "no_baseline").length;
 
         const output = {
           backupDir: config.backupDir,
-          totalBackups: files.length,
-          backups: files,
+          totalBackups: backupEntries.length,
+          integrityChecked: check_integrity,
+          summary: check_integrity ? { verified, corrupted, noBaseline } : undefined,
+          backups: backupEntries,
         };
 
         return { content: [formatToolOutput(output)] };

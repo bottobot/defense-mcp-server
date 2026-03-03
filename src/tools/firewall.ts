@@ -12,6 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
+import { getDistroAdapter } from "../core/distro-adapter.js";
 import {
   createTextContent,
   createErrorContent,
@@ -928,10 +929,13 @@ export function registerFirewallTools(server: McpServer): void {
           args.push("list", "table", params.family, params.table);
         }
         const result = await executeCommand({ command: "sudo", args: ["nft", ...args], timeout: 15000, toolName: "firewall_nftables_list" });
-        if (result.exitCode !== 0 && result.stderr.includes("not found")) {
-          return { content: [createTextContent("nftables (nft) is not installed. Install with: sudo apt install nftables")] };
+        if (result.exitCode !== 0) {
+          if (result.stderr.includes("not found")) {
+            return { content: [createErrorContent("nftables (nft) is not installed. Install with: sudo apt install nftables")], isError: true };
+          }
+          return { content: [createErrorContent(`nft list failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
         }
-        return { content: [createTextContent(result.stdout || result.stderr || "No nftables rules configured")] };
+        return { content: [createTextContent(result.stdout || "No nftables rules configured")] };
       } catch (error) {
         return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
       }
@@ -1219,50 +1223,52 @@ export function registerFirewallTools(server: McpServer): void {
     },
     async ({ action, dry_run }) => {
       try {
+        const da = await getDistroAdapter();
+        const fwp = da.fwPersistence;
+
         if (action === "status") {
-          // Check if iptables-persistent is installed
-          const dpkgResult = await executeCommand({
-            command: "dpkg",
-            args: ["-l", "iptables-persistent"],
+          // Check if persistence package is installed (distro-aware)
+          const pkgCheckResult = await executeCommand({
+            command: fwp.checkInstalledCmd[0],
+            args: fwp.checkInstalledCmd.slice(1),
             toolName: "firewall_persistence",
             timeout: 5000,
           });
 
-          const installed = dpkgResult.stdout.includes("ii");
+          const installed = da.isDebian
+            ? pkgCheckResult.stdout.includes("ii")
+            : pkgCheckResult.exitCode === 0;
 
-          // Check if netfilter-persistent service is enabled
+          // Check if persistence service is enabled
           const svcResult = await executeCommand({
             command: "systemctl",
-            args: ["is-enabled", "netfilter-persistent"],
+            args: ["is-enabled", fwp.serviceName],
             toolName: "firewall_persistence",
             timeout: 5000,
           });
 
           const enabled = svcResult.stdout.trim() === "enabled";
 
-          // Check if rules files exist
-          const v4Result = await executeCommand({
+          // Check if rules file exists
+          const rulesResult = await executeCommand({
             command: "test",
-            args: ["-f", "/etc/iptables/rules.v4"],
-            toolName: "firewall_persistence",
-            timeout: 3000,
-          });
-          const v6Result = await executeCommand({
-            command: "test",
-            args: ["-f", "/etc/iptables/rules.v6"],
+            args: ["-f", da.paths.firewallPersistenceConfig],
             toolName: "firewall_persistence",
             timeout: 3000,
           });
 
           const status = {
-            iptables_persistent_installed: installed,
-            netfilter_persistent_enabled: enabled,
-            rules_v4_exists: v4Result.exitCode === 0,
-            rules_v6_exists: v6Result.exitCode === 0,
+            distro: da.summary,
+            persistence_package: fwp.packageName,
+            package_installed: installed,
+            service_enabled: enabled,
+            service_name: fwp.serviceName,
+            rules_file_exists: rulesResult.exitCode === 0,
+            rules_file_path: da.paths.firewallPersistenceConfig,
             recommendation: !installed
-              ? "Use firewall_persistence with action='enable' to install and activate iptables-persistent"
+              ? `Use firewall_persistence with action='enable' to install ${fwp.packageName}`
               : !enabled
-              ? "Run: sudo systemctl enable netfilter-persistent"
+              ? `Run: sudo systemctl enable ${fwp.serviceName}`
               : "Persistence is properly configured",
           };
 
@@ -1272,16 +1278,15 @@ export function registerFirewallTools(server: McpServer): void {
         }
 
         if (action === "enable") {
-          const cmds = [
-            "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent",
-            "sudo systemctl enable netfilter-persistent",
-          ];
+          const installDesc = `sudo ${fwp.installCmd.join(" ")}`;
+          const enableDesc = `sudo ${fwp.enableCmd.join(" ")}`;
+          const cmds = [installDesc, enableDesc];
 
           if (dry_run ?? getConfig().dryRun) {
             const entry = createChangeEntry({
               tool: "firewall_persistence",
-              action: `[DRY-RUN] Enable iptables-persistent`,
-              target: "iptables-persistent",
+              action: `[DRY-RUN] Enable ${fwp.packageName}`,
+              target: fwp.packageName,
               after: cmds.join(" && "),
               dryRun: true,
               success: true,
@@ -1297,20 +1302,21 @@ export function registerFirewallTools(server: McpServer): void {
             };
           }
 
-          // Install iptables-persistent
+          // Install the persistence package (distro-aware)
           const installResult = await executeCommand({
             command: "sudo",
-            args: ["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "iptables-persistent"],
+            args: fwp.installCmd,
             toolName: "firewall_persistence",
             timeout: 120000,
+            env: da.isDebian ? { DEBIAN_FRONTEND: "noninteractive" } : undefined,
           });
 
-          // If the above fails, try with env
           let installSuccess = installResult.exitCode === 0;
-          if (!installSuccess) {
+          if (!installSuccess && da.isDebian) {
+            // Fallback for Debian: try with bash -c
             const installResult2 = await executeCommand({
               command: "sudo",
-              args: ["bash", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent"],
+              args: ["bash", "-c", `DEBIAN_FRONTEND=noninteractive ${fwp.installCmd.join(" ")}`],
               toolName: "firewall_persistence",
               timeout: 120000,
             });
@@ -1320,8 +1326,8 @@ export function registerFirewallTools(server: McpServer): void {
           if (!installSuccess) {
             const entry = createChangeEntry({
               tool: "firewall_persistence",
-              action: `Enable iptables-persistent`,
-              target: "iptables-persistent",
+              action: `Enable ${fwp.packageName}`,
+              target: fwp.packageName,
               dryRun: false,
               success: false,
               error: installResult.stderr,
@@ -1331,7 +1337,7 @@ export function registerFirewallTools(server: McpServer): void {
             return {
               content: [
                 createErrorContent(
-                  `Failed to install iptables-persistent: ${installResult.stderr}`
+                  `Failed to install ${fwp.packageName}: ${installResult.stderr}`
                 ),
               ],
               isError: true,
@@ -1341,25 +1347,25 @@ export function registerFirewallTools(server: McpServer): void {
           // Enable the service
           const enableResult = await executeCommand({
             command: "sudo",
-            args: ["systemctl", "enable", "netfilter-persistent"],
+            args: fwp.enableCmd,
             toolName: "firewall_persistence",
             timeout: 15000,
           });
 
           const entry = createChangeEntry({
             tool: "firewall_persistence",
-            action: `Enable iptables-persistent`,
-            target: "iptables-persistent",
+            action: `Enable ${fwp.packageName}`,
+            target: fwp.packageName,
             dryRun: false,
             success: true,
-            rollbackCommand: "sudo apt-get remove -y iptables-persistent",
+            rollbackCommand: fwp.uninstallHint,
           });
           logChange(entry);
 
           return {
             content: [
               createTextContent(
-                `iptables-persistent installed and netfilter-persistent service enabled.\n` +
+                `${fwp.packageName} installed and ${fwp.serviceName} service enabled.\n` +
                 `Service status: ${enableResult.exitCode === 0 ? "enabled" : "enable may have failed: " + enableResult.stderr}\n` +
                 `Use firewall_persistence with action='save' to persist current rules.`
               ),
@@ -1368,13 +1374,13 @@ export function registerFirewallTools(server: McpServer): void {
         }
 
         if (action === "save") {
-          const fullCmd = "sudo netfilter-persistent save";
+          const fullCmd = `sudo ${fwp.saveCmd.join(" ")}`;
 
           if (dry_run ?? getConfig().dryRun) {
             const entry = createChangeEntry({
               tool: "firewall_persistence",
               action: `[DRY-RUN] Save persistent firewall rules`,
-              target: "netfilter-persistent",
+              target: fwp.serviceName,
               after: fullCmd,
               dryRun: true,
               success: true,
@@ -1384,7 +1390,7 @@ export function registerFirewallTools(server: McpServer): void {
             return {
               content: [
                 createTextContent(
-                  `[DRY-RUN] Would execute:\n  ${fullCmd}\n\nThis saves both IPv4 and IPv6 rules to /etc/iptables/rules.v4 and rules.v6`
+                  `[DRY-RUN] Would execute:\n  ${fullCmd}\n\nThis saves firewall rules to ${da.paths.firewallPersistenceConfig}`
                 ),
               ],
             };
@@ -1392,7 +1398,7 @@ export function registerFirewallTools(server: McpServer): void {
 
           const result = await executeCommand({
             command: "sudo",
-            args: ["netfilter-persistent", "save"],
+            args: fwp.saveCmd,
             toolName: "firewall_persistence",
             timeout: 15000,
           });
@@ -1528,17 +1534,19 @@ export function registerFirewallTools(server: McpServer): void {
           }
         }
 
-        // Check for iptables-persistent
-        const persistResult = await executeCommand({ command: "dpkg", args: ["-l", "iptables-persistent"], timeout: 5000, toolName: "firewall_policy_audit" });
-        const persistInstalled = persistResult.stdout.includes("ii");
+        // Check for firewall persistence (distro-aware)
+        const daPolicy = await getDistroAdapter();
+        const fwpPolicy = daPolicy.fwPersistence;
+        const persistResult = await executeCommand({ command: fwpPolicy.checkInstalledCmd[0], args: fwpPolicy.checkInstalledCmd.slice(1), timeout: 5000, toolName: "firewall_policy_audit" });
+        const persistInstalled = daPolicy.isDebian ? persistResult.stdout.includes("ii") : persistResult.exitCode === 0;
         findings.push({
-          check: "iptables_persistent",
+          check: "firewall_persistence",
           status: persistInstalled ? "PASS" : "WARN",
           value: persistInstalled ? "installed" : "not installed",
-          description: "iptables-persistent (rules survive reboot)",
+          description: `${fwpPolicy.packageName} (rules survive reboot)`,
           recommendation: persistInstalled
             ? undefined
-            : "Use firewall_persistence with action='enable' to install and activate iptables-persistent, then action='save' to persist current rules",
+            : "Use firewall_persistence with action='enable' to install and activate persistence, then action='save' to persist current rules",
         });
 
         const passCount = findings.filter(f => f.status === "PASS").length;

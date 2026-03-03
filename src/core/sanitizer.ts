@@ -1,4 +1,4 @@
-import { resolve, normalize } from "node:path";
+import { resolve, normalize, sep } from "node:path";
 import { getConfig, type DefenseConfig } from "./config.js";
 
 /**
@@ -12,6 +12,11 @@ const SHELL_METACHAR_RE = /[;|&$`(){}<>\n\r]/;
  * which are handled by SHELL_METACHAR_RE where dangerous).
  */
 const CONTROL_CHAR_RE = /[\x00-\x08\x0e-\x1f\x7f]/;
+
+/**
+ * Regex matching path traversal components (`..` as a directory segment).
+ */
+const PATH_TRAVERSAL_RE = /(^|[\/\\])\.\.([\/\\]|$)/;
 
 /**
  * Validates a target string as hostname, IPv4, IPv6, or CIDR notation.
@@ -143,6 +148,13 @@ export function validateFilePath(
   // Check for null bytes
   if (filePath.includes("\0")) {
     throw new Error("File path contains null bytes");
+  }
+
+  // Check for path traversal
+  if (PATH_TRAVERSAL_RE.test(filePath)) {
+    throw new Error(
+      "Path contains forbidden directory traversal (..)"
+    );
   }
 
   // Check for shell metacharacters
@@ -388,6 +400,12 @@ export function validateYaraRule(path: string): string {
 
   const trimmed = path.trim();
 
+  if (PATH_TRAVERSAL_RE.test(trimmed)) {
+    throw new Error(
+      "Path contains forbidden directory traversal (..)"
+    );
+  }
+
   if (SHELL_METACHAR_RE.test(trimmed)) {
     throw new Error(
       `YARA rule path contains forbidden shell metacharacters: ${trimmed}`
@@ -417,6 +435,12 @@ export function validateCertPath(path: string): string {
   }
 
   const trimmed = path.trim();
+
+  if (PATH_TRAVERSAL_RE.test(trimmed)) {
+    throw new Error(
+      "Path contains forbidden directory traversal (..)"
+    );
+  }
 
   if (SHELL_METACHAR_RE.test(trimmed)) {
     throw new Error(

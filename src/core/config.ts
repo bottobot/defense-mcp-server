@@ -55,6 +55,8 @@ export interface DefenseConfig {
   policyDir: string;
   /** Per-tool timeout overrides in milliseconds */
   toolTimeouts: Partial<Record<KnownTool, number>>;
+  /** Sudo session timeout in milliseconds (default: 15 minutes) */
+  sudoSessionTimeout: number;
 }
 
 /**
@@ -161,6 +163,14 @@ export function getConfig(): DefenseConfig {
       process.env.KALI_DEFENSE_POLICY_DIR ?? "~/.kali-defense/policies"
     ),
     toolTimeouts: parseToolTimeouts(),
+    sudoSessionTimeout: (() => {
+      const envVal = process.env.KALI_DEFENSE_SUDO_TIMEOUT;
+      if (envVal) {
+        const minutes = parseInt(envVal, 10);
+        if (!isNaN(minutes) && minutes > 0) return minutes * 60 * 1000;
+      }
+      return 15 * 60 * 1000; // default: 15 minutes
+    })(),
   };
 
   // Warn when dry-run is active so operators know no changes will be applied

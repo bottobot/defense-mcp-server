@@ -9,7 +9,7 @@ import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
 import { getToolTimeout } from "../core/config.js";
 import { createErrorContent, formatToolOutput } from "../core/parsers.js";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
@@ -85,11 +85,11 @@ export function registerDriftDetectionTools(server: McpServer): void {
             timeout: 30000,
           });
 
-          if (findResult.exitCode === 0) {
+          // find may return non-zero due to permission errors but still output valid paths
+          if (findResult.stdout.trim()) {
             const paths = findResult.stdout.trim().split("\n").filter(Boolean).slice(0, 5000);
             for (const p of paths) {
               try {
-                const { statSync } = await import("node:fs");
                 const stat = statSync(p);
                 files.push({
                   path: p,
@@ -109,12 +109,48 @@ export function registerDriftDetectionTools(server: McpServer): void {
           args: ["-a"],
           timeout: 10000,
         });
-        if (sysctlResult.exitCode === 0) {
+        if (sysctlResult.exitCode === 0 && sysctlResult.stdout.trim()) {
           for (const line of sysctlResult.stdout.split("\n")) {
             const idx = line.indexOf("=");
             if (idx > 0) {
               sysctlState[line.substring(0, idx).trim()] = line.substring(idx + 1).trim();
             }
+          }
+        }
+
+        // Fallback: read key sysctl values from /proc/sys/ if sysctl binary failed or returned nothing
+        if (Object.keys(sysctlState).length === 0) {
+          const procSysKeys: [string, string][] = [
+            ["net.ipv4.ip_forward", "/proc/sys/net/ipv4/ip_forward"],
+            ["net.ipv4.conf.all.accept_redirects", "/proc/sys/net/ipv4/conf/all/accept_redirects"],
+            ["net.ipv4.conf.all.send_redirects", "/proc/sys/net/ipv4/conf/all/send_redirects"],
+            ["net.ipv4.conf.all.accept_source_route", "/proc/sys/net/ipv4/conf/all/accept_source_route"],
+            ["net.ipv4.conf.all.log_martians", "/proc/sys/net/ipv4/conf/all/log_martians"],
+            ["net.ipv4.icmp_echo_ignore_broadcasts", "/proc/sys/net/ipv4/icmp_echo_ignore_broadcasts"],
+            ["net.ipv4.tcp_syncookies", "/proc/sys/net/ipv4/tcp_syncookies"],
+            ["net.ipv6.conf.all.accept_redirects", "/proc/sys/net/ipv6/conf/all/accept_redirects"],
+            ["net.ipv6.conf.all.accept_source_route", "/proc/sys/net/ipv6/conf/all/accept_source_route"],
+            ["kernel.randomize_va_space", "/proc/sys/kernel/randomize_va_space"],
+            ["kernel.dmesg_restrict", "/proc/sys/kernel/dmesg_restrict"],
+            ["kernel.kptr_restrict", "/proc/sys/kernel/kptr_restrict"],
+            ["kernel.yama.ptrace_scope", "/proc/sys/kernel/yama/ptrace_scope"],
+            ["kernel.sysrq", "/proc/sys/kernel/sysrq"],
+            ["fs.protected_hardlinks", "/proc/sys/fs/protected_hardlinks"],
+            ["fs.protected_symlinks", "/proc/sys/fs/protected_symlinks"],
+            ["fs.suid_dumpable", "/proc/sys/fs/suid_dumpable"],
+          ];
+          for (const [key, procPath] of procSysKeys) {
+            try {
+              if (existsSync(procPath)) {
+                const val = readFileSync(procPath, "utf-8").trim();
+                sysctlState[key] = val;
+              }
+            } catch { /* skip unreadable */ }
+          }
+          if (Object.keys(sysctlState).length > 0) {
+            console.error(`[drift-detection] sysctl binary unavailable; read ${Object.keys(sysctlState).length} keys from /proc/sys/`);
+          } else {
+            console.error("[drift-detection] Warning: could not capture any sysctl state (sysctl binary unavailable and /proc/sys/ read failed)");
           }
         }
 

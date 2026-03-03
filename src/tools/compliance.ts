@@ -18,6 +18,7 @@ import {
   formatToolOutput,
 } from "../core/parsers.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
+import { getDistroAdapter } from "../core/distro-adapter.js";
 import { sanitizeArgs, validateFilePath } from "../core/sanitizer.js";
 import {
   loadPolicy,
@@ -228,10 +229,11 @@ async function cisLoggingChecks(level: string): Promise<CisCheckResult[]> {
     await runCisCheck("systemctl", ["is-active", "rsyslog"], "CIS-4.2.1.1", "rsyslog service is active", level, /^active$/)
   );
 
-  // Check log file permissions
+  // Check log file permissions (distro-aware path)
+  const daComp = await getDistroAdapter();
   results.push(
     await runCisCheck(
-      "stat", ["-c", "%a", "/var/log/syslog"],
+      "stat", ["-c", "%a", daComp.paths.syslog],
       "CIS-4.2.4", "Syslog file has restrictive permissions", level, /^(640|600)$/
     )
   );
@@ -333,7 +335,7 @@ async function cisAccessChecks(level: string): Promise<CisCheckResult[]> {
   // CIS 5.4.2 - PAM account lockout (pam_faillock configured)
   results.push(
     await runCisCheck(
-      "grep", ["pam_faillock", "/etc/pam.d/common-auth"],
+      "grep", ["pam_faillock", (await getDistroAdapter()).paths.pamAuth],
       "CIS-5.4.2", "PAM account lockout (pam_faillock) is configured", level
     )
   );

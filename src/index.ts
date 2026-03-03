@@ -2,12 +2,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-// ── Core: Dependency validation ──────────────────────────────────────────────
+// ── Core: Dependency validation & distro detection ───────────────────────────
 import {
   validateAllDependencies,
   formatValidationReport,
 } from "./core/dependency-validator.js";
 import { getConfig } from "./core/config.js";
+import { getDistroAdapter } from "./core/distro-adapter.js";
 
 // ── Original tool modules ────────────────────────────────────────────────────
 import { registerFirewallTools } from "./tools/firewall.js";
@@ -25,6 +26,9 @@ import { registerMetaTools } from "./tools/meta.js";
 import { registerPatchManagementTools } from "./tools/patch-management.js";
 import { registerSecretsManagementTools } from "./tools/secrets-management.js";
 import { registerIncidentResponseTools } from "./tools/incident-response.js";
+
+// ── Sudo privilege management ────────────────────────────────────────────────
+import { registerSudoManagementTools } from "./tools/sudo-management.js";
 
 // ── New tool modules ─────────────────────────────────────────────────────────
 import { registerSupplyChainSecurityTools } from "./tools/supply-chain-security.js";
@@ -59,6 +63,17 @@ async function main() {
     `Dry-run: ${config.dryRun ? "YES" : "NO"}`
   );
 
+  // ── Phase 0: Detect distribution ─────────────────────────────────────────
+  try {
+    const da = await getDistroAdapter();
+    console.error(`[startup] 🐧 ${da.summary}`);
+  } catch (err) {
+    console.error(
+      `[startup] ⚠️  Distro detection failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+    console.error("[startup] Continuing with defaults...");
+  }
+
   try {
     const report = await validateAllDependencies();
     console.error(formatValidationReport(report));
@@ -88,6 +103,9 @@ async function main() {
   }
 
   // ── Phase 2: Register all defensive tool modules ─────────────────────────
+
+  // Sudo privilege management (must be registered first — prerequisite for other tools)
+  registerSudoManagementTools(server);
 
   // Original tool modules
   registerFirewallTools(server);
@@ -125,7 +143,8 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Kali Defense MCP Server v2.1.0 running on stdio");
-  console.error("Registered 27 tool modules with 134+ defensive security tools");
+  console.error("Registered 28 tool modules with 137+ defensive security tools");
+  console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }
 
 main().catch((error) => {

@@ -122,29 +122,34 @@ export function registerNetworkDefenseTools(server: McpServer): void {
       log_file: z
         .string()
         .optional()
-        .default("/var/log/syslog")
-        .describe("Log file to analyze for scan indicators"),
+        .describe("Log file to analyze for scan indicators (auto-detected per distro if omitted)"),
       threshold: z
         .number()
         .optional()
         .default(10)
         .describe("Number of connection attempts from same source to flag"),
       timeframe: z
-        .string()
+        .number()
         .optional()
-        .default("1 hour ago")
-        .describe("How far back to search, e.g. '1 hour ago', '30 minutes ago'"),
+        .default(60)
+        .describe("How far back to search in seconds (e.g. 60 = last 60 seconds)"),
     },
     async ({ log_file, threshold, timeframe }) => {
       try {
+        // Convert numeric timeframe (seconds) to journalctl --since format
+        const sinceStr = `${String(timeframe)} seconds ago`;
+
         // Use journalctl to search for network connection patterns
+        // Sanitize user-controlled args separately; the grep pattern
+        // contains pipe characters that are safe with spawn(shell:false)
+        // but would be rejected by the shell-metacharacter check.
+        sanitizeArgs(["--since", sinceStr, "--no-pager"]);
+
         const journalArgs = [
-          "--since", timeframe,
+          "--since", sinceStr,
           "--no-pager",
           "-g", "SYN|refused connection|connection attempt|UFW BLOCK",
         ];
-
-        sanitizeArgs(journalArgs);
 
         const journalResult = await executeCommand({
           command: "journalctl",

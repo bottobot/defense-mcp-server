@@ -485,15 +485,17 @@ export function parseSsOutput(output: string): SsEntry[] {
     const line = lines[i].trim();
     if (!line) continue;
 
+    // ss -tulnp columns:
+    //   0: Netid  1: State  2: Recv-Q  3: Send-Q  4: Local Address:Port  5: Peer Address:Port  6+: Process
     const parts = line.split(/\s+/);
-    if (parts.length >= 5) {
+    if (parts.length >= 6) {
       entries.push({
-        state: parts[0],
-        recv: parts[1],
-        send: parts[2],
-        local: parts[3],
-        peer: parts[4],
-        process: parts.slice(5).join(" "),
+        state: parts[1],
+        recv: parts[2],
+        send: parts[3],
+        local: parts[4],
+        peer: parts[5],
+        process: parts.slice(6).join(" "),
       });
     }
   }
