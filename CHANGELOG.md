@@ -6,6 +6,65 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.1.0] — 2026-03-03
+
+### Summary
+
+Adds a comprehensive pre-flight validation system that automatically checks dependencies, detects privilege requirements, and optionally auto-installs missing packages before every tool invocation — transparently, with zero changes to existing tool handlers.
+
+---
+
+### Added
+
+#### Pre-flight Validation Middleware (`src/core/tool-wrapper.ts`)
+- `createPreflightServer()` — Proxy-based middleware that wraps `McpServer` to intercept `.tool()` registrations and inject pre-flight validation before every tool handler
+- Transparent integration via JavaScript `Proxy` pattern — all 29 existing tool registration files work without modification
+- Configurable bypass set for sudo management tools (`sudo_elevate`, `sudo_status`, `sudo_drop`, `sudo_extend`)
+- Optional status banners prepended to tool output when there are warnings or auto-installed dependencies
+- Safety net: if pre-flight itself throws unexpectedly, falls through to the original handler
+
+#### Enhanced Tool Manifest Registry (`src/core/tool-registry.ts`)
+- `ToolRegistry` singleton with O(1) manifest lookup for all 155 tools
+- `ToolManifest` type supporting: required/optional binaries, Python modules, npm packages, system libraries, required files, sudo level (`never`/`always`/`conditional`), Linux capabilities, category, and tags
+- `SUDO_OVERLAYS` — static privilege annotations for all 155 tools derived from handler analysis
+- `initializeRegistry()` — merges legacy `TOOL_DEPENDENCIES` binary data with privilege overlays
+- Category inference from tool name prefixes
+
+#### Privilege Detection (`src/core/privilege-manager.ts`)
+- `PrivilegeManager` singleton with 30-second cached status
+- Detects UID/EUID via `process.getuid()`/`process.geteuid()`
+- Parses Linux capabilities from `/proc/self/status` CapEff hex bitmask (41 capability names mapped)
+- Tests passwordless sudo via `sudo -n true`
+- Checks active `SudoSession` cached credentials
+- Reads user group memberships via `id -Gn`
+- `checkForTool(manifest)` evaluates tool's privilege requirements against current state
+
+#### Auto-Dependency Resolution (`src/core/auto-installer.ts`)
+- `AutoInstaller` singleton supporting 8+ package managers: apt, dnf, yum, pacman, apk, zypper, brew, pip, and npm
+- Resolves distro-specific package names from the `DEFENSIVE_TOOLS` catalog
+- Python module installation: tries user-site (`--user`) first, falls back to sudo
+- npm package installation: tries non-sudo first, falls back to sudo
+- Library installation: generates distro-family-specific dev package name candidates
+- Post-install verification for all dependency types
+
+#### Pre-flight Orchestration Engine (`src/core/preflight.ts`)
+- `PreflightEngine` singleton with 60-second result cache (passing results only)
+- Full pipeline: manifest resolution → dependency checking (binary, Python, npm, library, file) → auto-installation → privilege validation → pass/fail determination
+- Structured `PreflightResult` with checked/missing/installed deps, privilege issues, errors, warnings
+- `formatSummary()` — human-readable pass/fail output with install hints and resolution steps
+- `formatStatusMessage()` — compact one-line status for prepending to tool output
+
+#### New Environment Variables
+- `KALI_DEFENSE_PREFLIGHT` (default: `true`) — enable/disable pre-flight checks entirely
+- `KALI_DEFENSE_PREFLIGHT_BANNERS` (default: `true`) — show pre-flight status banners in tool output
+
+### Changed
+
+- `src/index.ts` — Wraps `McpServer` with `createPreflightServer()` proxy; initializes the tool registry at startup
+- `src/tools/sudo-management.ts` — Calls `invalidatePreflightCaches()` on `sudo_elevate` and `sudo_drop` to clear stale privilege/dependency caches
+
+---
+
 ## [2.0.0] — 2026-02-21
 
 ### Summary

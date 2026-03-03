@@ -14,8 +14,9 @@
 1. [Design Principles](#design-principles)
 2. [Project Structure](#project-structure)
 3. [Architecture Overview](#architecture-overview)
-4. [Core Modules](#core-modules)
-5. [Tool Modules](#tool-modules)
+4. [Pre-flight Validation Layer](#pre-flight-validation-layer)
+5. [Core Modules](#core-modules)
+6. [Tool Modules](#tool-modules)
    - [1. Firewall Management](#1-firewall-management-firewallts)
    - [2. System Hardening](#2-system-hardening-hardeningts)
    - [3. Intrusion Detection](#3-intrusion-detection-idsts)
@@ -27,13 +28,13 @@
    - [9. Access Control](#9-access-control-access-controlts)
    - [10. Encryption & PKI](#10-encryption--pki-encryptionts)
    - [11. Container & MAC Security](#11-container--mac-security-container-securityts)
-6. [Meta Tools](#meta-tools)
-7. [Configuration Reference](#configuration-reference)
-8. [Security Model](#security-model)
-9. [Policy Engine](#policy-engine)
-10. [Example Workflows](#example-workflows)
-11. [Cross-Distro Support Matrix](#cross-distro-support-matrix)
-12. [Implementation Conventions](#implementation-conventions)
+7. [Meta Tools](#meta-tools)
+8. [Configuration Reference](#configuration-reference)
+9. [Security Model](#security-model)
+10. [Policy Engine](#policy-engine)
+11. [Example Workflows](#example-workflows)
+12. [Cross-Distro Support Matrix](#cross-distro-support-matrix)
+13. [Implementation Conventions](#implementation-conventions)
 
 ---
 
@@ -61,7 +62,7 @@ kali-defense-mcp-server/
 ├── README.md
 ├── ARCHITECTURE.md              ← this file
 ├── src/
-│   ├── index.ts                 ← entry point: creates McpServer, registers tools, connects stdio
+│   ├── index.ts                 ← entry point: creates McpServer, wraps with pre-flight, connects stdio
 │   ├── core/
 │   │   ├── executor.ts          ← safe command execution (spawn, shell:false, timeouts, buffer cap)
 │   │   ├── config.ts            ← env-based config with defensive defaults
@@ -70,7 +71,12 @@ kali-defense-mcp-server/
 │   │   ├── changelog.ts         ← audit trail with backup/restore
 │   │   ├── distro.ts            ← Linux distribution detection
 │   │   ├── installer.ts         ← defensive tool auto-installation
-│   │   └── policy-engine.ts     ← NEW: policy evaluation engine for compliance checks
+│   │   ├── policy-engine.ts     ← policy evaluation engine for compliance checks
+│   │   ├── tool-registry.ts     ← enhanced tool manifest registry (155 tools, sudo/capability declarations)
+│   │   ├── privilege-manager.ts ← privilege detection (UID/EUID, Linux capabilities, sudo status)
+│   │   ├── auto-installer.ts   ← multi-package-manager auto-dependency resolution
+│   │   ├── preflight.ts         ← pre-flight orchestration engine with caching
+│   │   └── tool-wrapper.ts      ← Proxy-based middleware wrapping McpServer for pre-flight injection
 │   └── tools/
 │       ├── firewall.ts          ← iptables, nftables, ufw, firewalld management
 │       ├── hardening.ts         ← sysctl, kernel params, services, file perms, GRUB, login.defs
@@ -135,6 +141,113 @@ graph TB
     INS --> DST
     CMP --> POL
 ```
+
+---
+
+## Pre-flight Validation Layer
+
+The pre-flight validation system is a transparent middleware layer that sits between the MCP transport and the tool handlers. It validates every tool invocation before the handler executes — checking dependencies, verifying privileges, and optionally auto-installing missing packages.
+
+### Module Overview
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| **Tool Registry** | [`tool-registry.ts`](src/core/tool-registry.ts) | Enhanced manifest registry for all 155 tools. Each `ToolManifest` declares required/optional binaries, Python modules, npm packages, system libraries, required files, sudo level (`never`/`always`/`conditional`), Linux capabilities, and category metadata. Singleton with O(1) lookup by tool name. |
+| **Privilege Manager** | [`privilege-manager.ts`](src/core/privilege-manager.ts) | Detects current privilege level by querying UID/EUID, parsing Linux capabilities from `/proc/self/status` CapEff bitmask (41 capability names mapped), testing passwordless sudo via `sudo -n true`, checking `SudoSession` cached credentials, and reading group memberships via `id -Gn`. Results cached for 30 seconds. |
+| **Auto-Installer** | [`auto-installer.ts`](src/core/auto-installer.ts) | Multi-package-manager dependency resolver supporting 8 package managers: apt, dnf, yum, pacman, apk, zypper, brew, pip, and npm. Resolves distro-specific package names from the `DEFENSIVE_TOOLS` catalog. Tries user-site installs before sudo. Verifies installation after each attempt. |
+| **Pre-flight Engine** | [`preflight.ts`](src/core/preflight.ts) | Orchestration engine that runs the full validation pipeline: manifest resolution → dependency checking → auto-installation → privilege validation → pass/fail determination. Returns a structured `PreflightResult` with human-readable summaries. Results cached for 60 seconds (passing results only). |
+| **Tool Wrapper** | [`tool-wrapper.ts`](src/core/tool-wrapper.ts) | `createPreflightServer()` — creates a `Proxy` around `McpServer` that intercepts `.tool()` registrations. Wraps every handler function with pre-flight validation. Transparent to all 29 existing tool registration files — zero changes required. |
+
+### Module Relationships
+
+```mermaid
+graph TD
+    subgraph "Pre-flight Layer"
+        WRAPPER["tool-wrapper.ts<br/>Proxy&lt;McpServer&gt;<br/>intercepts .tool() registrations"]
+        PREFLIGHT["preflight.ts<br/>PreflightEngine<br/>orchestrates pipeline"]
+        REGISTRY["tool-registry.ts<br/>ToolRegistry<br/>155 ToolManifest entries"]
+        PRIV["privilege-manager.ts<br/>PrivilegeManager<br/>UID · capabilities · sudo"]
+        AUTO["auto-installer.ts<br/>AutoInstaller<br/>apt · dnf · pip · npm · ..."]
+    end
+
+    subgraph "Existing Core"
+        DEPS["tool-dependencies.ts<br/>TOOL_DEPENDENCIES"]
+        VALID["dependency-validator.ts<br/>isBinaryInstalled()"]
+        SUDO["sudo-session.ts<br/>SudoSession"]
+        DISTRO["distro.ts<br/>detectDistro()"]
+        INSTALL["installer.ts<br/>DEFENSIVE_TOOLS"]
+    end
+
+    WRAPPER --> PREFLIGHT
+    PREFLIGHT --> REGISTRY
+    PREFLIGHT --> PRIV
+    PREFLIGHT --> AUTO
+    PREFLIGHT --> VALID
+
+    REGISTRY --> DEPS
+    PRIV --> SUDO
+    AUTO --> DISTRO
+    AUTO --> INSTALL
+    AUTO --> SUDO
+```
+
+### Proxy-Based Middleware Pattern
+
+The integration uses a JavaScript `Proxy` to intercept the `McpServer.tool()` method at registration time:
+
+```typescript
+// src/index.ts — entry point
+const rawServer = new McpServer({ name: 'kali-defense-mcp-server', version: '...' });
+const server = createPreflightServer(rawServer);  // ← returns Proxy<McpServer>
+
+registerFirewallTools(server);      // tools register on the proxy — handlers auto-wrapped
+registerHardeningTools(server);     // no changes to tool registration files
+// ...
+
+await rawServer.connect(transport); // connect uses the real server
+```
+
+The proxy intercepts **only** the `tool` property. All other methods (`connect`, `resource`, `prompt`, etc.) pass through to the underlying server unchanged. For each `.tool()` call:
+
+1. The tool name is extracted from `args[0]`
+2. If the tool is in the bypass set (sudo management tools), it registers directly
+3. Otherwise, the handler (always `args[args.length - 1]`) is wrapped in a pre-flight function
+4. The wrapped handler runs `PreflightEngine.runPreflight(toolName)` before calling the original
+5. On pre-flight failure: returns an MCP error response without calling the handler
+6. On pre-flight success with warnings: optionally prepends a status banner to the response
+7. If pre-flight itself throws unexpectedly: logs to stderr and falls through to the original handler (safety net)
+
+### Data Flow
+
+```
+AI Agent ──→ MCP Transport ──→ Proxy<McpServer>
+                                    │
+                                    ▼
+                          ┌─────────────────────┐
+                          │  Wrapped Handler     │
+                          │                      │
+                          │  1. Check bypass set  │
+                          │  2. runPreflight()    │──→ ToolRegistry.getManifest()
+                          │     ├─ checkDeps()    │──→ isBinaryInstalled() / python3 -c / which / pkg-config
+                          │     ├─ autoInstall()  │──→ AutoInstaller.resolveAll() → apt/dnf/pip/npm
+                          │     └─ checkPrivs()   │──→ PrivilegeManager.checkForTool() → UID/sudo/caps
+                          │  3. Pass/Fail         │
+                          │     ├─ PASS → handler │──→ Original tool handler executes
+                          │     └─ FAIL → error   │──→ Actionable MCP error returned
+                          └─────────────────────┘
+```
+
+### Cache Invalidation
+
+Pre-flight results are cached to minimize repeated subprocess calls:
+
+| Cache | TTL | Invalidation Trigger |
+|-------|-----|---------------------|
+| `PreflightEngine.resultCache` | 60s | `sudo_elevate`, `sudo_drop`, dependency installation |
+| `PrivilegeManager.cachedStatus` | 30s | `sudo_elevate`, `sudo_drop` |
+| `dependency-validator` binary cache | ∞ (startup) | `clearDependencyCache()` after auto-install |
+
+The `invalidatePreflightCaches()` function (exported from `tool-wrapper.ts`) is called from `sudo-management.ts` tool handlers whenever the sudo session state changes.
 
 ---
 

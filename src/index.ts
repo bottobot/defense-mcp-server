@@ -10,6 +10,10 @@ import {
 import { getConfig } from "./core/config.js";
 import { getDistroAdapter } from "./core/distro-adapter.js";
 
+// ── Core: Pre-flight validation system ───────────────────────────────────────
+import { createPreflightServer, invalidatePreflightCaches } from './core/tool-wrapper.js';
+import { initializeRegistry } from './core/tool-registry.js';
+
 // ── Original tool modules ────────────────────────────────────────────────────
 import { registerFirewallTools } from "./tools/firewall.js";
 import { registerHardeningTools } from "./tools/hardening.js";
@@ -102,41 +106,53 @@ async function main() {
     console.error("[startup] Continuing with server startup...");
   }
 
+  // ── Phase 0.5: Initialize pre-flight validation system ───────────────────
+  console.error('[startup] Initializing pre-flight validation system...');
+  try {
+    const registry = initializeRegistry();
+    console.error(`[startup] Pre-flight registry initialized with ${registry.getAll().length} tool manifests`);
+  } catch (err) {
+    console.error(`[startup] Pre-flight registry initialization failed (non-fatal): ${err}`);
+  }
+
+  // Wrap server with pre-flight middleware
+  const wrappedServer = createPreflightServer(server);
+
   // ── Phase 2: Register all defensive tool modules ─────────────────────────
 
   // Sudo privilege management (must be registered first — prerequisite for other tools)
-  registerSudoManagementTools(server);
+  registerSudoManagementTools(wrappedServer);
 
   // Original tool modules
-  registerFirewallTools(server);
-  registerHardeningTools(server);
-  registerIdsTools(server);
-  registerLoggingTools(server);
-  registerNetworkDefenseTools(server);
-  registerComplianceTools(server);
-  registerMalwareTools(server);
-  registerBackupTools(server);
-  registerAccessControlTools(server);
-  registerEncryptionTools(server);
-  registerContainerSecurityTools(server);
-  registerMetaTools(server);
-  registerPatchManagementTools(server);
-  registerSecretsManagementTools(server);
-  registerIncidentResponseTools(server);
+  registerFirewallTools(wrappedServer);
+  registerHardeningTools(wrappedServer);
+  registerIdsTools(wrappedServer);
+  registerLoggingTools(wrappedServer);
+  registerNetworkDefenseTools(wrappedServer);
+  registerComplianceTools(wrappedServer);
+  registerMalwareTools(wrappedServer);
+  registerBackupTools(wrappedServer);
+  registerAccessControlTools(wrappedServer);
+  registerEncryptionTools(wrappedServer);
+  registerContainerSecurityTools(wrappedServer);
+  registerMetaTools(wrappedServer);
+  registerPatchManagementTools(wrappedServer);
+  registerSecretsManagementTools(wrappedServer);
+  registerIncidentResponseTools(wrappedServer);
 
   // New tool modules
-  registerSupplyChainSecurityTools(server);
-  registerMemoryProtectionTools(server);
-  registerDriftDetectionTools(server);
-  registerVulnerabilityIntelTools(server);
-  registerSecurityPostureTools(server);
-  registerSecretsScannerTools(server);
-  registerZeroTrustNetworkTools(server);
-  registerContainerAdvancedTools(server);
-  registerComplianceExtendedTools(server);
-  registerEbpfSecurityTools(server);
-  registerAutomationWorkflowTools(server);
-  registerAppHardeningTools(server);
+  registerSupplyChainSecurityTools(wrappedServer);
+  registerMemoryProtectionTools(wrappedServer);
+  registerDriftDetectionTools(wrappedServer);
+  registerVulnerabilityIntelTools(wrappedServer);
+  registerSecurityPostureTools(wrappedServer);
+  registerSecretsScannerTools(wrappedServer);
+  registerZeroTrustNetworkTools(wrappedServer);
+  registerContainerAdvancedTools(wrappedServer);
+  registerComplianceExtendedTools(wrappedServer);
+  registerEbpfSecurityTools(wrappedServer);
+  registerAutomationWorkflowTools(wrappedServer);
+  registerAppHardeningTools(wrappedServer);
 
   // ── Phase 3: Connect transport ───────────────────────────────────────────
 

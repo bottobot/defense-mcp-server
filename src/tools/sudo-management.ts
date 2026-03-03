@@ -17,6 +17,7 @@ import {
   createTextContent,
   createErrorContent,
 } from "../core/parsers.js";
+import { invalidatePreflightCaches } from '../core/tool-wrapper.js';
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ export function registerSudoManagementTools(server: McpServer): void {
         const result = await session.elevate(password, timeoutMs);
 
         if (result.success) {
+          invalidatePreflightCaches();
           const status = session.getStatus();
           return {
             content: [
@@ -172,6 +174,7 @@ export function registerSudoManagementTools(server: McpServer): void {
         const prevStatus = session.getStatus();
 
         session.drop();
+        invalidatePreflightCaches();
 
         if (wasElevated) {
           return {
@@ -237,6 +240,10 @@ export function registerSudoManagementTools(server: McpServer): void {
 
         const extraMs = minutes * 60 * 1000;
         const success = session.extend(extraMs);
+
+        if (success) {
+          invalidatePreflightCaches();
+        }
 
         if (!success) {
           return {

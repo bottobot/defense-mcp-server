@@ -120,6 +120,100 @@ graph LR
 - **Policy Engine** — Custom compliance policies with declarative rule definitions
 - **CIS Benchmark** — Built-in CIS benchmark checks for Linux systems
 - **Multi-Framework Compliance** — PCI-DSS v4, HIPAA, SOC 2, ISO 27001, GDPR checks
+- **🔎 Pre-flight Validation** — Automatic dependency, privilege, and capability checks before every tool invocation
+
+---
+
+## Pre-flight Validation System
+
+Every tool invocation is automatically preceded by a comprehensive pre-flight check that validates dependencies, detects privilege requirements, and optionally auto-installs missing packages — all transparently, without any changes needed in tool handlers.
+
+### How It Works
+
+```mermaid
+flowchart TD
+    A["🤖 AI Agent Calls Tool"] --> B{"Pre-flight<br/>enabled?"}
+    B -->|No| H["⚡ Execute Tool Directly"]
+    B -->|Yes| C["🔍 Registry Lookup<br/>ToolManifest for tool"]
+
+    C --> D["📦 Dependency Validation<br/>binaries · Python · npm · libraries · files"]
+    D --> E{"Missing<br/>dependencies?"}
+
+    E -->|No| F["🔑 Privilege Check<br/>UID/EUID · sudo session · Linux capabilities"]
+    E -->|Yes + Auto-install| D2["📥 Auto-Install<br/>apt · dnf · yum · pacman · apk · brew · pip · npm"]
+    E -->|Yes + No auto-install| X["❌ Return actionable error"]
+
+    D2 --> D3{"Install<br/>succeeded?"}
+    D3 -->|Yes| F
+    D3 -->|No| X
+
+    F --> G{"Privileges<br/>satisfied?"}
+    G -->|Yes| H["⚡ Execute Tool"]
+    G -->|No| X
+
+    H --> I["📤 Return Results<br/>(with optional status banner)"]
+```
+
+The pre-flight pipeline runs in 7 steps:
+
+1. **Interception** — Tool invocation intercepted by the `Proxy`-based middleware wrapping `McpServer`
+2. **Registry lookup** — Resolves the tool's `ToolManifest` from the registry (binaries, Python modules, npm packages, libraries, files, sudo requirements, Linux capabilities)
+3. **Dependency validation** — Checks all declared dependencies with cached binary lookups
+4. **Auto-installation** — If enabled and dependencies are missing, resolves them via the appropriate package manager (supports apt, dnf, yum, pacman, apk, brew, pip, npm)
+5. **Privilege check** — Validates against current UID/EUID, active sudo session, passwordless sudo, and Linux capabilities (parsed from `/proc/self/status` CapEff bitmask)
+6. **Pass/fail decision** — Generates a structured result with human-readable status messages
+7. **Execution or error** — If passed: tool handler executes normally; if failed: actionable error returned without executing the handler
+
+Results are cached for 60 seconds to avoid redundant checks on sequential tool calls.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KALI_DEFENSE_AUTO_INSTALL` | `false` | Enable automatic dependency installation when pre-flight detects missing packages |
+| `KALI_DEFENSE_PREFLIGHT` | `true` | Enable/disable pre-flight checks entirely (set to `false` to bypass all checks) |
+| `KALI_DEFENSE_PREFLIGHT_BANNERS` | `true` | Show pre-flight status banners in tool output when there are warnings or auto-installed deps |
+
+### Adding Pre-flight to New Tools
+
+New tools automatically get pre-flight validation with just two steps:
+
+1. **Add binary requirements** — Add an entry to `TOOL_DEPENDENCIES` in [`tool-dependencies.ts`](src/core/tool-dependencies.ts) mapping the tool name to its required binaries
+2. **Add privilege metadata** — Add a `ToolManifest` overlay to `SUDO_OVERLAYS` in [`tool-registry.ts`](src/core/tool-registry.ts) declaring the tool's sudo level (`"never"`, `"always"`, or `"conditional"`), capabilities, and reason
+
+That's it — the middleware wrapper handles the rest. No changes to the tool handler are needed.
+
+### Pre-flight Output Examples
+
+**✅ Passing — all checks satisfied:**
+
+```
+✅ Pre-flight passed for 'firewall_iptables_list'
+  Dependencies: 2/2 available (iptables, ip6tables)
+  Privileges: sudo session active
+  Ready to execute.
+```
+
+**✅ Passing with auto-install:**
+
+```
+✅ Pre-flight passed for 'compliance_lynis_audit' (auto-installed 1 dependency)
+  Dependencies: 1/1 available (lynis — Installed 'lynis' via apt (lynis))
+  Privileges: sudo session active
+  Ready to execute.
+```
+
+**❌ Failing — missing dependency and privilege issues:**
+
+```
+❌ Pre-flight FAILED for 'compliance_oscap_scan'
+  Missing dependencies:
+    • oscap (binary) — Install with: sudo apt-get install -y libopenscap8
+  Privilege issues:
+    • Tool 'compliance_oscap_scan' requires elevated privileges to root access required for OpenSCAP scanning. No active sudo session or passwordless sudo detected.
+    → Call the 'sudo_elevate' tool first to provide your credentials for this session.
+  Cannot proceed until issues are resolved.
+```
 
 ---
 
