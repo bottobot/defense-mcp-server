@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { getConfig, getToolTimeout } from "./config.js";
 import { SudoSession } from "./sudo-session.js";
+import { SudoGuard } from "./sudo-guard.js";
 
 /**
  * Options for executing a command.
@@ -40,6 +41,12 @@ export interface CommandResult {
   timedOut: boolean;
   /** Wall-clock duration in milliseconds */
   duration: number;
+  /**
+   * Whether the command failed due to insufficient privileges.
+   * Detected by analyzing stderr/stdout against known permission error patterns.
+   * When `true`, the caller should prompt the user to call `sudo_elevate`.
+   */
+  permissionDenied: boolean;
 }
 
 /**
@@ -132,12 +139,14 @@ export async function executeCommand(
     } catch (err: unknown) {
       const duration = Date.now() - startTime;
       const message = err instanceof Error ? err.message : String(err);
+      const stderrMsg = `Spawn error: ${message}`;
       resolve({
         stdout: "",
-        stderr: `Spawn error: ${message}`,
+        stderr: stderrMsg,
         exitCode: 1,
         timedOut: false,
         duration,
+        permissionDenied: SudoGuard.isPermissionError(stderrMsg, 1),
       });
       return;
     }
@@ -190,6 +199,7 @@ export async function executeCommand(
     child.on("close", (code: number | null) => {
       clearTimeout(timeoutId);
       const duration = Date.now() - startTime;
+      const exitCode = timedOut ? 124 : (code ?? 1);
 
       let stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       let stderr = Buffer.concat(stderrChunks).toString("utf-8");
@@ -201,12 +211,20 @@ export async function executeCommand(
         stderr += "\n[STDERR TRUNCATED - exceeded max buffer]";
       }
 
+      // Detect permission errors from combined output
+      const combinedOutput = stdout + "\n" + stderr;
+      const permissionDenied =
+        !timedOut &&
+        exitCode !== 0 &&
+        SudoGuard.isPermissionError(combinedOutput, exitCode);
+
       resolve({
         stdout,
         stderr,
-        exitCode: timedOut ? 124 : (code ?? 1),
+        exitCode,
         timedOut,
         duration,
+        permissionDenied,
       });
     });
 
@@ -222,16 +240,19 @@ export async function executeCommand(
           exitCode: 124,
           timedOut: true,
           duration,
+          permissionDenied: false,
         });
         return;
       }
 
+      const stderrMsg = `Process error: ${err.message}`;
       resolve({
         stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
-        stderr: `Process error: ${err.message}`,
+        stderr: stderrMsg,
         exitCode: 1,
         timedOut: false,
         duration,
+        permissionDenied: SudoGuard.isPermissionError(stderrMsg, 1),
       });
     });
   });

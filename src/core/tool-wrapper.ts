@@ -26,6 +26,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PreflightEngine, type PreflightResult } from "./preflight.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { PrivilegeManager } from "./privilege-manager.js";
+import { SudoGuard } from "./sudo-guard.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -222,6 +223,12 @@ function createWrappedToolMethod(
  * Pre-flight failures must **never** prevent a tool from running when
  * pre-flight is broken — only when pre-flight correctly identifies a
  * blocking issue (missing binary, missing sudo session, etc.).
+ *
+ * **Sudo elevation prompts**: When a tool fails due to missing privileges
+ * (either at pre-flight or at runtime), the wrapper returns a structured
+ * elevation prompt via {@link SudoGuard} instead of a generic error.
+ * This ensures the AI client always knows to ask the user for their
+ * password and call `sudo_elevate`.
  */
 function createWrappedHandler(
   toolName: string,
@@ -234,7 +241,32 @@ function createWrappedHandler(
       const result = await ctx.preflightEngine.runPreflight(toolName);
 
       if (!result.passed) {
-        // Pre-flight FAILED — return actionable error, do NOT call handler
+        // ── Check if failure is sudo-related → return elevation prompt ──
+        const hasSudoIssue = result.privileges.issues.some(
+          (i) =>
+            i.type === "sudo-required" ||
+            i.type === "sudo-unavailable" ||
+            i.type === "session-expired",
+        );
+
+        if (hasSudoIssue) {
+          // Extract the sudo reason from the manifest or the first issue
+          const manifest = ctx.registry.getManifest(toolName);
+          const reason =
+            manifest?.sudoReason ??
+            result.privileges.issues[0]?.description;
+
+          console.error(
+            `[sudo-guard] Tool '${toolName}' requires elevation — returning prompt`,
+          );
+          return SudoGuard.createElevationPrompt(
+            toolName,
+            reason,
+            ctx.preflightEngine.formatSummary(result),
+          );
+        }
+
+        // Non-sudo failure — return the standard pre-flight error
         return {
           content: [
             {
@@ -250,6 +282,29 @@ function createWrappedHandler(
       const toolResult = (await originalHandler(
         ...callbackArgs,
       )) as Record<string, unknown> | undefined;
+
+      // ── Post-execution: Check for runtime permission errors ────────
+      // This catches `conditional` sudo tools and edge cases where
+      // pre-flight passed but the command still failed due to permissions.
+      if (
+        toolResult &&
+        SudoGuard.isResponsePermissionError(toolResult)
+      ) {
+        const manifest = ctx.registry.getManifest(toolName);
+        const reason =
+          manifest?.sudoReason ??
+          "The command failed due to insufficient privileges at runtime.";
+        const originalText = SudoGuard.extractResponseText(toolResult);
+
+        console.error(
+          `[sudo-guard] Runtime permission error detected for '${toolName}' — returning elevation prompt`,
+        );
+        return SudoGuard.createElevationPrompt(
+          toolName,
+          reason,
+          originalText,
+        );
+      }
 
       // Optionally prepend a status banner when there are notable items
       // (warnings about optional deps, auto-installed binaries, etc.)
@@ -280,7 +335,33 @@ function createWrappedHandler(
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return originalHandler(...callbackArgs);
+
+      const toolResult = (await originalHandler(
+        ...callbackArgs,
+      )) as Record<string, unknown> | undefined;
+
+      // Even when pre-flight is broken, still check for runtime permission errors
+      if (
+        toolResult &&
+        SudoGuard.isResponsePermissionError(toolResult)
+      ) {
+        const manifest = ctx.registry.getManifest(toolName);
+        const reason =
+          manifest?.sudoReason ??
+          "The command failed due to insufficient privileges.";
+        const originalText = SudoGuard.extractResponseText(toolResult);
+
+        console.error(
+          `[sudo-guard] Runtime permission error detected for '${toolName}' (post-preflight-failure) — returning elevation prompt`,
+        );
+        return SudoGuard.createElevationPrompt(
+          toolName,
+          reason,
+          originalText,
+        );
+      }
+
+      return toolResult;
     }
   };
 }
