@@ -39,6 +39,7 @@ const DEFAULT_BYPASS_TOOLS = new Set<string>([
   "sudo_status",
   "sudo_drop",
   "sudo_extend",
+  "preflight_batch_check",
 ]);
 
 // ── Types ────────────────────────────────────────────────────────────────────

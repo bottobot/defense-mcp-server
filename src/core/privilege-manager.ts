@@ -15,10 +15,53 @@
  * @module privilege-manager
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { SudoSession } from "./sudo-session.js";
 import type { ToolManifest } from "./tool-registry.js";
+
+// ── Askpass helper detection (mirrors executor.ts) ───────────────────────────
+
+const ASKPASS_CANDIDATES = [
+  "/usr/bin/ssh-askpass",
+  "/usr/bin/ksshaskpass",
+  "/usr/lib/ssh/x11-ssh-askpass",
+  "/usr/libexec/openssh/gnome-ssh-askpass",
+  "/usr/bin/lxqt-sudo",
+];
+
+let cachedAskpassAvailable: boolean | null = null;
+
+/**
+ * Check whether a graphical askpass helper is available on the system.
+ * When available, `sudo -A` can pop a secure GUI dialog for the password,
+ * so tools should NOT be blocked at pre-flight for missing sudo sessions.
+ */
+function isAskpassAvailable(): boolean {
+  if (cachedAskpassAvailable !== null) return cachedAskpassAvailable;
+
+  const hasDisplay = !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+  if (!hasDisplay) {
+    cachedAskpassAvailable = false;
+    return false;
+  }
+
+  const envAskpass = process.env.SUDO_ASKPASS;
+  if (envAskpass && existsSync(envAskpass)) {
+    cachedAskpassAvailable = true;
+    return true;
+  }
+
+  for (const candidate of ASKPASS_CANDIDATES) {
+    if (existsSync(candidate)) {
+      cachedAskpassAvailable = true;
+      return true;
+    }
+  }
+
+  cachedAskpassAvailable = false;
+  return false;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -218,9 +261,10 @@ export class PrivilegeManager {
 
     const status = await this.getStatus();
 
-    // ── sudo: 'always' → must have root, session, or passwordless sudo ─
+    // ── sudo: 'always' → must have root, session, passwordless sudo, or askpass ─
     if (manifest.sudo === "always") {
-      if (!status.isRoot && !status.sudoSessionActive && !status.passwordlessSudo) {
+      const hasAskpass = isAskpassAvailable();
+      if (!status.isRoot && !status.sudoSessionActive && !status.passwordlessSudo && !hasAskpass) {
         if (!status.sudoAvailable) {
           issues.push({
             type: "sudo-unavailable",
@@ -274,9 +318,11 @@ export class PrivilegeManager {
       for (const requiredCap of manifest.capabilities) {
         const hasCap = status.capabilities.has(requiredCap);
 
-        // If running as root or have an active sudo session, capabilities
-        // will be available when the command runs under sudo, so don't flag.
-        if (!hasCap && !status.isRoot && !status.sudoSessionActive && !status.passwordlessSudo) {
+        // If running as root, have an active sudo session, passwordless sudo,
+        // or an askpass helper, capabilities will be available when the command
+        // runs under sudo, so don't flag.
+        const hasAskpassForCaps = isAskpassAvailable();
+        if (!hasCap && !status.isRoot && !status.sudoSessionActive && !status.passwordlessSudo && !hasAskpassForCaps) {
           issues.push({
             type: "capability-missing",
             description:

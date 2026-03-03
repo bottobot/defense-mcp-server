@@ -833,6 +833,12 @@ const SUDO_OVERLAYS: SudoOverlay[] = [
     sudo: "never",
     tags: ["bypass-preflight"],
   },
+  {
+    toolName: "preflight_batch_check",
+    sudo: "never",
+    sudoReason: "Pre-flight checks run without elevation — they only inspect requirements",
+    tags: ["bypass-preflight"],
+  },
 
   // ── IDS tools (remaining) ───────────────────────────────────────────
   {

@@ -126,6 +126,12 @@ export interface ElevationPromptResponse {
   _meta: {
     /** Machine-readable tag for client-side detection */
     elevationRequired: true;
+    /**
+     * Machine-readable flag that instructs the AI client to STOP its
+     * current workflow and ask the user for credentials before proceeding.
+     * The AI MUST NOT silently skip the tool or continue without elevation.
+     */
+    haltWorkflow: true;
     /** The tool that failed */
     failedTool: string;
     /** Why elevation is needed */
@@ -197,9 +203,10 @@ export class SudoGuard {
 
     const reasonText = reason ?? "This tool requires elevated (root) privileges to function.";
 
-    // Build the prompt message
+    // Build the prompt message — designed to be assertive enough that
+    // AI clients will HALT their workflow and ask the user for credentials.
     const lines: string[] = [];
-    lines.push("🔒 ELEVATED PRIVILEGES REQUIRED");
+    lines.push("🛑 WORKFLOW HALTED — ELEVATED PRIVILEGES REQUIRED");
     lines.push("═".repeat(50));
     lines.push("");
     lines.push(`Tool: ${toolName}`);
@@ -212,21 +219,26 @@ export class SudoGuard {
       lines.push("");
     }
 
-    lines.push("ACTION REQUIRED:");
+    lines.push("⚠️  DO NOT SKIP THIS TOOL OR CONTINUE WITHOUT ELEVATION.");
+    lines.push("⚠️  You MUST ask the user for their sudo password NOW.");
+    lines.push("");
+    lines.push("ACTION REQUIRED — BEFORE PROCEEDING:");
     lines.push("─".repeat(50));
     lines.push("");
-    lines.push("Please provide your sudo password by calling:");
+    lines.push("1. ASK the user for their sudo password");
+    lines.push("2. CALL sudo_elevate with the password");
+    lines.push("3. RETRY this tool (and any other tools that failed)");
     lines.push("");
     lines.push("  Tool: sudo_elevate");
-    lines.push("  Parameter: password = <your sudo password>");
+    lines.push("  Parameter: password = <user's sudo password>");
     lines.push("");
-    lines.push("Once elevated, all privileged tools (including this one)");
-    lines.push("will work automatically for the session duration.");
+    lines.push("Once elevated, ALL privileged tools will work automatically");
+    lines.push("for the session duration (default: 15 minutes).");
     lines.push("");
-    lines.push("The password is:");
+    lines.push("Security guarantees for the user's password:");
     lines.push("  • Stored securely in a zeroable memory buffer");
     lines.push("  • Never logged or exposed in any output");
-    lines.push("  • Auto-expires after the configured timeout (default: 15 min)");
+    lines.push("  • Auto-expires after the configured timeout");
     lines.push("  • Can be dropped at any time with sudo_drop");
 
     if (originalError) {
@@ -246,6 +258,7 @@ export class SudoGuard {
       isError: true,
       _meta: {
         elevationRequired: true,
+        haltWorkflow: true,
         failedTool: toolName,
         reason: reasonText,
         elevationTool: "sudo_elevate",

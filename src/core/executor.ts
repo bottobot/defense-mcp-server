@@ -1,7 +1,59 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { getConfig, getToolTimeout } from "./config.js";
 import { SudoSession } from "./sudo-session.js";
 import { SudoGuard } from "./sudo-guard.js";
+
+// ── Askpass helper detection ─────────────────────────────────────────────────
+
+/**
+ * Ordered list of known graphical sudo/SSH askpass helpers.
+ * The first one found on the system will be used as the SUDO_ASKPASS program.
+ */
+const ASKPASS_CANDIDATES = [
+  "/usr/bin/ssh-askpass",     // Generic (often symlinked to ksshaskpass/gnome)
+  "/usr/bin/ksshaskpass",     // KDE Plasma
+  "/usr/lib/ssh/x11-ssh-askpass", // X11 classic
+  "/usr/libexec/openssh/gnome-ssh-askpass", // GNOME
+  "/usr/bin/lxqt-sudo",      // LXQt
+];
+
+/** Cached result of askpass detection (null = not yet checked, undefined = not found) */
+let cachedAskpass: string | undefined | null = null;
+
+/**
+ * Find the first available graphical askpass helper on the system.
+ * Returns the absolute path or `undefined` if none found.
+ * Result is cached for the process lifetime.
+ */
+function findAskpassHelper(): string | undefined {
+  if (cachedAskpass !== null) return cachedAskpass;
+
+  // Check environment variable first — user may have set it explicitly
+  const envAskpass = process.env.SUDO_ASKPASS;
+  if (envAskpass && existsSync(envAskpass)) {
+    cachedAskpass = envAskpass;
+    return cachedAskpass;
+  }
+
+  // Must have a display server to show a GUI dialog
+  const hasDisplay = !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+  if (!hasDisplay) {
+    cachedAskpass = undefined;
+    return undefined;
+  }
+
+  for (const candidate of ASKPASS_CANDIDATES) {
+    if (existsSync(candidate)) {
+      cachedAskpass = candidate;
+      console.error(`[executor] Found askpass helper: ${candidate}`);
+      return cachedAskpass;
+    }
+  }
+
+  cachedAskpass = undefined;
+  return undefined;
+}
 
 /**
  * Options for executing a command.
@@ -50,12 +102,21 @@ export interface CommandResult {
 }
 
 /**
- * Prepares sudo command options by injecting `-S -p ""` flags and
- * piping the stored password via stdin when a SudoSession is active.
+ * Prepares sudo command options by injecting credentials so that sudo
+ * works in non-interactive (no-TTY) environments like MCP servers.
+ *
+ * **Strategy (in priority order):**
+ * 1. If a {@link SudoSession} is active with a cached password, inject
+ *    `-S -p ""` and pipe the password via stdin (fastest, no UI).
+ * 2. If no session but a graphical askpass helper is available (e.g.
+ *    `ssh-askpass`, `ksshaskpass`), inject `-A` and set `SUDO_ASKPASS`
+ *    env var. This pops a **secure native GUI dialog** for the password
+ *    — the password never enters the chat or any log.
+ * 3. If neither is available, let sudo run as-is (will fail without TTY,
+ *    but the error will be caught and an elevation prompt returned).
  *
  * This is transparent to callers — tool code continues to use
- * `command: "sudo", args: ["iptables", ...]` and the password is
- * automatically injected if the session is elevated.
+ * `command: "sudo", args: ["iptables", ...]`.
  */
 function prepareSudoOptions(options: ExecuteOptions): ExecuteOptions {
   // Only transform calls where the command is "sudo"
@@ -64,31 +125,51 @@ function prepareSudoOptions(options: ExecuteOptions): ExecuteOptions {
   // Skip if the caller explicitly opted out (e.g. sudo-session.ts itself)
   if (options.skipSudoInjection) return options;
 
-  // Skip if the caller already supplied `-S` (manual control)
-  if (options.args.includes("-S")) return options;
+  // Skip if the caller already supplied `-S` or `-A` (manual control)
+  if (options.args.includes("-S") || options.args.includes("-A")) return options;
 
   const session = SudoSession.getInstance();
   const password = session.getPassword();
 
-  if (!password) {
-    // No active session — let sudo run normally (will likely fail without TTY)
-    return options;
+  if (password) {
+    // ── Strategy 1: SudoSession has a cached password → pipe via stdin ──
+    const newArgs = ["-S", "-p", "", ...options.args];
+    const stdinPayload = options.stdin
+      ? password + "\n" + options.stdin
+      : password + "\n";
+
+    return {
+      ...options,
+      args: newArgs,
+      stdin: stdinPayload,
+    };
   }
 
-  // Inject -S (read from stdin) and -p "" (suppress prompt) before the
-  // existing arguments.  We also prepend --stdin so there is no ambiguity.
-  const newArgs = ["-S", "-p", "", ...options.args];
+  // ── Strategy 2: No cached password → try graphical askpass helper ──
+  const askpassPath = findAskpassHelper();
+  if (askpassPath) {
+    console.error(
+      `[executor] No sudo session — falling back to askpass GUI: ${askpassPath}`,
+    );
+    const newArgs = ["-A", ...options.args];
+    return {
+      ...options,
+      args: newArgs,
+      env: {
+        ...options.env,
+        SUDO_ASKPASS: askpassPath,
+        // Ensure DISPLAY is forwarded for GUI dialog
+        ...(process.env.DISPLAY ? { DISPLAY: process.env.DISPLAY } : {}),
+        ...(process.env.WAYLAND_DISPLAY
+          ? { WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY }
+          : {}),
+      },
+    };
+  }
 
-  // Combine password with any existing stdin the caller provided
-  const stdinPayload = options.stdin
-    ? password + "\n" + options.stdin
-    : password + "\n";
-
-  return {
-    ...options,
-    args: newArgs,
-    stdin: stdinPayload,
-  };
+  // ── Strategy 3: No session, no askpass → let sudo fail naturally ──
+  // The error will be caught by SudoGuard and an elevation prompt returned.
+  return options;
 }
 
 /**
