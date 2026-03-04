@@ -946,7 +946,7 @@ export function registerFirewallTools(server: McpServer): void {
 
   server.tool(
     "firewall_set_policy",
-    "Set the default policy for an iptables chain (e.g., iptables -P INPUT DROP)",
+    "Set the default policy for an iptables chain (e.g., iptables -P INPUT DROP). SAFETY: When setting INPUT or FORWARD to DROP, automatically injects loopback and established-connection ACCEPT rules first to prevent network lockout.",
     {
       chain: z
         .enum(["INPUT", "FORWARD", "OUTPUT"])
@@ -968,6 +968,103 @@ export function registerFirewallTools(server: McpServer): void {
       try {
         const fullCmd = `sudo iptables -P ${chain} ${policy}`;
         const ipv6Cmd = `sudo ip6tables -P ${chain} ${policy}`;
+
+        // ── SAFETY CHECK: Prevent DROP policy without essential allow rules ──
+        // Setting INPUT or FORWARD to DROP without loopback + established
+        // connection rules will brick the system (no network traffic at all).
+        if (policy === "DROP" && (chain === "INPUT" || chain === "FORWARD")) {
+          const safetyRules: Array<{ description: string; checkArgs: string[]; addArgs: string[]; addArgs6?: string[] }> = [];
+
+          if (chain === "INPUT") {
+            safetyRules.push(
+              {
+                description: "Allow loopback (lo) traffic",
+                checkArgs: ["-C", "INPUT", "-i", "lo", "-j", "ACCEPT"],
+                addArgs: ["-I", "INPUT", "1", "-i", "lo", "-j", "ACCEPT"],
+                addArgs6: ["-I", "INPUT", "1", "-i", "lo", "-j", "ACCEPT"],
+              },
+              {
+                description: "Allow established/related connections",
+                checkArgs: ["-C", "INPUT", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+                addArgs: ["-I", "INPUT", "2", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+                addArgs6: ["-I", "INPUT", "2", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+              },
+            );
+          } else if (chain === "FORWARD") {
+            safetyRules.push({
+              description: "Allow established/related forwarded connections",
+              checkArgs: ["-C", "FORWARD", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+              addArgs: ["-I", "FORWARD", "1", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+              addArgs6: ["-I", "FORWARD", "1", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+            });
+          }
+
+          const injectedRules: string[] = [];
+
+          for (const rule of safetyRules) {
+            // Check if rule already exists (iptables -C returns 0 if exists)
+            const checkResult = await executeCommand({
+              command: "sudo",
+              args: ["iptables", ...rule.checkArgs],
+              toolName: "firewall_set_policy",
+              timeout: getToolTimeout("firewall_set_policy"),
+            });
+
+            if (checkResult.exitCode !== 0) {
+              // Rule doesn't exist — inject it before setting DROP
+              if (dry_run ?? getConfig().dryRun) {
+                injectedRules.push(`[DRY-RUN] Would add: ${rule.description}`);
+              } else {
+                const addResult = await executeCommand({
+                  command: "sudo",
+                  args: ["iptables", ...rule.addArgs],
+                  toolName: "firewall_set_policy",
+                  timeout: getToolTimeout("firewall_set_policy"),
+                });
+                if (addResult.exitCode !== 0) {
+                  return {
+                    content: [
+                      createErrorContent(
+                        `SAFETY: Failed to add prerequisite rule "${rule.description}" before setting DROP policy. ` +
+                        `Aborting to prevent network lockout. Error: ${addResult.stderr}`
+                      ),
+                    ],
+                    isError: true,
+                  };
+                }
+                injectedRules.push(`✅ Auto-added: ${rule.description}`);
+
+                // Also add for IPv6 if requested
+                if (ipv6 && rule.addArgs6) {
+                  const add6Result = await executeCommand({
+                    command: "sudo",
+                    args: ["ip6tables", ...rule.addArgs6],
+                    toolName: "firewall_set_policy",
+                    timeout: getToolTimeout("firewall_set_policy"),
+                  });
+                  if (add6Result.exitCode !== 0) {
+                    injectedRules.push(`⚠️ IPv6: Failed to add "${rule.description}": ${add6Result.stderr}`);
+                  } else {
+                    injectedRules.push(`✅ Auto-added (IPv6): ${rule.description}`);
+                  }
+                }
+              }
+            }
+          }
+
+          // Log the safety injection
+          if (injectedRules.length > 0) {
+            const safetyEntry = createChangeEntry({
+              tool: "firewall_set_policy",
+              action: `Safety: auto-injected ${injectedRules.length} prerequisite rules before ${chain} DROP`,
+              target: chain,
+              after: injectedRules.join("; "),
+              dryRun: !!(dry_run ?? getConfig().dryRun),
+              success: true,
+            });
+            logChange(safetyEntry);
+          }
+        }
 
         if (dry_run ?? getConfig().dryRun) {
           const cmds = [fullCmd];

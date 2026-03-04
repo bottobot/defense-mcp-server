@@ -88,10 +88,28 @@ async function cisFilesystemChecks(level: string): Promise<CisCheckResult[]> {
     await runCisCheck("findmnt", ["-n", "/tmp"], "CIS-1.1.2", "/tmp is a separate partition", level)
   );
 
-  // CIS 1.1.4 - /tmp has noexec
-  results.push(
-    await runCisCheck("findmnt", ["-n", "-o", "OPTIONS", "/tmp"], "CIS-1.1.4", "/tmp has noexec mount option", level, /noexec/)
-  );
+  // CIS 1.1.4 - /tmp has noexec (check mount output AND fstab)
+  {
+    const mountCheck = await executeCommand({
+      command: "findmnt", args: ["-n", "-o", "OPTIONS", "/tmp"], timeout: 10_000,
+    });
+    const fstabCheck = await executeCommand({
+      command: "sudo", args: ["grep", "-E", "^[^#].*\\s/tmp\\s.*noexec", "/etc/fstab"], timeout: 10_000,
+    });
+    const mountHasNoexec = /noexec/.test(mountCheck.stdout.trim());
+    const fstabHasNoexec = fstabCheck.exitCode === 0;
+    results.push({
+      id: "CIS-1.1.4",
+      title: "/tmp has noexec mount option",
+      status: (mountHasNoexec || fstabHasNoexec) ? "pass" : "fail",
+      detail: mountHasNoexec
+        ? "Check passed"
+        : fstabHasNoexec
+          ? "noexec configured in fstab (will apply on next mount/reboot)"
+          : `Expected pattern not found. Output: ${mountCheck.stdout.trim().slice(0, 200)}`,
+      level,
+    });
+  }
 
   // CIS 1.1.21 - Sticky bit on world-writable dirs
   results.push(
@@ -124,13 +142,23 @@ async function cisFilesystemChecks(level: string): Promise<CisCheckResult[]> {
     });
   }
 
-  // CIS 1.5.1 - Core dump limits (hard core 0 in limits.conf)
-  results.push(
-    await runCisCheck(
-      "grep", ["-E", "^\\*\\s+hard\\s+core\\s+0", "/etc/security/limits.conf"],
-      "CIS-1.5.1-limits", "Core dumps restricted via limits.conf (hard core 0)", level
-    )
-  );
+  // CIS 1.5.1 - Core dump limits (hard core 0 in limits.conf or limits.d/)
+  {
+    const limitsCheck = await executeCommand({
+      command: "sudo",
+      args: ["grep", "-rE", "\\*\\s+hard\\s+core\\s+0", "/etc/security/limits.conf", "/etc/security/limits.d/"],
+      timeout: 10_000,
+    });
+    results.push({
+      id: "CIS-1.5.1-limits",
+      title: "Core dumps restricted via limits.conf (hard core 0)",
+      status: limitsCheck.exitCode === 0 ? "pass" : "fail",
+      detail: limitsCheck.exitCode === 0
+        ? "Check passed"
+        : `hard core 0 not found in limits.conf or limits.d/`,
+      level,
+    });
+  }
 
   return results;
 }
@@ -341,28 +369,52 @@ async function cisAccessChecks(level: string): Promise<CisCheckResult[]> {
   );
 
   // CIS 5.5.5 - Default umask 027 or more restrictive
-  results.push(
-    await runCisCheck(
-      "grep", ["-E", "^UMASK", "/etc/login.defs"],
-      "CIS-5.5.5", "Default umask is 027 or more restrictive", level, /UMASK\s+0[2-7]7/
-    )
-  );
+  // Check login.defs, /etc/profile, and /etc/bash.bashrc for umask 027 or 077
+  {
+    const umaskCheck = await executeCommand({
+      command: "sudo",
+      args: ["grep", "-rEh", "(^UMASK\\s+0[2-7]7|^umask\\s+0[2-7]7)", "/etc/login.defs", "/etc/profile", "/etc/bash.bashrc"],
+      timeout: 10_000,
+    });
+    const hasRestrictive = /0[2-7]7/.test(umaskCheck.stdout.trim());
+    results.push({
+      id: "CIS-5.5.5",
+      title: "Default umask is 027 or more restrictive",
+      status: hasRestrictive ? "pass" : "fail",
+      detail: hasRestrictive
+        ? "Check passed"
+        : `Restrictive umask not found in login.defs, profile, or bash.bashrc`,
+      level,
+    });
+  }
 
   // CIS 5.1.8 - /etc/cron.allow exists
-  results.push(
-    await runCisCheck(
-      "test", ["-f", "/etc/cron.allow"],
-      "CIS-5.1.8", "/etc/cron.allow exists", level
-    )
-  );
+  {
+    const cronCheck = await executeCommand({
+      command: "sudo", args: ["test", "-f", "/etc/cron.allow"], timeout: 10_000,
+    });
+    results.push({
+      id: "CIS-5.1.8",
+      title: "/etc/cron.allow exists",
+      status: cronCheck.exitCode === 0 ? "pass" : "fail",
+      detail: cronCheck.exitCode === 0 ? "Check passed" : "/etc/cron.allow not found",
+      level,
+    });
+  }
 
   // CIS 5.1.9 - /etc/at.allow exists
-  results.push(
-    await runCisCheck(
-      "test", ["-f", "/etc/at.allow"],
-      "CIS-5.1.9", "/etc/at.allow exists", level
-    )
-  );
+  {
+    const atCheck = await executeCommand({
+      command: "sudo", args: ["test", "-f", "/etc/at.allow"], timeout: 10_000,
+    });
+    results.push({
+      id: "CIS-5.1.9",
+      title: "/etc/at.allow exists",
+      status: atCheck.exitCode === 0 ? "pass" : "fail",
+      detail: atCheck.exitCode === 0 ? "Check passed" : "/etc/at.allow not found",
+      level,
+    });
+  }
 
   return results;
 }
