@@ -4,15 +4,163 @@
 >
 > This tool is designed **exclusively** for defensive security operations, system hardening, compliance auditing, and blue team activities. It is **NOT** intended for offensive security, penetration testing, exploitation, or any unauthorized access to systems. Use responsibly and only on systems you own or have explicit authorization to audit and harden.
 
-This MCP Server was originally developed to use the defensive tools already available in a Kali OS installation. Inspired by other MCP tools like HexStrike however, it's evolved to be a tool I can use on many more systems as I experiment with system and network hardening on my homelab. I hope you'll find it as helpful as I have. I've tried to make it as thorough and easy to use as possible. You basically just ask your LLM to use it and do a full audit. Then it will spit out a pretty thorough report that prioritizes various issues it finds. After that you can ask it to do a dry run, make backups etc before you do a full or partial security remediation. 
+A defensive security and system hardening [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server for Linux. Originally built to leverage the defensive tools available in Kali Linux, it has since grown into a comprehensive security toolkit that works across Debian, Ubuntu, RHEL, Arch, Alpine, and more. Provides **155 defensive security tools** across **28 modules** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
 
-I'm curious if people will find this helpful or not, let me know in the issues here if there are some glaring holes or problems with it. I am a total noob when it comes to sucurity and software development in general so that's why I developed this tool to help me.
+The idea is simple: tell your AI assistant to run a full security audit, and it orchestrates dozens of checks automatically — kernel hardening, firewall policies, CIS benchmarks, open ports, user accounts, secrets scanning, and more. You get back a prioritized report of findings. From there, you can ask it to remediate issues with dry-run previews, automatic backups, and rollback support.
 
-This is a defensive security and system hardening MCP (Model Context Protocol) server for Linux. Provides **155 defensive security tools** across **28 modules** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+Feedback welcome — open an issue if you find bugs or have suggestions.
 
-*** I've only tested this using the Roo Code extension in VS Code and VS Codium. So your experience may vary from mine. *** 
+> **Tested with** Roo Code (VS Code / VS Codium). Your experience with other MCP clients may vary.
 
-Here's how I use it, in the chat I just say "run a full audit using the Kali Defense MCP Server". It will spit out a full report, after which you can ask it to do a full remediation on your system or parts of your system depending on what you want hardened or not. It's pretty flexible and straightforward.
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Node.js** 18+ (20 recommended)
+- **Linux** (Debian/Ubuntu/Kali, RHEL/CentOS/Fedora, Arch, Alpine, or WSL2)
+- **Git** (to clone the repo)
+
+### 1. Clone and Build
+
+```bash
+git clone https://github.com/YOUR_USERNAME/kali-defense-mcp-server.git
+cd kali-defense-mcp-server
+npm install
+npm run build
+```
+
+### 2. Add to Your MCP Client
+
+Create or edit `.roo/mcp.json` in your project directory (for Roo Code):
+
+```json
+{
+  "mcpServers": {
+    "kali-defense": {
+      "command": "node",
+      "args": ["/absolute/path/to/kali-defense-mcp-server/build/index.js"],
+      "env": {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "DISPLAY": ":0",
+        "WAYLAND_DISPLAY": "wayland-0",
+        "XDG_RUNTIME_DIR": "/run/user/1000"
+      },
+      "alwaysAllow": [
+        "sudo_elevate_gui",
+        "sudo_status",
+        "defense_security_posture",
+        "firewall_policy_audit",
+        "harden_sysctl_audit",
+        "harden_service_audit",
+        "harden_kernel_security_audit",
+        "access_ssh_audit",
+        "access_user_audit",
+        "compliance_cis_check",
+        "patch_update_audit",
+        "calculate_security_score"
+      ]
+    }
+  }
+}
+```
+
+> **nvm users:** Replace `"command": "node"` with the full path, e.g. `"/home/you/.nvm/versions/node/v20.20.0/bin/node"`.
+>
+> **Display variables:** The `DISPLAY`, `WAYLAND_DISPLAY`, and `XDG_RUNTIME_DIR` entries are needed for the secure GUI password dialog (`sudo_elevate_gui`). Adjust to match your session.
+
+### 3. Run a Full Audit
+
+In your AI chat, just say:
+
+```
+Run a full security audit using the Kali Defense MCP Server.
+```
+
+The AI will orchestrate 20+ audit tools, produce a prioritized report, and offer to remediate findings with dry-run previews and automatic backups.
+
+### 4. (Optional) Auto-Install Missing Tools
+
+Many audit tools depend on system packages (`lynis`, `nmap`, `auditd`, etc.). To auto-install them:
+
+```bash
+KALI_DEFENSE_AUTO_INSTALL=true npm start
+```
+
+Or add to your MCP config:
+
+```json
+"env": {
+  "KALI_DEFENSE_AUTO_INSTALL": "true"
+}
+```
+
+---
+
+## 🔐 How Sudo Passwords Are Handled
+
+Many security tools require root privileges. The server provides a **secure two-phase elevation flow** that ensures your sudo password is **never visible to the AI**.
+
+### The Problem
+
+MCP servers run non-interactively via stdio — `sudo` can't prompt for a password through a TTY. The password needs to reach the server process without appearing in the AI conversation.
+
+### The Solution: `sudo_elevate_gui`
+
+A two-phase flow using a native GUI password dialog:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Phase 1: AI calls sudo_elevate_gui                     │
+│  → Server returns a zenity command to run                │
+│                                                          │
+│  Phase 2: AI runs the command via terminal               │
+│  → Zenity opens a native password dialog on your screen  │
+│  → Password redirected to a temp file (chmod 600)        │
+│  → Terminal only shows "READY" — never the password      │
+│                                                          │
+│  Phase 3: AI calls sudo_elevate_gui again                │
+│  → MCP server reads the temp file server-side            │
+│  → Validates password with sudo -S -k -v                 │
+│  → Stores in zeroable Buffer with auto-expiry            │
+│  → Wipes temp file (2x random overwrite + unlink)        │
+│  → Returns "🔓 Elevated!" — never the password           │
+└─────────────────────────────────────────────────────────┘
+```
+
+**What the AI sees at each step:**
+
+| Step | AI Action | AI Sees |
+|------|-----------|--------|
+| 1 | `sudo_elevate_gui()` | "Run this command..." |
+| 2 | `execute_command(zenity ...)` | `READY` |
+| 3 | `sudo_elevate_gui()` | `🔓 Elevated!` |
+
+**The password never appears in the chat, terminal output, tool parameters, or AI context.**
+
+### Security Guarantees
+
+| Protection | Implementation |
+|------------|----------------|
+| Password storage | Zeroable `Buffer` (not V8-interned strings) |
+| Auto-expiry | Configurable timeout (default: 15 min, max: 8 hours) |
+| Temp file security | `chmod 600`, 2x random byte overwrite before deletion |
+| File permission check | Server rejects files not set to `600` |
+| Session teardown | `sudo_drop` zeroes buffer + runs `sudo -k` |
+| Process exit cleanup | `SIGINT`/`SIGTERM`/`exit` handlers zero the buffer |
+| Transparent to tools | All subsequent `sudo` commands receive credentials via stdin pipe automatically |
+
+### Sudo Tools
+
+| Tool | Description |
+|------|-------------|
+| `sudo_elevate_gui` | Secure GUI-based elevation (recommended) |
+| `sudo_elevate` | Elevation with password parameter (fallback for headless systems) |
+| `sudo_status` | Check session status and remaining time |
+| `sudo_drop` | Drop privileges and zero password buffer |
+| `sudo_extend` | Extend session timeout without re-authenticating |
+| `preflight_batch_check` | Pre-check multiple tools for sudo/dependency requirements |
 
 ---
 
@@ -622,14 +770,16 @@ This MCP server is a **defensive security toolkit** designed for:
 | `remove_scheduled_audit` | Remove a scheduled audit |
 | `get_audit_history` | Read historical audit job output |
 
-### Sudo Management (4 tools)
+### Sudo Management (6 tools)
 
 | Tool | Description |
 |------|-------------|
-| `sudo_elevate` | Elevate privileges by caching sudo credentials securely |
+| `sudo_elevate_gui` | Secure GUI-based elevation — password never visible to the AI (recommended) |
+| `sudo_elevate` | Elevate privileges by caching sudo credentials securely (fallback for headless) |
 | `sudo_status` | Check current sudo session status and remaining time |
 | `sudo_drop` | Drop elevated privileges and zero the password buffer |
 | `sudo_extend` | Extend an active sudo session timeout (default: 15 min, max: 480 min) |
+| `preflight_batch_check` | Pre-check multiple tools for sudo/dependency requirements before execution |
 
 ### Application Hardening (4 tools)
 
@@ -806,6 +956,14 @@ For live changes (disable dry-run):
 ---
 
 ## Changelog
+
+### v0.4.0-beta.1 (2026-03-03)
+
+**New Features:**
+- 🔐 `sudo_elevate_gui` — Secure two-phase GUI password elevation (password never visible to AI)
+- 📋 Getting Started guide with MCP client setup instructions
+- 🔐 Comprehensive sudo security documentation
+- 🔢 Synced all version references to beta versioning
 
 ### v0.3.0 (2026-03-03)
 

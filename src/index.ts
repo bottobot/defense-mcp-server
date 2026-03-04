@@ -51,7 +51,7 @@ import { registerAppHardeningTools } from "./tools/app-hardening.js";
 async function main() {
   const server = new McpServer({
     name: "kali-defense-mcp-server",
-    version: "2.1.0",
+    version: "0.4.0-beta.1",
   });
 
   // ── Phase 1: Dependency Validation & Auto-Install ────────────────────────
@@ -61,7 +61,7 @@ async function main() {
   // automatically installed via the system package manager.
   //
   const config = getConfig();
-  console.error("Kali Defense MCP Server v2.1.0 starting...");
+  console.error("Kali Defense MCP Server v0.4.0-beta.1 starting...");
   console.error(
     `[startup] Auto-install: ${config.autoInstall ? "ENABLED" : "DISABLED"} | ` +
     `Dry-run: ${config.dryRun ? "YES" : "NO"}`
@@ -158,7 +158,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Kali Defense MCP Server v2.1.0 running on stdio");
+  console.error("Kali Defense MCP Server v0.4.0-beta.1 running on stdio");
   console.error("Registered 28 tool modules with 137+ defensive security tools");
   console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }

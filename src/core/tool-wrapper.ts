@@ -36,6 +36,7 @@ import { SudoGuard } from "./sudo-guard.js";
  */
 const DEFAULT_BYPASS_TOOLS = new Set<string>([
   "sudo_elevate",
+  "sudo_elevate_gui",
   "sudo_status",
   "sudo_drop",
   "sudo_extend",

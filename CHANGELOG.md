@@ -6,7 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [2.1.0] — 2026-03-03
+## [0.4.0-beta.1] — 2026-03-03
+
+**New Features:**
+- 🔐 `sudo_elevate_gui` — Secure two-phase GUI password elevation. Password never visible to the AI.
+- 📋 Updated README with Getting Started guide, MCP client setup instructions, and sudo security documentation
+- 🔢 Synced all version references to beta versioning scheme
+
+**Sudo Management:**
+- Added `sudo_elevate_gui` tool with native zenity/kdialog password dialog
+- Two-phase flow: GUI captures password to temp file → MCP server reads, elevates, and securely wipes (2x random overwrite + unlink)
+- File permission validation (rejects non-600 files)
+- Added to pre-flight bypass list in tool-wrapper.ts
+
+---
+
+## [0.3.0] — 2026-03-03
 
 ### Summary
 
