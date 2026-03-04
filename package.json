@@ -1,17 +1,65 @@
 {
   "name": "kali-defense-mcp-server",
   "version": "0.4.0-beta.2",
-  "description": "Ultimate Kali Defensive Security & System Hardening MCP Server",
+  "description": "Ultimate Kali Defensive Security & System Hardening MCP Server — 155+ tools for firewall management, CIS benchmarks, intrusion detection, malware scanning, container security, zero-trust networking, and more.",
   "type": "module",
   "main": "build/index.js",
   "bin": {
     "kali-defense-mcp": "build/index.js"
   },
+  "files": [
+    "build/",
+    "README.md",
+    "CHANGELOG.md",
+    "TOOLS-REFERENCE.md",
+    "STANDARDS.md",
+    "SAFEGUARDS.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
   },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "kali",
+    "security",
+    "hardening",
+    "defensive-security",
+    "firewall",
+    "iptables",
+    "ufw",
+    "cis-benchmark",
+    "intrusion-detection",
+    "malware-scanning",
+    "container-security",
+    "compliance",
+    "sysctl",
+    "fail2ban",
+    "apparmor",
+    "selinux",
+    "zero-trust",
+    "wireguard",
+    "incident-response"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bottobot/kali-defense-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bottobot/kali-defense-mcp-server/issues"
+  },
+  "homepage": "https://github.com/bottobot/kali-defense-mcp-server#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "linux"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "zod": "^3.25.0"

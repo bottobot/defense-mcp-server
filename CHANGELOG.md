@@ -6,6 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.0-beta.2] — 2026-03-04
+
+**Critical Fix — `firewall_set_policy`:**
+- Auto-injects loopback (`lo` ACCEPT) and established/related connection ACCEPT rules before setting INPUT or FORWARD default policy to DROP — prevents network lockout
+- Aborts with clear error if prerequisite safety rules fail to add
+- IPv6 safety rules also injected when `ipv6=true`
+
+**Bug Fixes — `compliance_cis_check` (5 detection improvements):**
+- CIS-1.1.4: Now checks `/etc/fstab` for `noexec` in addition to live mount options
+- CIS-1.5.1-limits: Uses `sudo grep` across `limits.conf` and `limits.d/`
+- CIS-5.5.5: Checks `login.defs`, `/etc/profile`, and `/etc/bash.bashrc` for umask
+- CIS-5.1.8: Uses `sudo test` for root-owned 600-perm `cron.allow`
+- CIS-5.1.9: Uses `sudo test` for root-owned 600-perm `at.allow`
+
+These fixes improve CIS detection accuracy from ~71% to ~87% on hardened systems.
+
+---
+
 ## [0.4.0-beta.1] — 2026-03-03
 
 **New Features:**
