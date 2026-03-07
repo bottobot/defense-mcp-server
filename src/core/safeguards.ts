@@ -140,6 +140,14 @@ function isSSHModification(operation: string, params: Record<string, unknown>): 
 export class SafeguardRegistry {
   private static instance: SafeguardRegistry | null = null;
 
+  /** Cached detection results with TTL to avoid re-running on every tool call */
+  private detectionCache: {
+    result: { vscode: DetectedApp; docker: DetectedApp; mcp: DetectedApp; dbs: DetectedApp; web: DetectedApp } | null;
+    timestamp: number;
+  } = { result: null, timestamp: 0 };
+
+  private readonly DETECTION_CACHE_TTL = 15_000; // 15 seconds
+
   private constructor() {}
 
   /** Get the singleton instance. */
@@ -338,14 +346,21 @@ export class SafeguardRegistry {
     const impactedApps: string[] = [];
 
     try {
-      // Run all detections in parallel
-      const [vscode, docker, mcp, dbs, web] = await Promise.all([
-        this.detectVSCode(),
-        this.detectDocker(),
-        this.detectMCPServers(),
-        this.detectDatabases(),
-        this.detectWebServers(),
-      ]);
+      // Use cached detections if fresh (system state rarely changes within 15s)
+      let vscode: DetectedApp, docker: DetectedApp, mcp: DetectedApp, dbs: DetectedApp, web: DetectedApp;
+      const now = Date.now();
+      if (this.detectionCache.result && (now - this.detectionCache.timestamp) < this.DETECTION_CACHE_TTL) {
+        ({ vscode, docker, mcp, dbs, web } = this.detectionCache.result);
+      } else {
+        [vscode, docker, mcp, dbs, web] = await Promise.all([
+          this.detectVSCode(),
+          this.detectDocker(),
+          this.detectMCPServers(),
+          this.detectDatabases(),
+          this.detectWebServers(),
+        ]);
+        this.detectionCache = { result: { vscode, docker, mcp, dbs, web }, timestamp: now };
+      }
 
       const detections = [vscode, docker, mcp, dbs, web];
 
@@ -500,13 +515,21 @@ export class SafeguardRegistry {
 
   /** Generate a full safety report of all detected applications. */
   async appSafetyReport(): Promise<SafeguardReport> {
-    const [vscode, docker, mcp, dbs, web] = await Promise.all([
-      this.detectVSCode(),
-      this.detectDocker(),
-      this.detectMCPServers(),
-      this.detectDatabases(),
-      this.detectWebServers(),
-    ]);
+    // Reuse detection cache if fresh
+    let vscode: DetectedApp, docker: DetectedApp, mcp: DetectedApp, dbs: DetectedApp, web: DetectedApp;
+    const now = Date.now();
+    if (this.detectionCache.result && (now - this.detectionCache.timestamp) < this.DETECTION_CACHE_TTL) {
+      ({ vscode, docker, mcp, dbs, web } = this.detectionCache.result);
+    } else {
+      [vscode, docker, mcp, dbs, web] = await Promise.all([
+        this.detectVSCode(),
+        this.detectDocker(),
+        this.detectMCPServers(),
+        this.detectDatabases(),
+        this.detectWebServers(),
+      ]);
+      this.detectionCache = { result: { vscode, docker, mcp, dbs, web }, timestamp: now };
+    }
 
     const detectedApps = [vscode, docker, mcp, dbs, web];
     const activeCount = detectedApps.filter((a) => a.detected).length;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getConfig, getToolTimeout, KNOWN_TOOLS } from "../../src/core/config.js";
+import { getConfig, getToolTimeout, KNOWN_TOOLS, invalidateConfigCache } from "../../src/core/config.js";
 
 describe("config", () => {
     // Save and restore all env vars we might touch
@@ -29,6 +29,8 @@ describe("config", () => {
             envBackup[key] = process.env[key];
             delete process.env[key];
         }
+        // Invalidate config cache so each test sees fresh env vars
+        invalidateConfigCache();
     });
 
     afterEach(() => {

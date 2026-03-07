@@ -125,17 +125,6 @@ async function main() {
   // Resolves allowlisted binary names to absolute paths on this system.
   initializeAllowlist();
 
-  // ── Phase 0a.1: Binary integrity verification ─────────────────────────────
-  // Verify that critical security binaries are owned by their expected packages.
-  // Best-effort: logs warnings but never blocks startup.
-  try {
-    verifyAllBinaries();
-  } catch (err) {
-    console.error(
-      `[startup] ⚠️  Binary integrity verification failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-
   // ── Phase 0b: Harden existing state directories ──────────────────────────
   // Fix permissions on any state files/dirs created before this security fix.
   // Best-effort: silently skips if directories don't exist yet.
@@ -148,19 +137,39 @@ async function main() {
     // Non-fatal — directories may not exist yet
   }
 
-  // ── Phase 0: Detect distribution ─────────────────────────────────────────
-  try {
-    const da = await getDistroAdapter();
-    console.error(`[startup] 🐧 ${da.summary}`);
-  } catch (err) {
+  // ── Phase 0c: Run independent async startup tasks in parallel ─────────────
+  // verifyAllBinaries(), getDistroAdapter(), and validateAllDependencies()
+  // are independent of each other — run them concurrently for faster startup.
+  const [binaryVerifyResult, distroResult, depValidationResult] = await Promise.allSettled([
+    verifyAllBinaries(),
+    getDistroAdapter(),
+    validateAllDependencies(),
+  ]);
+
+  // Log binary integrity results
+  if (binaryVerifyResult.status === "rejected") {
     console.error(
-      `[startup] ⚠️  Distro detection failed: ${err instanceof Error ? err.message : String(err)}`
+      `[startup] ⚠️  Binary integrity verification failed (non-fatal): ${
+        binaryVerifyResult.reason instanceof Error ? binaryVerifyResult.reason.message : String(binaryVerifyResult.reason)
+      }`
+    );
+  }
+
+  // Log distro detection results
+  if (distroResult.status === "fulfilled") {
+    console.error(`[startup] 🐧 ${distroResult.value.summary}`);
+  } else {
+    console.error(
+      `[startup] ⚠️  Distro detection failed: ${
+        distroResult.reason instanceof Error ? distroResult.reason.message : String(distroResult.reason)
+      }`
     );
     console.error("[startup] Continuing with defaults...");
   }
 
-  try {
-    const report = await validateAllDependencies();
+  // Log dependency validation results
+  if (depValidationResult.status === "fulfilled") {
+    const report = depValidationResult.value;
     console.error(formatValidationReport(report));
 
     if (report.criticalMissing.length > 0 && !config.autoInstall) {
@@ -179,10 +188,11 @@ async function main() {
         report.installed.join(", ")
       );
     }
-  } catch (err) {
-    // Dependency validation failure should NOT prevent server startup
+  } else {
     console.error(
-      `[startup] ⚠️  Dependency validation failed: ${err instanceof Error ? err.message : String(err)}`
+      `[startup] ⚠️  Dependency validation failed: ${
+        depValidationResult.reason instanceof Error ? depValidationResult.reason.message : String(depValidationResult.reason)
+      }`
     );
     console.error("[startup] Continuing with server startup...");
   }
