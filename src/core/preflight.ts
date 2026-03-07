@@ -16,8 +16,8 @@
  * @module preflight
  */
 
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { execFileSafe } from "./spawn-safe.js";
 import {
   ToolRegistry,
   initializeRegistry,
@@ -126,7 +126,7 @@ function isPythonModuleInstalled(moduleName: string): boolean {
   const importName =
     PYTHON_IMPORT_MAP[moduleName] ?? moduleName.replace(/-/g, "_");
   try {
-    execFileSync("python3", ["-c", `import ${importName}`], {
+    execFileSafe("python3", ["-c", `import ${importName}`], {
       timeout: 5_000,
       stdio: "pipe",
     });
@@ -141,7 +141,7 @@ function isPythonModuleInstalled(moduleName: string): boolean {
  */
 function isNpmPackageInstalled(packageName: string): boolean {
   try {
-    execFileSync("which", [packageName], {
+    execFileSafe("which", [packageName], {
       timeout: 5_000,
       stdio: "pipe",
     });
@@ -157,7 +157,7 @@ function isNpmPackageInstalled(packageName: string): boolean {
 function isLibraryInstalled(libName: string): boolean {
   try {
     // Try pkg-config first
-    execFileSync("pkg-config", ["--exists", libName], {
+    execFileSafe("pkg-config", ["--exists", libName], {
       timeout: 5_000,
       stdio: "pipe",
     });
@@ -165,7 +165,7 @@ function isLibraryInstalled(libName: string): boolean {
   } catch {
     try {
       // Fallback to ldconfig
-      const result = execFileSync("ldconfig", ["-p"], {
+      const result = execFileSafe("ldconfig", ["-p"], {
         timeout: 5_000,
         stdio: "pipe",
       });

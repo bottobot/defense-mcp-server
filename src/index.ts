@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createRequire } from "node:module";
+
+// ── Dynamic version from package.json ────────────────────────────────────────
+const require = createRequire(import.meta.url);
+const { version: VERSION } = require("../package.json");
 
 // ── Core: Dependency validation & distro detection ───────────────────────────
 import {
@@ -99,7 +104,7 @@ process.on("unhandledRejection", (reason) => {
 async function main() {
   const server = new McpServer({
     name: "kali-defense-mcp-server",
-    version: "0.5.0-beta.2",
+    version: VERSION,
   });
 
   // ── Phase 1: Dependency Validation & Auto-Install ────────────────────────
@@ -109,7 +114,7 @@ async function main() {
   // automatically installed via the system package manager.
   //
   const config = getConfig();
-  console.error("Kali Defense MCP Server v0.5.0-beta.1 starting...");
+  console.error(`Kali Defense MCP Server v${VERSION} starting...`);
   console.error(
     `[startup] Auto-install: ${config.autoInstall ? "ENABLED" : "DISABLED"} | ` +
     `Dry-run: ${config.dryRun ? "YES" : "NO"}`
@@ -247,7 +252,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Kali Defense MCP Server v0.5.0-beta.1 running on stdio");
+  console.error(`Kali Defense MCP Server v${VERSION} running on stdio`);
   console.error(`Registered ${registered} of ${registered + failed} tool modules with ~78 defensive security tools${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`);
   console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }

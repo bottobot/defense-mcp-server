@@ -41,7 +41,7 @@ interface SimpleResult {
 function runSimple(
   command: string,
   args: string[],
-  stdin?: string,
+  stdin?: string | Buffer,
   timeoutMs = 10000
 ): Promise<SimpleResult> {
   return new Promise((resolve) => {
@@ -67,7 +67,8 @@ function runSimple(
     child.stderr?.on("data", (c: Buffer) => stderrChunks.push(c));
 
     if (stdin && child.stdin) {
-      child.stdin.write(stdin);
+      // Write as Buffer to avoid creating immutable V8 strings from passwords
+      child.stdin.write(Buffer.isBuffer(stdin) ? stdin : Buffer.from(stdin, "utf-8"));
       child.stdin.end();
     }
 
@@ -149,7 +150,7 @@ export class SudoSession {
    *
    * @returns result indicating success or failure with error message.
    */
-  async elevate(password: string, timeoutMs?: number): Promise<{ success: boolean; error?: string }> {
+  async elevate(password: string | Buffer, timeoutMs?: number): Promise<{ success: boolean; error?: string }> {
     // Determine who we are first
     const whoami = await runSimple("whoami", []);
     const currentUser = whoami.stdout.trim() || "unknown";
@@ -167,7 +168,7 @@ export class SudoSession {
     const result = await runSimple(
       "sudo",
       ["-S", "-k", "-v", "-p", ""],
-      password + "\n",
+      Buffer.concat([Buffer.isBuffer(password) ? password : Buffer.from(password, "utf-8"), Buffer.from("\n")]),
       10000
     );
 
@@ -311,14 +312,16 @@ export class SudoSession {
 
   // ── Private helpers ──────────────────────────────────────────────────────
 
-  private storePassword(password: string, timeoutMs?: number): void {
+  private storePassword(password: string | Buffer, timeoutMs?: number): void {
     // Zero any existing buffer
     if (this.passwordBuf) {
       this.passwordBuf.fill(0);
     }
 
-    // Store in a new buffer
-    this.passwordBuf = Buffer.from(password, "utf-8");
+    // Store in a new buffer (accept both string and Buffer to avoid V8 string interning)
+    this.passwordBuf = Buffer.isBuffer(password)
+      ? Buffer.from(password)  // defensive copy
+      : Buffer.from(password, "utf-8");
 
     // Set expiry
     const ms = timeoutMs ?? this.defaultTimeoutMs;

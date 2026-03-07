@@ -11,11 +11,11 @@ export default defineConfig({
             exclude: ["src/tools/**/*.ts", "src/index.ts"],
             reporter: ["text", "text-summary", "json"],
             thresholds: {
-                // Start with achievable targets, increase over time
-                lines: 50,
-                functions: 50,
-                branches: 40,
-                statements: 50,
+                // Raised toward 80% target — increase as more tests are added
+                lines: 60,
+                functions: 60,
+                branches: 50,
+                statements: 60,
             },
         },
         testTimeout: 10000,

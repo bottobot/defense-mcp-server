@@ -19,6 +19,11 @@
  */
 
 import { existsSync } from "node:fs";
+// INTENTIONAL EXCEPTION: This module uses execFileSync directly from node:child_process
+// because the command allowlist must be initialized before spawn-safe.ts can function.
+// spawn-safe.ts depends on this module for allowlist resolution, so routing through
+// spawn-safe here would create a circular dependency. This is the only module (besides
+// executor.ts) permitted to import child_process directly.
 import { execFileSync } from "node:child_process";
 
 // ── Types ────────────────────────────────────────────────────────────────────

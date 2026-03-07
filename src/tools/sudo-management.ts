@@ -16,7 +16,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spawn } from "node:child_process";
+import { spawnSafe } from "../core/spawn-safe.js";
 import { SudoSession } from "../core/sudo-session.js";
 import { getConfig } from "../core/config.js";
 import {
@@ -687,7 +687,7 @@ async function detectGuiPasswordTool(): Promise<GuiPasswordTool | null> {
   for (const tool of candidates) {
     try {
       const result = await new Promise<boolean>((resolve) => {
-        const child = spawn("which", [tool.command], {
+        const child = spawnSafe("which", [tool.command], {
           stdio: ["ignore", "pipe", "pipe"],
         });
         child.on("close", (code) => resolve(code === 0));
@@ -711,7 +711,7 @@ async function getGraphicalSessionEnv(): Promise<Record<string, string>> {
 
   try {
     const { readFile } = await import("node:fs/promises");
-    const { execSync } = await import("node:child_process");
+    const { execFileSafe } = await import("../core/spawn-safe.js");
 
     // Find a PID from the user's graphical session (sddm-greeter, Xwayland, or the desktop itself)
     const uid = process.getuid?.() ?? 1000;
@@ -720,7 +720,7 @@ async function getGraphicalSessionEnv(): Promise<Record<string, string>> {
     const candidates = ["sddm", "kwin_wayland", "plasmashell", "gnome-shell", "Xwayland", "xfce4-session"];
     for (const proc of candidates) {
       try {
-        const result = execSync(`pgrep -u ${uid} -o ${proc} 2>/dev/null`, { encoding: "utf-8" }).trim();
+        const result = (execFileSafe("pgrep", ["-u", String(uid), "-o", proc], { encoding: "utf-8", stdio: "pipe" }) as string).trim();
         if (result) {
           pid = result.split("\n")[0];
           break;
@@ -769,7 +769,6 @@ async function getGraphicalSessionEnv(): Promise<Record<string, string>> {
  */
 async function openGuiPasswordDialog(tool: GuiPasswordTool): Promise<string | null> {
   const fs = await import("node:fs");
-  const { execSync } = await import("node:child_process");
   const path = await import("node:path");
   const crypto = await import("node:crypto");
 
@@ -811,7 +810,7 @@ touch '${doneFile}'
 `;
 
     // Launch completely detached — won't be killed with MCP server
-    const bg = spawn("setsid", ["bash", "-c", shellScript], {
+    const bg = spawnSafe("setsid", ["bash", "-c", shellScript], {
       stdio: "ignore",
       detached: true,
       env: sessionEnv,
