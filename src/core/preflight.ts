@@ -204,7 +204,11 @@ export class PreflightEngine {
   private privilegeManager: PrivilegeManager;
   private autoInstaller: AutoInstaller;
 
-  /** Cache to avoid repeated checks for the same tool within a short window */
+  /**
+   * Dependency cache — keyed by tool name only, 60s TTL.
+   * Covers: binary existence, privilege checks, auto-install results.
+   * Cached regardless of params (dependency results don't depend on runtime params).
+   */
   private resultCache: Map<string, { result: PreflightResult; expiry: number }>;
   private static readonly CACHE_TTL = 60_000; // 60 seconds
 
@@ -244,20 +248,17 @@ export class PreflightEngine {
   ): Promise<PreflightResult> {
     const startTime = Date.now();
 
-    // ── Step 1: Check cache ────────────────────────────────────────────
-    // Only return cache when no params are provided (safeguard checks
-    // depend on runtime params and must always run fresh).
-    const cached = this.resultCache.get(toolName);
-    if (
-      !params &&
-      cached &&
-      cached.expiry > Date.now() &&
-      cached.result.passed
-    ) {
-      return cached.result;
-    }
+    // ── Step 1: Check dependency cache ──────────────────────────────────
+    // Dependency results (binary checks, privilege checks) are cached
+    // regardless of params — they don't depend on runtime parameters.
+    // Safeguard checks have their own 15s cache in SafeguardRegistry.
+    const depCached = this.resultCache.get(toolName);
+    const depCacheValid = depCached && depCached.expiry > Date.now() && depCached.result.passed;
 
-    console.error(`[preflight] Running pre-flight for '${toolName}'...`);
+    // If we have a valid dep cache AND no params to safeguard-check, return early
+    if (depCacheValid && !params) {
+      return depCached!.result;
+    }
 
     // ── Step 2: Get manifest ───────────────────────────────────────────
     const manifest = this.registry.getManifest(toolName);
@@ -297,13 +298,26 @@ export class PreflightEngine {
       return result;
     }
 
-    // ── Step 3–4: Check dependencies (includes auto-install) ───────────
-    const dependencies = await this.checkDependencies(manifest);
+    // ── Step 3–4: Use cached dep results or run fresh checks ───────────
+    let dependencies: PreflightResult["dependencies"];
+    let privileges: PreflightResult["privileges"];
 
-    // ── Step 5: Check privileges ───────────────────────────────────────
-    const privileges = await this.checkPrivileges(manifest);
+    if (depCacheValid) {
+      // Reuse cached dependency + privilege results
+      dependencies = depCached!.result.dependencies;
+      privileges = depCached!.result.privileges;
+    } else {
+      console.error(`[preflight] Running pre-flight for '${toolName}'...`);
+      dependencies = await this.checkDependencies(manifest);
+      const privResult = await this.checkPrivileges(manifest);
+      privileges = {
+        satisfied: privResult.satisfied,
+        issues: privResult.issues,
+        recommendations: privResult.recommendations,
+      };
+    }
 
-    // ── Step 6: Determine overall pass/fail ────────────────────────────
+    // ── Step 5: Determine overall pass/fail ────────────────────────────
     const errors: string[] = [];
     const warnings: string[] = [...dependencies.warnings];
 
@@ -343,7 +357,7 @@ export class PreflightEngine {
       warnings.push(rec);
     }
 
-    // ── Step 6: Safeguard checks ───────────────────────────────────────
+    // ── Step 6: Safeguard checks (have own 15s cache via SafeguardRegistry) ─
     let safeguardResult: SafetyResult | undefined;
     if (params) {
       try {
@@ -385,11 +399,7 @@ export class PreflightEngine {
       timestamp: Date.now(),
       duration,
       dependencies,
-      privileges: {
-        satisfied: privileges.satisfied,
-        issues: privileges.issues,
-        recommendations: privileges.recommendations,
-      },
+      privileges,
       safeguards: safeguardResult
         ? {
             safe: safeguardResult.safe,

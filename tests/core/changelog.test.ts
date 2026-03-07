@@ -10,6 +10,7 @@ import {
     type ChangeEntry,
     type ChangelogState,
 } from "../../src/core/changelog.js";
+import { invalidateConfigCache } from "../../src/core/config.js";
 
 describe("changelog", () => {
     let tempDir: string;
@@ -28,6 +29,8 @@ describe("changelog", () => {
         // Redirect config to use temp paths
         process.env.KALI_DEFENSE_CHANGELOG_PATH = changelogPath;
         process.env.KALI_DEFENSE_BACKUP_DIR = backupDir;
+        // Invalidate config cache so getConfig() picks up new env vars
+        invalidateConfigCache();
     });
 
     afterEach(() => {

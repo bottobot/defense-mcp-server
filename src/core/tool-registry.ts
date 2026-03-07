@@ -730,6 +730,9 @@ function mergeTags(
   return Array.from(set);
 }
 
+/** Guard to prevent redundant re-initialization */
+let _registryInitialized = false;
+
 /**
  * Initialize the tool registry by:
  *
@@ -739,11 +742,15 @@ function mergeTags(
  *    preserving binary requirements from the legacy data
  * 4. Returning the populated registry
  *
- * Safe to call multiple times; subsequent calls on an already-populated
- * singleton are idempotent because the data is deterministic.
+ * Safe to call multiple times; subsequent calls return immediately
+ * without re-running migration or overlay logic.
  */
 export function initializeRegistry(): ToolRegistry {
   const registry = ToolRegistry.instance();
+
+  // Guard: skip re-initialization if already done
+  if (_registryInitialized) return registry;
+  _registryInitialized = true;
 
   // Step 1 — Migrate all legacy tool dependencies (binary requirements)
   migrateFromLegacy(registry);
@@ -770,4 +777,12 @@ export function initializeRegistry(): ToolRegistry {
   }
 
   return registry;
+}
+
+/**
+ * Reset the initialization guard (for testing purposes).
+ * @internal
+ */
+export function resetRegistryInitialization(): void {
+  _registryInitialized = false;
 }

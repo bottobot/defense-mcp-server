@@ -266,20 +266,20 @@ describe("command-allowlist", () => {
     });
 
     describe("verifyAllBinaries", () => {
-        it("should run without throwing", () => {
+        it("should run without throwing", async () => {
             initializeAllowlist();
-            expect(() => verifyAllBinaries()).not.toThrow();
+            await expect(verifyAllBinaries()).resolves.not.toThrow();
         });
 
-        it("should return an array of results", () => {
+        it("should return an array of results", async () => {
             initializeAllowlist();
-            const results = verifyAllBinaries();
+            const results = await verifyAllBinaries();
             expect(Array.isArray(results)).toBe(true);
         });
 
-        it("should have binary and path for each result", () => {
+        it("should have binary and path for each result", async () => {
             initializeAllowlist();
-            const results = verifyAllBinaries();
+            const results = await verifyAllBinaries();
             for (const result of results) {
                 expect(result.binary).toBeTruthy();
                 expect(result.path).toBeTruthy();

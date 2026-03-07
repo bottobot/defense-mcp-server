@@ -117,11 +117,32 @@ function parseToolTimeouts(): Partial<Record<KnownTool, number>> {
   return timeouts;
 }
 
+// ── Config cache (avoids re-parsing 15+ env vars on every call) ──────────────
+
+let _configCache: DefenseConfig | null = null;
+let _configCacheTimestamp = 0;
+const CONFIG_CACHE_TTL = 5_000; // 5 seconds
+
 /**
  * Returns the current configuration by reading environment variables.
- * Called fresh each invocation to pick up runtime changes.
+ * Results are cached for 5 seconds to avoid redundant env-var parsing
+ * across the 3–5 calls per tool invocation.
  */
 export function getConfig(): DefenseConfig {
+  const now = Date.now();
+  if (_configCache && (now - _configCacheTimestamp) < CONFIG_CACHE_TTL) {
+    return _configCache;
+  }
+  _configCache = buildConfigFromEnv();
+  _configCacheTimestamp = now;
+  return _configCache;
+}
+
+/**
+ * Build the configuration object by reading all environment variables.
+ * This is the actual parsing logic, called by the cached `getConfig()` wrapper.
+ */
+function buildConfigFromEnv(): DefenseConfig {
   const defaultTimeoutSec = parseInt(
     process.env.KALI_DEFENSE_TIMEOUT_DEFAULT ?? "120",
     10
@@ -191,6 +212,15 @@ export function getConfig(): DefenseConfig {
   }
 
   return config;
+}
+
+/**
+ * Invalidate the config cache, forcing the next `getConfig()` call to
+ * re-read environment variables. Useful for tests.
+ */
+export function invalidateConfigCache(): void {
+  _configCache = null;
+  _configCacheTimestamp = 0;
 }
 
 /**

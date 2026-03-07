@@ -19,12 +19,15 @@
  */
 
 import { existsSync } from "node:fs";
-// INTENTIONAL EXCEPTION: This module uses execFileSync directly from node:child_process
+// INTENTIONAL EXCEPTION: This module uses execFileSync/execFile directly from node:child_process
 // because the command allowlist must be initialized before spawn-safe.ts can function.
 // spawn-safe.ts depends on this module for allowlist resolution, so routing through
 // spawn-safe here would create a circular dependency. This is the only module (besides
 // executor.ts) permitted to import child_process directly.
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -302,10 +305,29 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   { binary: "lxqt-sudo",    candidates: ["/usr/bin/lxqt-sudo"] },
 ];
 
+// ── Module-level constants for resolveSudoCommand() (Opt 6) ──────────────────
+
+/** Sudo flags that take NO argument */
+const SUDO_FLAGS_NO_ARG = new Set([
+  "-S", "-A", "-k", "-K", "-n", "-v", "-b", "-e", "-H", "-i", "-l", "-s",
+  "--stdin", "--askpass", "--reset-timestamp", "--remove-timestamp",
+  "--non-interactive", "--validate", "--background", "--edit",
+  "--set-home", "--login", "--list", "--shell",
+]);
+
+/** Sudo flags that take an argument (the next token) */
+const SUDO_FLAGS_WITH_ARG = new Set([
+  "-p", "-u", "-g", "-C", "-T", "-r",
+  "--prompt", "--user", "--group", "--close-from", "--command-timeout", "--role",
+]);
+
 // ── Internal state ───────────────────────────────────────────────────────────
 
 /** O(1) lookup by bare binary name. */
 const allowlistMap = new Map<string, AllowlistEntry>();
+
+/** O(1) reverse lookup: absolute path → AllowlistEntry */
+const reversePathMap = new Map<string, AllowlistEntry>();
 
 /** Whether `initializeAllowlist()` has been called. */
 let initialized = false;
@@ -331,6 +353,9 @@ export function initializeAllowlist(): void {
   let resolved = 0;
   let unresolved = 0;
 
+  // Clear reverse map for re-initialization
+  reversePathMap.clear();
+
   for (const entry of ALLOWLIST_DEFINITIONS) {
     entry.resolvedPath = undefined;
 
@@ -344,6 +369,16 @@ export function initializeAllowlist(): void {
 
     if (!entry.resolvedPath) {
       unresolved++;
+    }
+
+    // Populate reverse path map for O(1) absolute-path lookups
+    if (entry.resolvedPath) {
+      reversePathMap.set(entry.resolvedPath, entry);
+    }
+    for (const candidate of entry.candidates) {
+      if (existsSync(candidate)) {
+        reversePathMap.set(candidate, entry);
+      }
     }
   }
 
@@ -362,11 +397,16 @@ export function initializeAllowlist(): void {
  * @throws {Error} If the command is not in the allowlist or cannot be found
  */
 export function resolveCommand(command: string): string {
-  // If the command is already an absolute path, check it's an allowlisted path
+  // If the command is already an absolute path, use O(1) reverse lookup
   if (command.startsWith("/")) {
-    // Check if this absolute path belongs to any allowlisted entry
+    if (reversePathMap.has(command)) {
+      return command;
+    }
+    // Fallback: linear scan for paths not yet in the reverse map
+    // (e.g., binaries installed after initializeAllowlist)
     for (const entry of ALLOWLIST_DEFINITIONS) {
       if (entry.candidates.includes(command) || entry.resolvedPath === command) {
+        reversePathMap.set(command, entry); // cache for next time
         return command;
       }
     }
@@ -412,8 +452,12 @@ export function resolveCommand(command: string): string {
  */
 export function isAllowlisted(command: string): boolean {
   if (command.startsWith("/")) {
+    // O(1) reverse lookup first
+    if (reversePathMap.has(command)) return true;
+    // Fallback: linear scan for paths not in the reverse map
     for (const entry of ALLOWLIST_DEFINITIONS) {
       if (entry.candidates.includes(command) || entry.resolvedPath === command) {
+        reversePathMap.set(command, entry); // cache for next time
         return true;
       }
     }
@@ -443,19 +487,7 @@ export function resolveSudoCommand(args: string[]): {
   const sudoPath = resolveCommand("sudo");
 
   // Find the target command in args by skipping sudo flags
-  // sudo flags that take NO argument: -S, -A, -k, -K, -n, -v, -b, -e, -H, -i, -l, -s
-  // sudo flags that take an argument: -p <prompt>, -u <user>, -g <group>, -C <fd>, -T <timeout>
-  const SUDO_FLAGS_NO_ARG = new Set([
-    "-S", "-A", "-k", "-K", "-n", "-v", "-b", "-e", "-H", "-i", "-l", "-s",
-    "--stdin", "--askpass", "--reset-timestamp", "--remove-timestamp",
-    "--non-interactive", "--validate", "--background", "--edit",
-    "--set-home", "--login", "--list", "--shell",
-  ]);
-  const SUDO_FLAGS_WITH_ARG = new Set([
-    "-p", "-u", "-g", "-C", "-T", "-r",
-    "--prompt", "--user", "--group", "--close-from", "--command-timeout", "--role",
-  ]);
-
+  // Uses module-level SUDO_FLAGS_NO_ARG / SUDO_FLAGS_WITH_ARG constants
   let targetIndex = -1;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -658,20 +690,132 @@ export function verifyBinaryOwnership(
 }
 
 /**
+ * Async version of binary ownership verification using execFile (non-blocking).
+ * Used by the parallelized `verifyAllBinaries()`.
+ */
+async function verifyBinaryOwnershipAsync(
+  binaryPath: string,
+  expectedPackage?: string,
+): Promise<BinaryVerificationResult> {
+  const binary = binaryPath.split("/").pop() ?? binaryPath;
+
+  if (!existsSync(binaryPath)) {
+    return {
+      binary,
+      path: binaryPath,
+      verified: false,
+      message: `Binary not found at ${binaryPath}`,
+    };
+  }
+
+  const verifier = detectPackageVerifier();
+  if (!verifier) {
+    return {
+      binary,
+      path: binaryPath,
+      verified: false,
+      message: "No package manager found for verification (need dpkg, rpm, or pacman)",
+    };
+  }
+
+  try {
+    let output: string;
+    let ownerPackage: string;
+
+    switch (verifier) {
+      case "dpkg": {
+        const dpkgPath = existsSync("/usr/bin/dpkg") ? "/usr/bin/dpkg" : "/bin/dpkg";
+        const { stdout } = await execFileAsync(dpkgPath, ["-S", binaryPath], {
+          encoding: "utf-8",
+          timeout: 10_000,
+        });
+        output = stdout.trim();
+        const dpkgMatch = output.match(/^([^:]+?)(?::[^:]+)?:\s/);
+        ownerPackage = dpkgMatch ? dpkgMatch[1].trim() : output.split(":")[0].trim();
+        break;
+      }
+      case "rpm": {
+        const rpmPath = existsSync("/usr/bin/rpm") ? "/usr/bin/rpm" : "/bin/rpm";
+        const { stdout } = await execFileAsync(rpmPath, ["-qf", binaryPath], {
+          encoding: "utf-8",
+          timeout: 10_000,
+        });
+        output = stdout.trim();
+        const rpmMatch = output.match(/^(.+?)-\d/);
+        ownerPackage = rpmMatch ? rpmMatch[1] : output;
+        break;
+      }
+      case "pacman": {
+        const { stdout } = await execFileAsync("/usr/bin/pacman", ["-Qo", binaryPath], {
+          encoding: "utf-8",
+          timeout: 10_000,
+        });
+        output = stdout.trim();
+        const pacmanMatch = output.match(/is owned by (\S+)/);
+        ownerPackage = pacmanMatch ? pacmanMatch[1] : output;
+        break;
+      }
+    }
+
+    if (!expectedPackage) {
+      return {
+        binary,
+        path: binaryPath,
+        verified: true,
+        owner: ownerPackage,
+        message: `Owned by package: ${ownerPackage}`,
+      };
+    }
+
+    const expectedPackages = CRITICAL_BINARY_PACKAGES[binary] ?? [expectedPackage];
+    const isExpected = expectedPackages.some((pkg) =>
+      ownerPackage === pkg || ownerPackage.startsWith(`${pkg}:`)
+    );
+
+    if (isExpected) {
+      return {
+        binary,
+        path: binaryPath,
+        verified: true,
+        owner: ownerPackage,
+        message: `Verified: owned by expected package ${ownerPackage}`,
+      };
+    }
+
+    return {
+      binary,
+      path: binaryPath,
+      verified: false,
+      owner: ownerPackage,
+      message: `WARNING: owned by '${ownerPackage}', expected one of [${expectedPackages.join(", ")}]`,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      binary,
+      path: binaryPath,
+      verified: false,
+      message: `Verification failed: ${msg}`,
+    };
+  }
+}
+
+/**
  * Verify all resolved critical binaries against their expected packages.
  *
  * Runs after `initializeAllowlist()` and logs warnings for any binaries
  * that can't be verified or are owned by unexpected packages.
  *
+ * All verifications run in parallel for faster startup.
  * This is best-effort — it never throws or blocks startup.
  *
  * @returns Array of verification results for all critical binaries that were resolved
  */
-export function verifyAllBinaries(): BinaryVerificationResult[] {
-  const results: BinaryVerificationResult[] = [];
-  let verified = 0;
-  let warnings = 0;
+export async function verifyAllBinaries(): Promise<BinaryVerificationResult[]> {
   let skipped = 0;
+
+  // Build list of verification tasks to run in parallel
+  const tasks: Promise<BinaryVerificationResult>[] = [];
 
   for (const [binaryName, expectedPackages] of Object.entries(CRITICAL_BINARY_PACKAGES)) {
     const entry = allowlistMap.get(binaryName);
@@ -680,18 +824,29 @@ export function verifyAllBinaries(): BinaryVerificationResult[] {
       continue; // Binary not found on system — nothing to verify
     }
 
-    try {
-      const result = verifyBinaryOwnership(entry.resolvedPath, expectedPackages[0]);
-      results.push(result);
+    tasks.push(
+      verifyBinaryOwnershipAsync(entry.resolvedPath, expectedPackages[0])
+        .catch((): BinaryVerificationResult => ({
+          binary: binaryName,
+          path: entry.resolvedPath!,
+          verified: false,
+          message: `Verification failed unexpectedly`,
+        }))
+    );
+  }
 
-      if (result.verified) {
-        verified++;
-      } else {
-        warnings++;
-        console.error(`[binary-integrity] ⚠ ${result.message}`);
-      }
-    } catch {
-      skipped++;
+  // Run all verifications in parallel
+  const results = await Promise.all(tasks);
+
+  let verified = 0;
+  let warnings = 0;
+
+  for (const result of results) {
+    if (result.verified) {
+      verified++;
+    } else {
+      warnings++;
+      console.error(`[binary-integrity] ⚠ ${result.message}`);
     }
   }
 
