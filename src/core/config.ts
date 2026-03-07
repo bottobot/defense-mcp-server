@@ -57,6 +57,10 @@ export interface DefenseConfig {
   toolTimeouts: Partial<Record<KnownTool, number>>;
   /** Sudo session timeout in milliseconds (default: 15 minutes) */
   sudoSessionTimeout: number;
+  /** Command execution timeout in ms (falls back to defaultTimeout; env: KALI_DEFENSE_COMMAND_TIMEOUT) */
+  commandTimeout: number;
+  /** Network operation timeout in ms (default: 30s; env: KALI_DEFENSE_NETWORK_TIMEOUT) */
+  networkTimeout: number;
 }
 
 /**
@@ -170,6 +174,14 @@ export function getConfig(): DefenseConfig {
         if (!isNaN(minutes) && minutes > 0) return minutes * 60 * 1000;
       }
       return 15 * 60 * 1000; // default: 15 minutes
+    })(),
+    commandTimeout: (() => {
+      const sec = parseInt(process.env.KALI_DEFENSE_COMMAND_TIMEOUT ?? "120", 10);
+      return isNaN(sec) || sec <= 0 ? 120_000 : sec * 1000;
+    })(),
+    networkTimeout: (() => {
+      const sec = parseInt(process.env.KALI_DEFENSE_NETWORK_TIMEOUT ?? "30", 10);
+      return isNaN(sec) || sec <= 0 ? 30_000 : sec * 1000;
     })(),
   };
 

@@ -1,21 +1,19 @@
 /**
  * BackupManager — manages file backups with manifest tracking.
  *
- * Backups are stored under ~/.kali-mcp-backups/ with timestamped filenames.
+ * Backups are stored under ~/.kali-defense/backups/ with timestamped filenames.
  * A manifest.json tracks all backups for listing and restore operations.
  */
 
 import {
-  copyFileSync,
   existsSync,
-  mkdirSync,
   readFileSync,
-  writeFileSync,
   unlinkSync,
   readdirSync,
   statSync,
 } from "node:fs";
 import { join, basename, dirname } from "node:path";
+import { secureWriteFileSync, secureMkdirSync, secureCopyFileSync } from "./secure-fs.js";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -30,7 +28,8 @@ export interface BackupEntry {
   sizeBytes: number;
 }
 
-interface BackupManifest {
+export interface BackupManifest {
+  version: 1;
   backups: BackupEntry[];
 }
 
@@ -47,44 +46,43 @@ export class BackupManager {
   private readonly manifestPath: string;
 
   constructor(backupDir?: string) {
-    this.backupDir = backupDir ?? join(homedir(), ".kali-mcp-backups");
+    this.backupDir = backupDir ?? join(homedir(), ".kali-defense", "backups");
     this.manifestPath = join(this.backupDir, "manifest.json");
   }
 
   /** Ensure backup directory exists. */
   private ensureDir(): void {
-    if (!existsSync(this.backupDir)) {
-      mkdirSync(this.backupDir, { recursive: true });
-    }
+    secureMkdirSync(this.backupDir);
   }
 
-  /** Read manifest from disk. */
+  /** Read manifest from disk with migration from old format. */
   private readManifest(): BackupManifest {
     try {
       if (existsSync(this.manifestPath)) {
         const raw = readFileSync(this.manifestPath, "utf-8");
         const parsed = JSON.parse(raw);
         if (parsed && Array.isArray(parsed.backups)) {
-          return parsed as BackupManifest;
+          // Migrate: ensure version field is present (old format may lack it)
+          return { version: 1, backups: parsed.backups };
         }
       }
     } catch {
       // Corrupt or missing manifest — start fresh
     }
-    return { backups: [] };
+    return { version: 1, backups: [] };
   }
 
   /** Write manifest to disk. */
   private writeManifest(manifest: BackupManifest): void {
     this.ensureDir();
-    writeFileSync(this.manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+    secureWriteFileSync(this.manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
   }
 
   /**
-   * Create a backup of a file.
-   * @returns The backup ID.
+   * Create a backup of a file (synchronous).
+   * @returns The BackupEntry with id and backupPath.
    */
-  async backup(filePath: string): Promise<string> {
+  backupSync(filePath: string): BackupEntry {
     const validated = FilePathSchema.parse(filePath);
     this.ensureDir();
 
@@ -94,12 +92,12 @@ export class BackupManager {
 
     const id = randomUUID();
     const now = new Date();
-    const ts = now.toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
+    const ts = now.toISOString().replace(/[:.]/g, "-");
     const name = basename(validated);
     const backupName = `${ts}_${name}`;
     const backupPath = join(this.backupDir, backupName);
 
-    copyFileSync(validated, backupPath);
+    secureCopyFileSync(validated, backupPath);
 
     const stat = statSync(backupPath);
     const entry: BackupEntry = {
@@ -115,7 +113,16 @@ export class BackupManager {
     this.writeManifest(manifest);
 
     console.error(`[backup-manager] Backed up ${validated} → ${backupPath} (id: ${id})`);
-    return id;
+    return entry;
+  }
+
+  /**
+   * Create a backup of a file.
+   * @returns The backup ID.
+   */
+  async backup(filePath: string): Promise<string> {
+    const entry = this.backupSync(filePath);
+    return entry.id;
   }
 
   /**
@@ -134,12 +141,8 @@ export class BackupManager {
       throw new Error(`Backup file missing on disk: ${entry.backupPath}`);
     }
 
-    const targetDir = dirname(entry.originalPath);
-    if (!existsSync(targetDir)) {
-      mkdirSync(targetDir, { recursive: true });
-    }
-
-    copyFileSync(entry.backupPath, entry.originalPath);
+    secureMkdirSync(dirname(entry.originalPath));
+    secureCopyFileSync(entry.backupPath, entry.originalPath);
     console.error(`[backup-manager] Restored ${entry.backupPath} → ${entry.originalPath}`);
   }
 

@@ -34,6 +34,10 @@ import {
 } from "./dependency-validator.js";
 import { getConfig } from "./config.js";
 import { getToolRequirementForBinary } from "./tool-dependencies.js";
+import {
+  SafeguardRegistry,
+  type SafetyResult,
+} from "./safeguards.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +66,18 @@ export interface PreflightResult {
     satisfied: boolean;
     issues: PrivilegeIssue[];
     recommendations: string[];
+  };
+
+  // Safeguard checks (populated when params are provided)
+  safeguards?: {
+    /** Whether the operation is safe */
+    safe: boolean;
+    /** Blocking safety issues (prevent execution) */
+    blockers: string[];
+    /** Non-blocking safety warnings */
+    warnings: string[];
+    /** Applications impacted by the operation */
+    impactedApps: string[];
   };
 
   /** Human-readable summary */
@@ -222,12 +238,22 @@ export class PreflightEngine {
    * 6. Determine overall pass/fail and generate summary
    * 7. Cache and return the result
    */
-  async runPreflight(toolName: string): Promise<PreflightResult> {
+  async runPreflight(
+    toolName: string,
+    params?: Record<string, unknown>,
+  ): Promise<PreflightResult> {
     const startTime = Date.now();
 
     // ── Step 1: Check cache ────────────────────────────────────────────
+    // Only return cache when no params are provided (safeguard checks
+    // depend on runtime params and must always run fresh).
     const cached = this.resultCache.get(toolName);
-    if (cached && cached.expiry > Date.now() && cached.result.passed) {
+    if (
+      !params &&
+      cached &&
+      cached.expiry > Date.now() &&
+      cached.result.passed
+    ) {
       return cached.result;
     }
 
@@ -317,6 +343,39 @@ export class PreflightEngine {
       warnings.push(rec);
     }
 
+    // ── Step 6: Safeguard checks ───────────────────────────────────────
+    let safeguardResult: SafetyResult | undefined;
+    if (params) {
+      try {
+        const safeguardRegistry = SafeguardRegistry.getInstance();
+        safeguardResult = await safeguardRegistry.checkSafety(toolName, params);
+
+        // Add safeguard warnings to the overall warnings
+        if (safeguardResult.warnings.length > 0) {
+          warnings.push(...safeguardResult.warnings);
+        }
+
+        // Add safeguard blockers to the overall errors
+        if (!safeguardResult.safe) {
+          for (const blocker of safeguardResult.blockers) {
+            errors.push(blocker);
+          }
+        }
+
+        console.error(
+          `[preflight] Safeguards: ${safeguardResult.blockers.length} blocker(s), ` +
+            `${safeguardResult.warnings.length} warning(s)`,
+        );
+      } catch (err) {
+        console.error(
+          `[preflight] ⚠ Safeguard check failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        // Safeguard failure is non-blocking — log and continue
+      }
+    }
+
     const passed = errors.length === 0;
     const duration = Date.now() - startTime;
 
@@ -331,6 +390,14 @@ export class PreflightEngine {
         issues: privileges.issues,
         recommendations: privileges.recommendations,
       },
+      safeguards: safeguardResult
+        ? {
+            safe: safeguardResult.safe,
+            blockers: safeguardResult.blockers,
+            warnings: safeguardResult.warnings,
+            impactedApps: safeguardResult.impactedApps,
+          }
+        : undefined,
       summary: "",
       errors,
       warnings,
@@ -645,6 +712,17 @@ export class PreflightEngine {
         for (const issue of blockingIssues) {
           lines.push(`    • ${issue.description}`);
           lines.push(`    → ${issue.resolution}`);
+        }
+      }
+
+      // Safeguard blockers
+      if (
+        result.safeguards &&
+        result.safeguards.blockers.length > 0
+      ) {
+        lines.push("  Safety blockers:");
+        for (const blocker of result.safeguards.blockers) {
+          lines.push(`    🛑 ${blocker}`);
         }
       }
 

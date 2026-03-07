@@ -2,8 +2,41 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
 import { getConfig } from "../core/config.js";
-import { createTextContent, createErrorContent } from "../core/parsers.js";
+import { createTextContent, createErrorContent, formatToolOutput } from "../core/parsers.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
+import { detectDistro } from "../core/distro.js";
+import * as https from "node:https";
+
+/** Simple HTTPS GET that returns the response body as a string. Uses networkTimeout from config. */
+function httpsGet(url: string): Promise<string> {
+  const config = getConfig();
+  const timeoutMs = config.networkTimeout;
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: timeoutMs }, (res) => {
+      if (res.statusCode === 403) {
+        reject(new Error("NVD API rate limit exceeded (HTTP 403). Wait 30s or use an API key."));
+        return;
+      }
+      if (res.statusCode && res.statusCode >= 300) {
+        reject(new Error(`HTTP ${res.statusCode}`));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    });
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      const timeoutSec = Math.round(timeoutMs / 1000);
+      reject(new Error(
+        `Network request timed out after ${timeoutSec} seconds. ` +
+        `The target may be unreachable or the network is slow. ` +
+        `Consider increasing KALI_DEFENSE_NETWORK_TIMEOUT (current: ${timeoutSec}s).`
+      ));
+    });
+  });
+}
 
 export function registerPatchManagementTools(server: McpServer): void {
 
@@ -581,5 +614,162 @@ export function registerPatchManagementTools(server: McpServer): void {
         };
       }
     },
+  );
+
+  // Tool 5: vulnerability_intel (merged: lookup_cve, scan_packages_cves, get_patch_urgency)
+  server.tool(
+    "vulnerability_intel",
+    "Vulnerability intelligence: look up CVEs, scan packages for known CVEs, or check patch urgency for a package.",
+    {
+      action: z.enum(["lookup", "scan", "urgency"]).describe("Action: lookup=CVE lookup, scan=scan packages for CVEs, urgency=check patch urgency"),
+      // lookup params
+      cveId: z.string().optional().describe("CVE ID e.g. CVE-2024-1234 (lookup action)"),
+      // scan params
+      maxPackages: z.number().optional().default(50).describe("Maximum packages to check (scan action)"),
+      // urgency params
+      packageName: z.string().optional().describe("Package name to check (urgency action)"),
+      // shared
+      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+    },
+    async (params) => {
+      const { action } = params;
+
+      switch (action) {
+        case "lookup": {
+          const { cveId, dryRun } = params;
+          try {
+            if (!cveId) {
+              return { content: [createErrorContent("cveId is required for lookup action")], isError: true };
+            }
+            if (!/^CVE-\d{4}-\d{4,}$/.test(cveId)) {
+              return { content: [createErrorContent("cveId must match format CVE-YYYY-NNNN+")], isError: true };
+            }
+
+            if (dryRun) {
+              return { content: [formatToolOutput({ dryRun: true, url: `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${cveId}` })] };
+            }
+
+            const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${cveId}`;
+            const body = await httpsGet(url);
+            const data = JSON.parse(body);
+
+            const vuln = data?.vulnerabilities?.[0]?.cve;
+            if (!vuln) {
+              return { content: [formatToolOutput({ cveId, found: false })] };
+            }
+
+            const description = vuln.descriptions?.find((d: { lang: string; value: string }) => d.lang === "en")?.value ?? "No description";
+            const metrics = vuln.metrics ?? {};
+            const cvss31 = metrics.cvssMetricV31?.[0]?.cvssData;
+            const cvss2 = metrics.cvssMetricV2?.[0]?.cvssData;
+
+            return {
+              content: [formatToolOutput({
+                cveId: vuln.id,
+                description,
+                published: vuln.published,
+                lastModified: vuln.lastModified,
+                cvssV31: cvss31 ? { score: cvss31.baseScore, severity: cvss31.baseSeverity, vector: cvss31.vectorString } : null,
+                cvssV2: cvss2 ? { score: cvss2.baseScore, vector: cvss2.vectorString } : null,
+                references: (vuln.references ?? []).slice(0, 10).map((r: { url: string }) => r.url),
+              })],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`CVE lookup failed: ${msg}`)], isError: true };
+          }
+        }
+
+        case "scan": {
+          const { maxPackages, dryRun } = params;
+          try {
+            const distro = await detectDistro();
+
+            if (dryRun) {
+              return { content: [formatToolOutput({ dryRun: true, distro: distro.id, method: distro.family === "debian" ? "apt-get upgrade -s / debsecan" : "dnf updateinfo" })] };
+            }
+
+            if (distro.family === "debian") {
+              const debsecan = await executeCommand({ command: "which", args: ["debsecan"], timeout: 5000 });
+              if (debsecan.exitCode === 0) {
+                const result = await executeCommand({ command: "debsecan", args: ["--format", "detail"], timeout: 60000 });
+                const lines = result.stdout.trim().split("\n").filter(Boolean);
+                return { content: [formatToolOutput({ tool: "debsecan", totalFindings: lines.length, findings: lines.slice(0, maxPackages) })] };
+              }
+
+              const result = await executeCommand({ command: "apt-get", args: ["upgrade", "-s"], timeout: 30000 });
+              const upgradable = result.stdout.split("\n")
+                .filter((l) => l.startsWith("Inst "))
+                .slice(0, maxPackages)
+                .map((l) => { const match = l.match(/^Inst\s+(\S+)\s+\[(\S+)\]\s+\((\S+)/); return match ? { package: match[1], current: match[2], available: match[3] } : null; })
+                .filter(Boolean);
+
+              return { content: [formatToolOutput({ tool: "apt-get upgrade -s", upgradablePackages: upgradable.length, packages: upgradable })] };
+            }
+
+            if (distro.family === "rhel") {
+              const result = await executeCommand({ command: "dnf", args: ["updateinfo", "list", "--security"], timeout: 30000 });
+              const lines = result.stdout.trim().split("\n").filter(Boolean).slice(0, maxPackages);
+              return { content: [formatToolOutput({ tool: "dnf updateinfo", findings: lines.length, details: lines })] };
+            }
+
+            return { content: [createErrorContent(`CVE scanning not supported for distro family: ${distro.family}`)], isError: true };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Package CVE scan failed: ${msg}`)], isError: true };
+          }
+        }
+
+        case "urgency": {
+          const { packageName, dryRun } = params;
+          try {
+            if (!packageName) {
+              return { content: [createErrorContent("packageName is required for urgency action")], isError: true };
+            }
+
+            const distro = await detectDistro();
+
+            if (dryRun) {
+              return { content: [formatToolOutput({ dryRun: true, package: packageName, distro: distro.id })] };
+            }
+
+            const info: Record<string, unknown> = { package: packageName, distro: distro.id };
+
+            if (distro.family === "debian") {
+              const dpkg = await executeCommand({ command: "dpkg-query", args: ["-W", "-f", "${Version}", packageName], timeout: 10000 });
+              info.installedVersion = dpkg.exitCode === 0 ? dpkg.stdout.trim() : "not installed";
+
+              const apt = await executeCommand({ command: "apt-cache", args: ["policy", packageName], timeout: 10000 });
+              if (apt.exitCode === 0) {
+                const candidate = apt.stdout.match(/Candidate:\s*(\S+)/)?.[1];
+                info.candidateVersion = candidate ?? "unknown";
+                info.updateAvailable = candidate && candidate !== info.installedVersion;
+              }
+
+              const changelog = await executeCommand({ command: "apt-get", args: ["changelog", packageName], timeout: 15000 });
+              if (changelog.exitCode === 0) {
+                info.securityEntries = changelog.stdout.split("\n").filter((l) => /CVE-\d{4}-\d{4,}|security/i.test(l)).slice(0, 10);
+              }
+            } else if (distro.family === "rhel") {
+              const rpm = await executeCommand({ command: "rpm", args: ["-q", packageName], timeout: 10000 });
+              info.installedVersion = rpm.exitCode === 0 ? rpm.stdout.trim() : "not installed";
+
+              const updateinfo = await executeCommand({ command: "dnf", args: ["updateinfo", "info", packageName], timeout: 15000 });
+              if (updateinfo.exitCode === 0) {
+                info.advisories = updateinfo.stdout.slice(0, 5000);
+              }
+            }
+
+            return { content: [formatToolOutput(info)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Patch urgency check failed: ${msg}`)], isError: true };
+          }
+        }
+
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
+      }
+    }
   );
 }

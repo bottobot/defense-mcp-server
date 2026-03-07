@@ -9,10 +9,18 @@ import {
 } from "./core/dependency-validator.js";
 import { getConfig } from "./core/config.js";
 import { getDistroAdapter } from "./core/distro-adapter.js";
+import { initializeAllowlist, verifyAllBinaries } from "./core/command-allowlist.js";
+import { hardenDirPermissions } from "./core/secure-fs.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // ── Core: Pre-flight validation system ───────────────────────────────────────
 import { createPreflightServer, invalidatePreflightCaches } from './core/tool-wrapper.js';
 import { initializeRegistry } from './core/tool-registry.js';
+
+// ── Core: Lifecycle management ───────────────────────────────────────────────
+import { SudoSession } from "./core/sudo-session.js";
+import { logChange, createChangeEntry } from "./core/changelog.js";
 
 // ── Original tool modules ────────────────────────────────────────────────────
 import { registerFirewallTools } from "./tools/firewall.js";
@@ -28,7 +36,7 @@ import { registerEncryptionTools } from "./tools/encryption.js";
 import { registerContainerSecurityTools } from "./tools/container-security.js";
 import { registerMetaTools } from "./tools/meta.js";
 import { registerPatchManagementTools } from "./tools/patch-management.js";
-import { registerSecretsManagementTools } from "./tools/secrets-management.js";
+import { registerSecretsTools } from "./tools/secrets.js";
 import { registerIncidentResponseTools } from "./tools/incident-response.js";
 
 // ── Sudo privilege management ────────────────────────────────────────────────
@@ -36,22 +44,62 @@ import { registerSudoManagementTools } from "./tools/sudo-management.js";
 
 // ── New tool modules ─────────────────────────────────────────────────────────
 import { registerSupplyChainSecurityTools } from "./tools/supply-chain-security.js";
-import { registerMemoryProtectionTools } from "./tools/memory-protection.js";
 import { registerDriftDetectionTools } from "./tools/drift-detection.js";
-import { registerVulnerabilityIntelTools } from "./tools/vulnerability-intel.js";
-import { registerSecurityPostureTools } from "./tools/security-posture.js";
-import { registerSecretsScannerTools } from "./tools/secrets-scanner.js";
 import { registerZeroTrustNetworkTools } from "./tools/zero-trust-network.js";
-import { registerContainerAdvancedTools } from "./tools/container-advanced.js";
-import { registerComplianceExtendedTools } from "./tools/compliance-extended.js";
 import { registerEbpfSecurityTools } from "./tools/ebpf-security.js";
-import { registerAutomationWorkflowTools } from "./tools/automation-workflows.js";
 import { registerAppHardeningTools } from "./tools/app-hardening.js";
+
+// ── Graceful shutdown handler ────────────────────────────────────────────────
+
+function gracefulShutdown(signal: string) {
+  console.error(`\n[shutdown] Received ${signal} — cleaning up...`);
+
+  try {
+    // 1. Zero the sudo password buffer
+    const session = SudoSession.getInstance();
+    if (session.isElevated()) {
+      session.drop();
+      console.error("[shutdown] Sudo session dropped, password zeroed");
+    }
+  } catch { /* ignore if not initialized */ }
+
+  try {
+    // 2. Log the shutdown to changelog
+    logChange(createChangeEntry({
+      tool: "server",
+      action: `Server shutdown via ${signal}`,
+      target: "server",
+      before: "running",
+      after: "stopped",
+      dryRun: false,
+      success: true,
+    }));
+  } catch { /* ignore if changelog unavailable */ }
+
+  console.error("[shutdown] Cleanup complete, exiting");
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+process.on("uncaughtException", (err) => {
+  console.error(`[fatal] Uncaught exception: ${err.message}`);
+  console.error(err.stack);
+  gracefulShutdown("uncaughtException");
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error(`[fatal] Unhandled rejection: ${reason}`);
+  gracefulShutdown("unhandledRejection");
+});
+
+// ── Main entry point ─────────────────────────────────────────────────────────
 
 async function main() {
   const server = new McpServer({
     name: "kali-defense-mcp-server",
-    version: "0.4.0-beta.1",
+    version: "0.5.0-beta.2",
   });
 
   // ── Phase 1: Dependency Validation & Auto-Install ────────────────────────
@@ -61,11 +109,39 @@ async function main() {
   // automatically installed via the system package manager.
   //
   const config = getConfig();
-  console.error("Kali Defense MCP Server v0.4.0-beta.1 starting...");
+  console.error("Kali Defense MCP Server v0.5.0-beta.1 starting...");
   console.error(
     `[startup] Auto-install: ${config.autoInstall ? "ENABLED" : "DISABLED"} | ` +
     `Dry-run: ${config.dryRun ? "YES" : "NO"}`
   );
+
+  // ── Phase 0a: Initialize command allowlist ────────────────────────────────
+  // Must run before any command execution (dependency validation, tool registration).
+  // Resolves allowlisted binary names to absolute paths on this system.
+  initializeAllowlist();
+
+  // ── Phase 0a.1: Binary integrity verification ─────────────────────────────
+  // Verify that critical security binaries are owned by their expected packages.
+  // Best-effort: logs warnings but never blocks startup.
+  try {
+    verifyAllBinaries();
+  } catch (err) {
+    console.error(
+      `[startup] ⚠️  Binary integrity verification failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  // ── Phase 0b: Harden existing state directories ──────────────────────────
+  // Fix permissions on any state files/dirs created before this security fix.
+  // Best-effort: silently skips if directories don't exist yet.
+  try {
+    const stateDir = join(homedir(), ".kali-defense");
+    hardenDirPermissions(stateDir);
+    // Also harden the backups subdirectory if it exists
+    hardenDirPermissions(join(stateDir, "backups"));
+  } catch {
+    // Non-fatal — directories may not exist yet
+  }
 
   // ── Phase 0: Detect distribution ─────────────────────────────────────────
   try {
@@ -118,48 +194,61 @@ async function main() {
   // Wrap server with pre-flight middleware
   const wrappedServer = createPreflightServer(server);
 
-  // ── Phase 2: Register all defensive tool modules ─────────────────────────
+  // ── Phase 2: Register all defensive tool modules (with error isolation) ──
+
+  let registered = 0;
+  let failed = 0;
+  const failedModules: string[] = [];
+
+  function safeRegister(name: string, fn: (server: any) => void) {
+    try {
+      fn(wrappedServer);
+      registered++;
+    } catch (err) {
+      failed++;
+      failedModules.push(name);
+      console.error(`[startup] ⚠ Failed to register ${name} tools: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   // Sudo privilege management (must be registered first — prerequisite for other tools)
-  registerSudoManagementTools(wrappedServer);
+  safeRegister("sudo-management", registerSudoManagementTools);
 
   // Original tool modules
-  registerFirewallTools(wrappedServer);
-  registerHardeningTools(wrappedServer);
-  registerIdsTools(wrappedServer);
-  registerLoggingTools(wrappedServer);
-  registerNetworkDefenseTools(wrappedServer);
-  registerComplianceTools(wrappedServer);
-  registerMalwareTools(wrappedServer);
-  registerBackupTools(wrappedServer);
-  registerAccessControlTools(wrappedServer);
-  registerEncryptionTools(wrappedServer);
-  registerContainerSecurityTools(wrappedServer);
-  registerMetaTools(wrappedServer);
-  registerPatchManagementTools(wrappedServer);
-  registerSecretsManagementTools(wrappedServer);
-  registerIncidentResponseTools(wrappedServer);
+  safeRegister("firewall", registerFirewallTools);
+  safeRegister("hardening", registerHardeningTools);
+  safeRegister("ids", registerIdsTools);
+  safeRegister("logging", registerLoggingTools);
+  safeRegister("network-defense", registerNetworkDefenseTools);
+  safeRegister("compliance", registerComplianceTools);
+  safeRegister("malware", registerMalwareTools);
+  safeRegister("backup", registerBackupTools);
+  safeRegister("access-control", registerAccessControlTools);
+  safeRegister("encryption", registerEncryptionTools);
+  safeRegister("container-security", registerContainerSecurityTools);
+  safeRegister("meta", registerMetaTools);
+  safeRegister("patch-management", registerPatchManagementTools);
+  safeRegister("secrets", registerSecretsTools);
+  safeRegister("incident-response", registerIncidentResponseTools);
 
   // New tool modules
-  registerSupplyChainSecurityTools(wrappedServer);
-  registerMemoryProtectionTools(wrappedServer);
-  registerDriftDetectionTools(wrappedServer);
-  registerVulnerabilityIntelTools(wrappedServer);
-  registerSecurityPostureTools(wrappedServer);
-  registerSecretsScannerTools(wrappedServer);
-  registerZeroTrustNetworkTools(wrappedServer);
-  registerContainerAdvancedTools(wrappedServer);
-  registerComplianceExtendedTools(wrappedServer);
-  registerEbpfSecurityTools(wrappedServer);
-  registerAutomationWorkflowTools(wrappedServer);
-  registerAppHardeningTools(wrappedServer);
+  safeRegister("supply-chain-security", registerSupplyChainSecurityTools);
+  safeRegister("drift-detection", registerDriftDetectionTools);
+  safeRegister("zero-trust-network", registerZeroTrustNetworkTools);
+  safeRegister("ebpf-security", registerEbpfSecurityTools);
+  safeRegister("app-hardening", registerAppHardeningTools);
+
+  // Fail hard if no modules loaded at all
+  if (registered === 0) {
+    throw new Error("No tool modules loaded — server cannot start");
+  }
 
   // ── Phase 3: Connect transport ───────────────────────────────────────────
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Kali Defense MCP Server v0.4.0-beta.1 running on stdio");
-  console.error("Registered 28 tool modules with 137+ defensive security tools");
+  console.error("Kali Defense MCP Server v0.5.0-beta.1 running on stdio");
+  console.error(`Registered ${registered} of ${registered + failed} tool modules with ~78 defensive security tools${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`);
   console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }
 

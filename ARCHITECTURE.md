@@ -72,7 +72,7 @@ kali-defense-mcp-server/
 │   │   ├── distro.ts            ← Linux distribution detection
 │   │   ├── installer.ts         ← defensive tool auto-installation
 │   │   ├── policy-engine.ts     ← policy evaluation engine for compliance checks
-│   │   ├── tool-registry.ts     ← enhanced tool manifest registry (155 tools, sudo/capability declarations)
+│   │   ├── tool-registry.ts     ← enhanced tool manifest registry (78 tools, sudo/capability declarations)
 │   │   ├── privilege-manager.ts ← privilege detection (UID/EUID, Linux capabilities, sudo status)
 │   │   ├── auto-installer.ts   ← multi-package-manager auto-dependency resolution
 │   │   ├── preflight.ts         ← pre-flight orchestration engine with caching
@@ -152,7 +152,7 @@ The pre-flight validation system is a transparent middleware layer that sits bet
 
 | Module | File | Responsibility |
 |--------|------|----------------|
-| **Tool Registry** | [`tool-registry.ts`](src/core/tool-registry.ts) | Enhanced manifest registry for all 155 tools. Each `ToolManifest` declares required/optional binaries, Python modules, npm packages, system libraries, required files, sudo level (`never`/`always`/`conditional`), Linux capabilities, and category metadata. Singleton with O(1) lookup by tool name. |
+| **Tool Registry** | [`tool-registry.ts`](src/core/tool-registry.ts) | Enhanced manifest registry for all 78 tools. Each `ToolManifest` declares required/optional binaries, Python modules, npm packages, system libraries, required files, sudo level (`never`/`always`/`conditional`), Linux capabilities, and category metadata. Singleton with O(1) lookup by tool name. |
 | **Privilege Manager** | [`privilege-manager.ts`](src/core/privilege-manager.ts) | Detects current privilege level by querying UID/EUID, parsing Linux capabilities from `/proc/self/status` CapEff bitmask (41 capability names mapped), testing passwordless sudo via `sudo -n true`, checking `SudoSession` cached credentials, and reading group memberships via `id -Gn`. Results cached for 30 seconds. |
 | **Auto-Installer** | [`auto-installer.ts`](src/core/auto-installer.ts) | Multi-package-manager dependency resolver supporting 8 package managers: apt, dnf, yum, pacman, apk, zypper, brew, pip, and npm. Resolves distro-specific package names from the `DEFENSIVE_TOOLS` catalog. Tries user-site installs before sudo. Verifies installation after each attempt. |
 | **Pre-flight Engine** | [`preflight.ts`](src/core/preflight.ts) | Orchestration engine that runs the full validation pipeline: manifest resolution → dependency checking → auto-installation → privilege validation → pass/fail determination. Returns a structured `PreflightResult` with human-readable summaries. Results cached for 60 seconds (passing results only). |
@@ -165,7 +165,7 @@ graph TD
     subgraph "Pre-flight Layer"
         WRAPPER["tool-wrapper.ts<br/>Proxy&lt;McpServer&gt;<br/>intercepts .tool() registrations"]
         PREFLIGHT["preflight.ts<br/>PreflightEngine<br/>orchestrates pipeline"]
-        REGISTRY["tool-registry.ts<br/>ToolRegistry<br/>155 ToolManifest entries"]
+        REGISTRY["tool-registry.ts<br/>ToolRegistry<br/>78 ToolManifest entries"]
         PRIV["privilege-manager.ts<br/>PrivilegeManager<br/>UID · capabilities · sudo"]
         AUTO["auto-installer.ts<br/>AutoInstaller<br/>apt · dnf · pip · npm · ..."]
     end
@@ -2047,16 +2047,25 @@ main().catch((err) => {
 
 | Module | File | Tools |
 |--------|------|:-----:|
-| Firewall Management | `firewall.ts` | 7 |
-| System Hardening | `hardening.ts` | 7 |
-| Intrusion Detection | `ids.ts` | 5 |
-| Log Analysis & Monitoring | `logging.ts` | 7 |
-| Network Defense | `network-defense.ts` | 6 |
-| Compliance & Benchmarking | `compliance.ts` | 5 |
-| Malware Analysis | `malware.ts` | 5 |
-| Backup & Recovery | `backup.ts` | 5 |
+| Firewall Management | `firewall.ts` | 5 |
+| System Hardening | `hardening.ts` | 8 |
+| Intrusion Detection | `ids.ts` | 3 |
+| Log Analysis & Monitoring | `logging.ts` | 4 |
+| Network Defense | `network-defense.ts` | 3 |
+| Compliance & Benchmarking | `compliance.ts` | 7 |
+| Malware Analysis | `malware.ts` | 4 |
+| Backup & Recovery | `backup.ts` | 1 |
 | Access Control | `access-control.ts` | 6 |
-| Encryption & PKI | `encryption.ts` | 6 |
-| Container & MAC Security | `container-security.ts` | 5 |
+| Encryption & PKI | `encryption.ts` | 4 |
+| Container & MAC Security | `container-security.ts` | 6 |
 | Meta Tools | `meta.ts` | 5 |
-| **Total** | **12 modules** | **69** |
+| Patch Management | `patch-management.ts` | 5 |
+| Secrets Management | `secrets.ts` | 4 |
+| Incident Response | `incident-response.ts` | 1 |
+| Supply Chain Security | `supply-chain-security.ts` | 1 |
+| Drift Detection | `drift-detection.ts` | 1 |
+| Zero-Trust Network | `zero-trust-network.ts` | 1 |
+| eBPF Security | `ebpf-security.ts` | 2 |
+| App Hardening | `app-hardening.ts` | 1 |
+| Sudo Management | `sudo-management.ts` | 6 |
+| **Total** | **21 modules** | **78** |

@@ -6,6 +6,65 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.5.0-beta.2] — 2026-03-07
+
+### Phase 5: Hardening & Robustness
+
+- **Fix 5.1: Startup Error Isolation** — Each of the 21 tool module registrations is wrapped in try/catch. Failed modules are logged but don't crash the server. Summary shows registered/failed count.
+- **Fix 5.2: Graceful Shutdown** — SIGTERM/SIGINT handlers zero the sudo password buffer, log shutdown to changelog. uncaughtException and unhandledRejection handlers prevent silent crashes.
+- **Fix 5.3: Network Timeout Handling** — Added `commandTimeout` (120s) and `networkTimeout` (30s) config options. Executor enforces SIGTERM→SIGKILL escalation on timeout. `spawn-safe.ts` passes timeout to `execFileSync`. NVD API calls use configurable timeout.
+- **Fix 5.4: Binary Integrity Verification** — 14 critical security binaries verified against expected distro packages at startup via `dpkg -S`/`rpm -qf`/`pacman -Qo`. Warnings logged for unverified or unexpected ownership.
+- **Fix 5.5: Expanded Test Coverage** — Added 87 new tests (executor, rollback, spawn-safe, backup-manager). Total: 323 tests across 10 test files. All passing.
+- **Fix 5.6: Changelog User Attribution** — `ChangeEntry` now includes `user` (OS username, auto-populated) and `sessionId` (optional MCP session identifier) fields.
+
+### Changed
+
+- `src/index.ts` — `safeRegister()` wrapper, graceful shutdown handlers, binary integrity verification at startup
+- `src/core/config.ts` — Added `commandTimeout` and `networkTimeout` configuration options
+- `src/core/executor.ts` — Timeout enforcement with SIGTERM→SIGKILL escalation
+- `src/core/spawn-safe.ts` — Timeout passthrough to `execFileSync`
+- `src/core/command-allowlist.ts` — `verifyBinaryOwnership()` and `verifyAllBinaries()` functions
+- `src/core/changelog.ts` — `user` and `sessionId` fields on `ChangeEntry`
+- `src/tools/patch-management.ts` — NVD API calls use configurable network timeout
+- `package.json` — Version `0.5.0-beta.2`
+
+---
+
+## [0.5.0-beta.1] — 2026-03-06
+
+### Summary
+
+Major security remediation release consolidating 157 tools down to 78 action-based tools across 21 modules. Introduces security hardening of the server itself including password buffer security, command allowlisting, auto-install safeguards, secure file permissions, comprehensive test infrastructure, and unified backup/rollback.
+
+### Security Fixes (Phase 1)
+
+- **Fix 1.1: Password Buffer Pipeline** — Sudo password now stored in a zeroable `Buffer` (not V8-interned strings). Auto-expires after configurable timeout. Temp files overwritten with random bytes before deletion.
+- **Fix 1.2: Command Allowlist** — All commands executed via `spawn()` are resolved against a strict allowlist of known-safe binaries. Unknown binaries are rejected before execution. Paths resolved to absolute at startup.
+- **Fix 1.3: Auto-Install Hardening** — `KALI_DEFENSE_AUTO_INSTALL` now defaults to `false`. When enabled, only packages from the `DEFENSIVE_TOOLS` catalog are installable — arbitrary package names are blocked.
+- **Fix 1.4: Secure File Permissions** — All state files (`changelog.json`, `rollback-state.json`, backups, quarantine) created with `0o600`/`0o700` permissions. Existing directories hardened at startup via `hardenDirPermissions()`.
+
+### Test Infrastructure (Phase 2)
+
+- **Fix 2.1: Vitest Test Suite** — 221 tests across 6 test files covering sanitizer, config, command-allowlist, secure-fs, changelog, and safeguards modules. All tests pass with zero failures.
+- **Fix 2.2: Backup/Rollback Unification** — `BackupManager` and `RollbackManager` consolidated under `~/.kali-defense/` with consistent secure file permissions.
+- **Fix 2.3: Safeguards Real Blockers** — `SafeguardRegistry.checkSafety()` now produces real blocking conditions, not just advisory warnings.
+- **Fix 2.4: spawn-safe.ts Circular Dependency** — Extracted safe spawn helper to break circular dependency between `executor.ts` and `sudo-session.ts`.
+
+### Tool Consolidation (Phase 3)
+
+- **Fix 3.1: Tool Consolidation 157 → 78** — Merged granular single-purpose tools into action-based tools with `action` parameters. For example, `harden_sysctl_get`, `harden_sysctl_set`, and `harden_sysctl_audit` became `harden_sysctl` with `action: "get" | "set" | "audit"`. This reduces MCP tool registration overhead while maintaining all functionality.
+- **Fix 3.2: Document Synchronization** — All documentation (`README.md`, `ARCHITECTURE.md`, `TOOLS-REFERENCE.md`, `PREFLIGHT-ARCHITECTURE.md`, `SAFEGUARDS.md`, `CHANGELOG.md`) updated to reflect 78 tools across 21 modules. Version strings synchronized to `0.5.0-beta.1`.
+
+### Changed
+
+- `src/core/tool-dependencies.ts` — Rewritten for 78 consolidated tool names with union of absorbed tool dependencies
+- `src/core/tool-registry.ts` — Rewritten with 78 tool sudo overlays matching new consolidated names
+- `src/index.ts` — Version bumped to `0.5.0-beta.1`; tool count updated to 78
+- `package.json` — Version `0.5.0-beta.1`; description updated to "78 defensive security tools"
+- All 21 tool modules in `src/tools/` — Consolidated from fine-grained tools to action-based tools
+
+---
+
 ## [0.4.0-beta.2] — 2026-03-04
 
 **Critical Fix — `firewall_set_policy`:**

@@ -9,14 +9,14 @@
  *   - Active sudo session via `SudoSession.getInstance().isElevated()`
  *   - User groups via `id -Gn`
  *
- * To avoid circular dependencies with the executor, all subprocess calls
- * use `child_process.execFileSync` directly.
+ * Child process spawning goes through spawn-safe.ts which enforces the
+ * command allowlist and shell: false without creating circular dependencies.
  *
  * @module privilege-manager
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSafe } from "./spawn-safe.js";
 import { SudoSession } from "./sudo-session.js";
 import type { ToolManifest } from "./tool-registry.js";
 
@@ -162,6 +162,8 @@ const CAPABILITY_NAMES: readonly string[] = [
 /**
  * Run a command synchronously with a timeout, returning stdout on success
  * or `null` on any failure. Never throws.
+ *
+ * Uses execFileSafe which handles allowlist resolution and shell: false.
  */
 function execSafe(
   file: string,
@@ -169,12 +171,12 @@ function execSafe(
   timeoutMs = 5_000,
 ): string | null {
   try {
-    const result = execFileSync(file, args, {
+    const result = execFileSafe(file, args, {
       encoding: "utf-8",
       timeout: timeoutMs,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    return result;
+    return result as string;
   } catch {
     return null;
   }

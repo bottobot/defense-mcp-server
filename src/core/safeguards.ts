@@ -69,6 +69,10 @@ const WEBSERVER_OPERATIONS = [
   "nginx", "apache", "httpd", "webserver", "tls", "cert",
 ];
 
+const SSH_OPERATIONS = [
+  "ssh", "sshd", "access_ssh",
+];
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Check if a TCP port accepts connections (timeout 1s). */
@@ -94,6 +98,41 @@ async function pgrepExists(pattern: string): Promise<boolean> {
 function matchesAny(operation: string, keywords: string[]): boolean {
   const lower = operation.toLowerCase();
   return keywords.some((k) => lower.includes(k));
+}
+
+/** Check if the current session is over SSH. */
+export function isSSHSession(): boolean {
+  return !!(process.env.SSH_CONNECTION || process.env.SSH_TTY);
+}
+
+/** Check if the current user has a non-empty authorized_keys file. */
+export function hasAuthorizedKeys(): boolean {
+  try {
+    const authKeysPath = path.join(os.homedir(), ".ssh", "authorized_keys");
+    if (!fs.existsSync(authKeysPath)) return false;
+    const stat = fs.statSync(authKeysPath);
+    return stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Safely extract a string parameter value. */
+function getParam(params: Record<string, unknown>, key: string): string | undefined {
+  const val = params[key];
+  return typeof val === "string" ? val : undefined;
+}
+
+/** Check if an SSH-related operation is a modification (not an audit/check). */
+function isSSHModification(operation: string, params: Record<string, unknown>): boolean {
+  if (operation.includes("audit") || operation.includes("check")) {
+    return false;
+  }
+  if (operation.includes("harden")) return true;
+  if (getParam(params, "settings")) return true;
+  if (params.apply_recommended === true) return true;
+  if (params.restart_sshd === true) return true;
+  return false;
 }
 
 // ── SafeguardRegistry ────────────────────────────────────────────────────────
@@ -363,6 +402,89 @@ export class SafeguardRegistry {
       // VS Code — informational only
       if (vscode.detected) {
         warnings.push(`VS Code is active (${vscode.detail})`);
+      }
+
+      // ── Blocker checks (prevent dangerous operations) ───────────────────
+
+      // A. SSH lockout prevention — block SSH config changes during SSH session
+      if (
+        isSSHSession() &&
+        matchesAny(operation, SSH_OPERATIONS) &&
+        isSSHModification(operation, params)
+      ) {
+        blockers.push(
+          "BLOCKED: Cannot modify SSH configuration while connected via SSH. " +
+            "Changes could lock you out of this remote session. " +
+            "Use a local console or ensure alternative access before proceeding.",
+        );
+      }
+
+      // B. Firewall rules blocking active SSH connections
+      if (isSSHSession() && matchesAny(operation, FIREWALL_OPERATIONS)) {
+        const port = getParam(params, "port");
+        const fwAction = getParam(params, "action")?.toUpperCase();
+        const policy = getParam(params, "policy")?.toUpperCase();
+        const chain = getParam(params, "chain")?.toUpperCase();
+
+        // Block rules that would drop/reject traffic on SSH port
+        if (
+          port === "22" &&
+          (fwAction === "DROP" || fwAction === "REJECT" || fwAction === "DENY")
+        ) {
+          blockers.push(
+            "BLOCKED: Firewall rule would block SSH port 22 while connected via SSH. " +
+              "This would immediately terminate your session.",
+          );
+        }
+
+        // Block default DROP policy on INPUT chain (would kill SSH)
+        if (policy === "DROP" && chain === "INPUT") {
+          blockers.push(
+            "BLOCKED: Setting INPUT chain default policy to DROP while connected via SSH. " +
+              "Ensure an explicit ACCEPT rule for SSH port exists before changing the default policy.",
+          );
+        }
+      }
+
+      // C. Disabling password auth without SSH key auth configured
+      if (matchesAny(operation, SSH_OPERATIONS)) {
+        const settings = getParam(params, "settings") ?? "";
+        const applyRecommended = params.apply_recommended === true;
+
+        if (
+          settings.toLowerCase().includes("passwordauthentication=no") ||
+          applyRecommended
+        ) {
+          if (!hasAuthorizedKeys()) {
+            blockers.push(
+              "BLOCKED: Disabling password authentication without confirming SSH key-based " +
+                "access is configured. No authorized_keys file found for the current user. " +
+                "Set up SSH key authentication first, then retry.",
+            );
+          }
+        }
+      }
+
+      // D. Stopping critical database services with active connections
+      if (matchesAny(operation, SERVICE_OPERATIONS)) {
+        const svcAction = getParam(params, "action")?.toLowerCase();
+        const svcName = getParam(params, "service")?.toLowerCase() ?? "";
+
+        if (svcAction === "stop" || svcAction === "disable" || svcAction === "mask") {
+          const dbServiceNames = [
+            "postgresql", "postgres", "mysql", "mysqld", "mariadb",
+            "mongod", "mongodb", "redis", "redis-server",
+          ];
+          const isDatabase = dbServiceNames.some((db) => svcName.includes(db));
+
+          if (isDatabase && dbs.detected) {
+            blockers.push(
+              `BLOCKED: Cannot ${svcAction} database service '${svcName}' while it has ` +
+                `active connections (${dbs.detail}). ` +
+                `Drain connections first or use '--force' parameter.`,
+            );
+          }
+        }
       }
     } catch (err) {
       warnings.push(`Safety check encountered an error: ${err instanceof Error ? err.message : String(err)}`);

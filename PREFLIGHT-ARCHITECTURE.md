@@ -1,14 +1,14 @@
 # Pre-flight Validation System — Architecture Document
 
-> **Status**: Design phase — implementation not started  
-> **Scope**: kali-defense-mcp-server v2.2.0  
-> **Author**: Architecture session 2026-03-03  
+> **Status**: Implemented (v0.3.0+, updated in v0.5.0-beta.1)
+> **Scope**: kali-defense-mcp-server v0.5.0-beta.1
+> **Author**: Architecture session 2026-03-03
 
 ---
 
 ## 1. Problem Statement
 
-The kali-defense-mcp-server has 137+ MCP tools across 29 tool files. Rich infrastructure already exists for dependency checking (`dependency-validator.ts`), cross-distro installation (`installer.ts`), privilege management (`sudo-session.ts`), and application safety detection (`safeguards.ts`) — but **none of it is wired into tool invocations**. Tools execute blindly and fail with raw shell errors when:
+The kali-defense-mcp-server has 78 MCP tools across 21 tool modules. Rich infrastructure already exists for dependency checking (`dependency-validator.ts`), cross-distro installation (`installer.ts`), privilege management (`sudo-session.ts`), and application safety detection (`safeguards.ts`) — but originally **none of it was wired into tool invocations**. Tools would execute blindly and fail with raw shell errors when:
 
 - A required binary is missing (e.g., `rkhunter`, `lynis`, `nmap`)
 - Sudo credentials haven't been provided via `sudo_elevate`

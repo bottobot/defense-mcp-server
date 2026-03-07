@@ -1,1005 +1,854 @@
-# kali-defense-mcp-server — Implementation Spec
-> Machine-readable build specification. Implement sequentially. All constraints are hard requirements unless marked `[OPTIONAL]`.
+# kali-defense-mcp-server — Technical Specification
+
+## Metadata
+
+| Field | Value |
+|-------|-------|
+| **Version** | 0.5.0-beta.1 |
+| **Language** | TypeScript 5.8+ |
+| **Target** | ES2022 |
+| **Module System** | Node16 (ESM with `.js` extensions in imports) |
+| **Runtime** | Node.js ≥ 18 (recommended ≥ 20) |
+| **Framework** | `@modelcontextprotocol/sdk` ^1.12.1 |
+| **Validation** | `zod` ^3.25.0 |
+| **Transport** | stdio (StdioServerTransport) |
+| **OS** | Linux only |
+| **License** | MIT |
+| **Repository** | `github.com/bottobot/kali-defense-mcp-server` |
 
 ---
 
-## META
+## 1. Overview
 
-```
-LANGUAGE:     Python 3.11+
-FRAMEWORK:    FastMCP (mcp[cli] package)
-VALIDATION:   Pydantic v2 for all tool inputs
-TRANSPORT:    stdio (never HTTP/SSE)
-PRIVILEGE:    Unprivileged user + sudoers delegation (never run as root)
-DB:           SQLite (aiosqlite, WAL mode) for changelog
-ASYNC:        asyncio throughout; long-running tools are background jobs
-STYLE:        Verb-noun tool names: check_*, harden_*, verify_*, list_*, run_*, get_*
-```
+The kali-defense-mcp-server is a Model Context Protocol (MCP) server that exposes 78 defensive security tools across 21 modules. It enables AI agents (Claude, etc.) to perform system hardening, compliance auditing, intrusion detection, malware scanning, firewall management, container security, and incident response on Linux systems.
+
+The server runs as a child process communicating over stdio JSON-RPC. It wraps Linux security binaries (iptables, lynis, aide, rkhunter, ClamAV, etc.) with input validation, command allowlist enforcement, privilege management, and audit logging.
+
+### Security Model Summary
+
+All commands execute with `shell: false`. Every binary must be in a static allowlist resolved to absolute paths at startup. Passwords are stored in zeroable Buffers, never V8 strings. All state files are written with `0o600`/`0o700` permissions. Dry-run is the default for all mutating operations. Every change is logged to an append-only changelog with before/after state and rollback metadata.
 
 ---
 
-## INVARIANTS — Apply to every tool, no exceptions
+## 2. Architecture
 
-1. **Never `shell=True`.** All subprocess calls use parameterised list form.
-2. **Command allowlist.** Every external binary is declared in `ALLOWED_COMMANDS: dict[str, Path]`. Reject anything not in it.
-3. **Dry-run default.** Every `harden_*` tool has `dry_run: bool = True`. With `dry_run=True`: compute diff, return `ChangePreview`, touch nothing.
-4. **Backup before mutate.** Any `harden_*` call with `dry_run=False` MUST call `BackupManager.snapshot()` before touching the filesystem. On any exception after snapshot: auto-restore and re-raise.
-5. **Validate before restart.** For services with a `--test` flag (sshd, nginx, etc.), run it and assert exit 0 before calling `systemctl restart`.
-6. **Return structured data.** All tools return Pydantic models serialised to JSON, never raw strings.
-7. **Confirmation gates.** Tools with `risk_level = MEDIUM` require `confirmed: bool` param (must be `True` to apply). Tools with `risk_level = HIGH` require `confirm_string: str` param matching a declared constant.
+### 2.1 Module Map
+
+```
+src/
+├── index.ts                    — Entry point: startup sequence, tool registration
+├── core/
+│   ├── executor.ts             — Safe command execution (spawn, shell:false, timeouts)
+│   ├── config.ts               — Environment-based configuration with defaults
+│   ├── sanitizer.ts            — Input validation (13 validators)
+│   ├── command-allowlist.ts    — Binary allowlist with path resolution
+│   ├── spawn-safe.ts           — Low-level spawn layer (no circular deps)
+│   ├── sudo-session.ts         — Password Buffer lifecycle, elevation, expiry
+│   ├── sudo-guard.ts           — Permission error detection + elevation prompts
+│   ├── preflight.ts            — Pre-flight validation pipeline
+│   ├── tool-wrapper.ts         — Proxy-based McpServer middleware
+│   ├── safeguards.ts           — Application detection + safety checking
+│   ├── tool-registry.ts        — ToolManifest registry (78 entries)
+│   ├── tool-dependencies.ts    — Tool-to-binary dependency mappings
+│   ├── privilege-manager.ts    — UID/capability/sudo status detection
+│   ├── auto-installer.ts       — Multi-package-manager dependency resolver
+│   ├── dependency-validator.ts — Binary availability checking
+│   ├── installer.ts            — DEFENSIVE_TOOLS catalog with package mappings
+│   ├── changelog.ts            — Versioned audit trail (JSON, append-only)
+│   ├── rollback.ts             — Change tracking with rollback capability
+│   ├── backup-manager.ts       — File backup with manifest tracking
+│   ├── secure-fs.ts            — Permission-enforcing file I/O (0o600/0o700)
+│   ├── distro.ts               — Linux distribution detection
+│   ├── distro-adapter.ts       — Cross-distro abstraction layer
+│   ├── parsers.ts              — Output parsing utilities
+│   ├── policy-engine.ts        — Compliance policy evaluation
+│   └── [4 more modules]
+└── tools/
+    ├── firewall.ts             — 5 tools: iptables, ufw, nftables, persist, audit
+    ├── hardening.ts            — 8 tools: sysctl, services, permissions, kernel, etc.
+    ├── ids.ts                  — 3 tools: AIDE, rootkit scan, file integrity
+    ├── logging.ts              — 4 tools: auditd, journalctl, fail2ban, syslog
+    ├── network-defense.ts      — 3 tools: connections, capture, security audit
+    ├── compliance.ts           — 7 tools: lynis, oscap, CIS, policy, cron, tmp
+    ├── malware.ts              — 4 tools: ClamAV, YARA, file scan, quarantine
+    ├── backup.ts               — 1 tool: unified backup (config/state/restore/verify/list)
+    ├── access-control.ts       — 6 tools: SSH, sudo, users, passwords, PAM, shell
+    ├── encryption.ts           — 4 tools: TLS, GPG, LUKS, file hash
+    ├── container-security.ts   — 6 tools: Docker, AppArmor, SELinux, namespaces, images, seccomp
+    ├── meta.ts                 — 5 tools: check tools, workflow, history, posture, scheduled
+    ├── patch-management.ts     — 5 tools: updates, unattended, integrity, kernel, vulns
+    ├── secrets.ts              — 4 tools: scan, env audit, SSH key sprawl, git history
+    ├── incident-response.ts    — 1 tool: collect/ioc_scan/timeline
+    ├── sudo-management.ts      — 6 tools: elevate, elevate_gui, status, drop, extend, batch
+    ├── supply-chain-security.ts — 1 tool: sbom/sign/verify_slsa
+    ├── drift-detection.ts      — 1 tool: create/compare/list baselines
+    ├── zero-trust-network.ts   — 1 tool: wireguard/wg_peers/mtls/microsegment
+    ├── ebpf-security.ts        — 2 tools: list_ebpf_programs, falco
+    └── app-hardening.ts        — 1 tool: audit/recommend/firewall/systemd
+```
+
+### 2.2 Dependency Graph
+
+The module dependency graph is structured to avoid circular imports:
+
+```
+spawn-safe.ts ─────────────► command-allowlist.ts ◄──── executor.ts
+    │                                                        │
+    │                                                        ├── config.ts
+    │                                                        ├── sudo-session.ts ──► spawn-safe.ts
+    │                                                        └── sudo-guard.ts ──► sudo-session.ts
+    │
+sudo-session.ts ──► spawn-safe.ts (NOT executor.ts)
+auto-installer.ts ──► spawn-safe.ts (NOT executor.ts)
+
+preflight.ts ──► tool-registry.ts ──► tool-dependencies.ts
+             ──► privilege-manager.ts ──► sudo-session.ts
+             ──► auto-installer.ts
+             ──► dependency-validator.ts
+             ──► safeguards.ts ──► executor.ts
+
+tool-wrapper.ts ──► preflight.ts
+                ──► tool-registry.ts
+                ──► privilege-manager.ts
+                ──► sudo-guard.ts
+
+changelog.ts ──► secure-fs.ts
+             ──► backup-manager.ts ──► secure-fs.ts
+
+rollback.ts ──► secure-fs.ts
+            ──► executor.ts
+```
+
+Key design constraint: [`sudo-session.ts`](src/core/sudo-session.ts) and [`auto-installer.ts`](src/core/auto-installer.ts) use [`spawn-safe.ts`](src/core/spawn-safe.ts) instead of [`executor.ts`](src/core/executor.ts) to avoid circular dependencies. The executor depends on sudo-session for transparent credential injection.
+
+### 2.3 Startup Sequence
+
+Defined in [`src/index.ts`](src/index.ts:48). The `main()` function executes these phases in order:
+
+1. **Phase 0a — Initialize command allowlist**: [`initializeAllowlist()`](src/core/command-allowlist.ts:289) resolves all allowlisted binary names to absolute paths via `fs.existsSync()`. Must run before any command execution.
+
+2. **Phase 0b — Harden state directories**: [`hardenDirPermissions()`](src/core/secure-fs.ts:80) fixes permissions on `~/.kali-defense/` and `~/.kali-defense/backups/` to `0o700`. Best-effort; silently skips if directories don't exist yet.
+
+3. **Phase 0 — Detect distribution**: [`getDistroAdapter()`](src/core/distro-adapter.ts:633) detects the Linux distribution, package manager, init system, and firewall backend. Cached for process lifetime.
+
+4. **Phase 1 — Dependency validation**: [`validateAllDependencies()`](src/core/dependency-validator.ts) checks all required system binaries. If `KALI_DEFENSE_AUTO_INSTALL=true`, missing tools are automatically installed via the system package manager. Non-fatal: missing tools generate warnings but don't prevent startup.
+
+5. **Phase 0.5 — Initialize pre-flight registry**: [`initializeRegistry()`](src/core/tool-registry.ts:745) populates the [`ToolRegistry`](src/core/tool-registry.ts:82) singleton by migrating legacy `TOOL_DEPENDENCIES` and overlaying sudo/privilege metadata from `SUDO_OVERLAYS`.
+
+6. **Phase 2 — Create pre-flight proxy**: [`createPreflightServer(server)`](src/core/tool-wrapper.ts:96) wraps the `McpServer` in a `Proxy` that intercepts `.tool()` registrations. Returns a `Proxy<McpServer>`.
+
+7. **Phase 3 — Register tool modules**: All 21 `registerXxxTools(wrappedServer)` functions are called. Tools register on the proxy; handlers are automatically wrapped with pre-flight validation.
+
+8. **Phase 4 — Connect transport**: `server.connect(new StdioServerTransport())` starts the JSON-RPC transport on stdin/stdout.
 
 ---
 
-## PYDANTIC MODELS — Define in `src/validators/inputs.py`
+## 3. Security Invariants
 
-```python
-class RiskLevel(str, Enum):
-    LOW    = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH   = "HIGH"
+These are non-negotiable security rules enforced throughout the codebase:
 
-class ConfirmationType(str, Enum):
-    NONE         = "none"
-    YES_NO       = "yes_no"
-    STRING_MATCH = "string_match"
-    CHOICE       = "choice"
+### 3.1 `shell: false` Always
 
-class ChangePreview(BaseModel):
-    tool: str
-    risk_level: RiskLevel
-    affected_files: list[str]
-    diff: dict[str, str]          # {filepath: unified_diff_string}
-    estimated_seconds: int
-    reversible: bool
-    rollback_method: str
-    confirmation_required: ConfirmationType
-    confirmation_string: str | None = None  # for STRING_MATCH type
-    warnings: list[str] = []
+Every process spawn uses `shell: false`:
 
-class ChangeRecord(BaseModel):
-    change_id: str                # uuid4
-    timestamp: datetime
-    tool: str
-    affected_files: list[str]
-    backup_paths: dict[str, Path] # {original_path: backup_path}
-    applied: bool
-    rolled_back: bool = False
+- [`executor.ts`](src/core/executor.ts:256): `spawn(command, args, { shell: false, ... })`
+- [`spawn-safe.ts`](src/core/spawn-safe.ts:57): `shell: false` — comment: `// ALWAYS false — non-negotiable`
 
-class JobStatus(BaseModel):
-    job_id: str
-    status: Literal["running", "complete", "failed"]
-    percent_complete: int
-    current_task: str
-    eta_seconds: int | None
-    result: dict | None = None    # populated when status == "complete"
+No exception exists. Shell metacharacters in arguments are rejected by [`sanitizer.ts`](src/core/sanitizer.ts:8) before they reach the executor.
 
-class EnvironmentProfile(BaseModel):
-    distro_family: Literal["debian", "rhel", "arch", "unknown"]
-    distro_name: str
-    kernel_version: str
-    system_role: Literal["server", "desktop", "unknown"]
-    has_vpn: bool
-    has_containers: bool
-    has_asymmetric_routing: bool
-    active_ssh_sessions: int
-    current_session_auth_method: Literal["key", "password", "unknown"]
-    display_manager_present: bool
-    package_manager: Literal["apt", "dnf", "pacman", "unknown"]
+### 3.2 Command Allowlist Enforcement
+
+Every binary executed must be in [`ALLOWLIST_DEFINITIONS`](src/core/command-allowlist.ts:46) (currently 115 entries). Bare command names are resolved to absolute paths at startup. The enforcement points are:
+
+- [`executor.ts`](src/core/executor.ts:207): Calls `resolveCommand()` / `resolveSudoCommand()` before spawning
+- [`spawn-safe.ts`](src/core/spawn-safe.ts:54): Calls `resolveCommand()` before spawning
+- For `sudo` commands: both `sudo` itself AND the target binary are resolved against the allowlist
+
+### 3.3 Password as Buffer (Never String)
+
+The [`SudoSession`](src/core/sudo-session.ts:96) stores the user's password in a `Buffer`:
+
+```typescript
+private passwordBuf: Buffer | null = null;  // line 100
 ```
+
+- [`getPassword()`](src/core/sudo-session.ts:210) returns a **copy** of the Buffer; callers must zero it with `.fill(0)` after use
+- [`drop()`](src/core/sudo-session.ts:262) zeroes the buffer contents with `passwordBuf.fill(0)`
+- Process exit handlers (SIGINT, SIGTERM, uncaughtException) call `drop()` automatically
+- The executor zeroes stdin buffers after writing: [`stdinBuf.fill(0)`](src/core/executor.ts:325)
+
+### 3.4 Input Sanitization
+
+[`sanitizer.ts`](src/core/sanitizer.ts) provides 13 typed validators, all of which reject shell metacharacters via `SHELL_METACHAR_RE = /[;|&$\`(){}<>\n\r]/`:
+
+| Validator | Pattern | File Reference |
+|-----------|---------|----------------|
+| `validateTarget()` | hostname/IPv4/IPv6/CIDR | [sanitizer.ts:25](src/core/sanitizer.ts:25) |
+| `validatePort()` | 1–65535 integer | [sanitizer.ts:81](src/core/sanitizer.ts:81) |
+| `validatePortRange()` | `"80,443,1-1024"` | [sanitizer.ts:93](src/core/sanitizer.ts:93) |
+| `validateFilePath()` | No traversal, within allowed dirs | [sanitizer.ts:140](src/core/sanitizer.ts:140) |
+| `sanitizeArgs()` | Array of strings, no metacharacters | [sanitizer.ts:209](src/core/sanitizer.ts:209) |
+| `validateServiceName()` | `[a-zA-Z0-9._@-]+` | [sanitizer.ts:239](src/core/sanitizer.ts:239) |
+| `validateSysctlKey()` | `word.word.word` pattern | [sanitizer.ts:259](src/core/sanitizer.ts:259) |
+| `validateConfigKey()` | `[a-zA-Z0-9._-]+` | [sanitizer.ts:280](src/core/sanitizer.ts:280) |
+| `validatePackageName()` | `[a-zA-Z0-9._+:-]+` | [sanitizer.ts:301](src/core/sanitizer.ts:301) |
+| `validateIptablesChain()` | `[A-Za-z_][A-Za-z0-9_-]{0,28}` | [sanitizer.ts:323](src/core/sanitizer.ts:323) |
+| `validateInterface()` | `[a-zA-Z0-9._-]+`, max 16 chars | [sanitizer.ts:345](src/core/sanitizer.ts:345) |
+| `validateUsername()` | `[a-zA-Z0-9._-]+`, max 32 chars | [sanitizer.ts:372](src/core/sanitizer.ts:372) |
+| `validateYaraRule()` | Must end in `.yar`/`.yara` | [sanitizer.ts:396](src/core/sanitizer.ts:396) |
+| `validateCertPath()` | Must end in `.pem`/`.crt`/`.key`/`.p12`/`.pfx` | [sanitizer.ts:432](src/core/sanitizer.ts:432) |
+
+### 3.5 Dry-Run by Default
+
+The global default is `dryRun: false` in config (env `KALI_DEFENSE_DRY_RUN`), but individual tool parameters default `dry_run` to `true` via Zod schemas:
+
+```typescript
+dry_run: z.boolean().optional().default(true).describe("Preview changes")
+```
+
+This means every mutating tool call requires the caller to explicitly set `dry_run: false` to apply changes.
+
+### 3.6 State File Permissions (0o600/0o700)
+
+[`secure-fs.ts`](src/core/secure-fs.ts) enforces:
+
+- Files: `0o600` (owner read/write only) — [`SECURE_FILE_MODE`](src/core/secure-fs.ts:11)
+- Directories: `0o700` (owner read/write/execute only) — [`SECURE_DIR_MODE`](src/core/secure-fs.ts:14)
+- `chmodSync()` is called explicitly after write/mkdir to override umask
+
+All state file writes go through `secureWriteFileSync()`, `secureMkdirSync()`, or `secureCopyFileSync()`.
+
+### 3.7 Auto-Install Package Validation
+
+The [`AutoInstaller`](src/core/auto-installer.ts:296) enforces a supply-chain protection chain:
+
+1. Binary must exist in [`DEFENSIVE_TOOLS`](src/core/installer.ts) catalog — [auto-installer.ts:477](src/core/auto-installer.ts:477)
+2. Package name is resolved from the catalog (no raw binary name fallback) — [auto-installer.ts:491](src/core/auto-installer.ts:491)
+3. Package name is validated against `validatePackageName()` regex — [auto-installer.ts:510](src/core/auto-installer.ts:510)
+4. Package must be in the approved packages allowlist (built from `DEFENSIVE_TOOLS`) — [auto-installer.ts:525](src/core/auto-installer.ts:525)
+5. Every successful install is logged to the audit changelog — [auto-installer.ts:587](src/core/auto-installer.ts:587)
 
 ---
 
-## DIRECTORY STRUCTURE
+## 4. Core Modules
 
-```
-kali-defense-mcp-server/
-├── pyproject.toml
-├── resources/
-│   ├── sysctl-hardening.conf      # reference kernel params
-│   ├── sshd-hardened.conf         # reference SSH config
-│   └── sudoers.d/mcp-hardening    # sudo rules template
-├── src/
-│   ├── server.py                  # FastMCP app + tool registration
-│   ├── config.py                  # Pydantic Settings
-│   ├── validators/
-│   │   └── inputs.py              # all Pydantic models (see above)
-│   ├── executors/
-│   │   ├── command_runner.py      # safe_execute() + ALLOWED_COMMANDS
-│   │   └── privilege.py           # sudo delegation helpers
-│   ├── state/
-│   │   ├── changelog.py           # SQLite WAL + plaintext fallback
-│   │   └── backups.py             # BackupManager
-│   └── tools/
-│       ├── environment.py         # EnvironmentFingerprint
-│       ├── rollback.py            # list_changes, rollback_change
-│       ├── assessment.py          # Lynis, port scan
-│       ├── firewall.py            # UFW / firewalld
-│       ├── ssh.py                 # sshd_config + ssh-audit + fail2ban
-│       ├── kernel.py              # sysctl
-│       ├── services.py            # systemd service minimisation
-│       ├── mac.py                 # AppArmor / SELinux
-│       ├── fim.py                 # AIDE
-│       ├── malware.py             # rkhunter, chkrootkit, ClamAV
-│       ├── auth.py                # PAM, password policy
-│       ├── updates.py             # unattended-upgrades, needrestart
-│       ├── compliance.py          # OpenSCAP CIS/STIG
-│       └── orchestrator.py        # full_harden workflow
-└── tests/
-    ├── test_command_runner.py     # injection rejection tests
-    └── test_validators.py
-```
+### 4.1 Executor ([`executor.ts`](src/core/executor.ts))
 
----
+The primary command execution engine. All tool modules call `executeCommand()` to run system binaries.
 
-## EXECUTORS
+**Interface:**
 
-### `src/executors/command_runner.py`
-
-```python
-ALLOWED_COMMANDS: dict[str, str] = {
-    "ufw":                 "/usr/sbin/ufw",
-    "firewall-cmd":        "/usr/bin/firewall-cmd",
-    "sshd":                "/usr/sbin/sshd",
-    "systemctl":           "/usr/bin/systemctl",
-    "sysctl":              "/usr/sbin/sysctl",
-    "lynis":               "/usr/bin/lynis",
-    "aide":                "/usr/bin/aide",
-    "rkhunter":            "/usr/bin/rkhunter",
-    "chkrootkit":          "/usr/sbin/chkrootkit",
-    "clamscan":            "/usr/bin/clamscan",
-    "freshclam":           "/usr/bin/freshclam",
-    "ssh-audit":           "/usr/bin/ssh-audit",
-    "fail2ban-client":     "/usr/bin/fail2ban-client",
-    "aa-status":           "/usr/sbin/aa-status",
-    "aa-enforce":          "/usr/sbin/aa-enforce",
-    "aa-complain":         "/usr/sbin/aa-complain",
-    "getenforce":          "/usr/sbin/getenforce",
-    "setenforce":          "/usr/sbin/setenforce",
-    "oscap":               "/usr/bin/oscap",
-    "ss":                  "/usr/sbin/ss",
-    "needrestart":         "/usr/sbin/needrestart",
-    "chage":               "/usr/bin/chage",
-    "trivy":               "/usr/bin/trivy",
+```typescript
+interface ExecuteOptions {
+  command: string;           // Binary name (resolved via allowlist)
+  args: string[];            // Pre-sanitized argument array
+  timeout?: number;          // Override default (ms)
+  cwd?: string;              // Working directory
+  env?: Record<string, string>;  // Additional env vars
+  stdin?: string | Buffer;   // Data to pipe (Buffer for passwords)
+  maxBuffer?: number;        // Max output buffer (bytes)
+  toolName?: string;         // Per-tool timeout lookup key
+  skipSudoInjection?: boolean; // Used internally by sudo-session
 }
 
-async def safe_execute(
-    tool: str,
-    args: list[str],
-    timeout: int = 300,
-    use_sudo: bool = False,
-) -> tuple[int, str, str]:
-    """Returns (returncode, stdout, stderr). Raises ValueError if tool not in allowlist."""
-    if tool not in ALLOWED_COMMANDS:
-        raise ValueError(f"Command not in allowlist: {tool}")
-    # Validate no shell metacharacters in args
-    for arg in args:
-        if any(c in arg for c in [';', '|', '&', '`', '$', '>', '<', '\n']):
-            raise ValueError(f"Illegal character in argument: {arg!r}")
-    cmd = (["sudo"] if use_sudo else []) + [ALLOWED_COMMANDS[tool]] + args
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    return proc.returncode, stdout.decode(), stderr.decode()
-```
-
-### `src/state/backups.py` — BackupManager
-
-```python
-BACKUP_ROOT = Path("/var/backups/mcp-hardening")
-MAX_BACKUPS_PER_FILE = 30
-
-class BackupManager:
-    async def snapshot(self, files: list[Path], tool: str) -> ChangeRecord:
-        """Copy each file to timestamped backup dir. Return ChangeRecord with change_id."""
-
-    async def restore(self, change_id: str) -> None:
-        """Restore all files from a ChangeRecord's backup_paths. Raises if backup missing."""
-```
-
-### `src/state/changelog.py` — SQLite WAL
-
-```python
-# Schema
-CREATE TABLE changes (
-    change_id    TEXT PRIMARY KEY,
-    timestamp    TEXT NOT NULL,
-    tool         TEXT NOT NULL,
-    affected     TEXT NOT NULL,  -- JSON list of paths
-    backup_paths TEXT NOT NULL,  -- JSON dict {original: backup}
-    applied      INTEGER NOT NULL,
-    rolled_back  INTEGER NOT NULL DEFAULT 0
-);
-# Always open with: PRAGMA journal_mode=WAL;
-# Also write plaintext to /var/backups/mcp-hardening/changelog.txt as fallback
-```
-
----
-
-## TOOLS — Full specification
-
-Format per tool:
-```
-TOOL NAME         | risk | dry_run | confirmed/confirm_string | background_job
-inputs (Pydantic) → output model
-logic summary
-confirmation prompt (exact text the LLM must present to the user)
-```
-
----
-
-### MODULE: environment.py
-
-#### `fingerprint_environment`
-```
-RISK: LOW | no dry_run | no confirmation | sync
-inputs: none
-output: EnvironmentProfile
-```
-Logic:
-- Read `/etc/os-release` → distro_family, distro_name
-- `uname -r` → kernel_version
-- Check for display managers (`lightdm`, `gdm`, `sddm` in systemd units) → system_role
-- `ip link show` → count VPN interfaces (tun*, wg*), bridge interfaces (docker*, br-*)
-- `ss -tulnp` → parse; check IP forwarding via `/proc/sys/net/ipv4/ip_forward`
-- `who` + `ss` on port 22 → active_ssh_sessions
-- Check `$SSH_AUTH_SOCK` and `/proc/$PPID/environ` → current_session_auth_method
-- Check `which apt|dnf|pacman` → package_manager
-
----
-
-### MODULE: rollback.py
-
-#### `list_changes`
-```
-RISK: LOW | no confirmation | sync
-inputs: limit: int = 20, tool_filter: str | None = None
-output: list[ChangeRecord]
-```
-
-#### `rollback_change`
-```
-RISK: LOW | confirmed: bool | sync
-inputs: change_id: str, confirmed: bool = False
-output: ChangeRecord (with rolled_back=True)
-confirmation prompt:
-  "Rolling back change [{change_id}] will restore: {affected_files}.
-   This will overwrite the current versions of those files.
-   Proceed? [yes/no]"
-```
-
----
-
-### MODULE: assessment.py
-
-#### `run_lynis_audit`
-```
-RISK: LOW | background_job=True
-inputs: none
-output: JobStatus (immediate); final result has LynisReport model
-```
-`LynisReport`:
-```python
-class LynisReport(BaseModel):
-    hardening_index: int          # 0-100
-    warnings: list[LynisItem]
-    suggestions: list[LynisItem]
-    tests_performed: int
-    tests_skipped: int
-```
-Logic:
-- Check lynis binary exists; if not: return error with install instruction
-- Run `lynis audit system --no-colors --quiet` as background job
-- Parse `/var/log/lynis-report.dat` on completion
-- confirmation prompt:
-  ```
-  "Running a full Lynis audit will take 2–5 minutes.
-   It is read-only and makes no changes to your system.
-   Proceed? [yes/no]"
-  ```
-
-#### `get_lynis_score`
-```
-RISK: LOW | sync
-inputs: none
-output: {hardening_index: int, last_run: datetime | None}
-```
-Logic: Read cached `/var/log/lynis-report.dat` if exists; else prompt to run `run_lynis_audit` first.
-
-#### `check_open_ports`
-```
-RISK: LOW | sync
-inputs: none
-output: list[{port, protocol, process, pid, state}]
-```
-Logic: `ss -tulnp`, parse output.
-
----
-
-### MODULE: firewall.py
-
-#### `check_firewall_status`
-```
-RISK: LOW | sync
-inputs: none
-output: {backend: "ufw"|"firewalld"|"none", enabled: bool, default_policy: str, rules: list[FirewallRule]}
-```
-
-#### `harden_firewall_baseline`
-```
-RISK: MEDIUM | dry_run=True | confirmed: bool
-inputs:
-  allow_ports: list[str]   # e.g. ["22/tcp", "443/tcp"]
-  dry_run: bool = True
-  confirmed: bool = False
-output: ChangePreview | ChangeRecord
-```
-Logic:
-1. Call `fingerprint_environment()` — get active_ssh_sessions, current session
-2. Assert current SSH port is in allow_ports. If not: BLOCK and return error:
-   `"BLOCKED: Port {ssh_port} is not in allow_ports. Adding it to prevent lockout."`
-   Auto-add it and warn user.
-3. Compute diff of current vs proposed rules
-4. If `dry_run=True`: return ChangePreview
-5. If `confirmed=False`: return ChangePreview with `confirmation_required=YES_NO`
-6. Apply: `ufw default deny incoming`, `ufw default allow outgoing`, `ufw allow {port}` for each
-7. `ufw --force enable`
-8. Snapshot → ChangeRecord
-
-Confirmation prompt:
-```
-"Applying the firewall baseline will:
- - Set default inbound policy: DENY ALL
- - Allow: {allow_ports}
- - Your current session port ({ssh_port}) IS included in the allow list.
-
- This is reversible via rollback_change. Proceed? [yes/no]"
-```
-
-#### `add_firewall_rule` / `remove_firewall_rule`
-```
-RISK: MEDIUM | dry_run=True | confirmed: bool
-inputs: port: str, protocol: Literal["tcp","udp","any"], direction: Literal["in","out"] = "in", dry_run: bool = True, confirmed: bool = False
-```
-
----
-
-### MODULE: ssh.py
-
-#### `check_ssh_status`
-```
-RISK: LOW | sync
-inputs: none
-output: SSHStatus model
-```
-```python
-class SSHStatus(BaseModel):
-    port: int
-    permit_root_login: str
-    password_authentication: str
-    pubkey_authentication: str
-    max_auth_tries: int
-    protocol: str
-    allowed_ciphers: list[str]
-    cis_failures: list[str]      # human-readable list of CIS benchmark failures
-    ssh_audit_score: str | None  # "good" | "warn" | "fail" | None if ssh-audit not installed
-```
-
-#### `harden_ssh_config`
-```
-RISK: HIGH | dry_run=True | confirm_string: str
-CONFIRM_STRING_CONSTANT = "CONFIRM-SSH"
-inputs:
-  disable_password_auth: bool = True
-  disable_root_login: bool = True
-  max_auth_tries: int = 3
-  allowed_users: list[str] = []   # empty = no AllowUsers restriction
-  custom_port: int | None = None
-  dry_run: bool = True
-  confirm_string: str = ""
-output: ChangePreview | ChangeRecord
-```
-Logic:
-1. `fingerprint_environment()` → current_session_auth_method, active_ssh_sessions
-2. If `disable_password_auth=True` AND `current_session_auth_method == "password"`:
-   HARD BLOCK — return error:
-   ```
-   "BLOCKED: You are currently connected via password authentication.
-    Disabling password auth without a working SSH key will lock you out permanently.
-    Set up SSH key authentication and reconnect before running this tool."
-   ```
-3. Generate new sshd_config from template + inputs
-4. Write to temp file, run `sshd -t -f {tempfile}`, assert exit 0
-5. If `dry_run=True`: return ChangePreview
-6. If `confirm_string != CONFIRM_STRING_CONSTANT`: return ChangePreview with:
-   `confirmation_required=STRING_MATCH`, `confirmation_string="CONFIRM-SSH"`
-7. Snapshot → apply → `systemctl restart sshd` → run `ssh-audit localhost` → return ChangeRecord + audit result
-
-Confirmation prompt:
-```
-"⚠️  HIGH RISK OPERATION
-
-SSH hardening will modify /etc/ssh/sshd_config and restart the SSH daemon.
-
-Proposed changes:
-{diff}
-
-Your current session auth method: {current_session_auth_method}
-Active SSH sessions: {active_ssh_sessions}
-
-If disable_password_auth=True and you have no SSH key configured,
-you will be permanently locked out of SSH.
-
-To proceed, type exactly: CONFIRM-SSH"
-```
-
-#### `check_fail2ban_status`
-```
-RISK: LOW | sync
-output: {installed: bool, active: bool, jails: list[{name, filter, ban_count, currently_banned: list[str]}]}
-```
-
-#### `install_fail2ban_baseline`
-```
-RISK: MEDIUM | dry_run=True | confirmed: bool
-inputs: ssh_max_retry: int = 5, ban_time: str = "1h", find_time: str = "10m", dry_run: bool = True, confirmed: bool = False
-```
-Logic: Before applying, verify no iptables chain conflict with UFW (`ufw status` + `iptables -L` check).
-
----
-
-### MODULE: kernel.py
-
-#### `check_kernel_params`
-```
-RISK: LOW | sync
-output: list[{param, current_value, cis_recommended, compliant: bool}]
-```
-CIS params to check (minimum set):
-```
-kernel.randomize_va_space         = 2
-net.ipv4.conf.all.rp_filter       = 1
-net.ipv4.conf.default.rp_filter   = 1
-net.ipv4.tcp_syncookies           = 1
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv4.conf.all.send_redirects  = 0
-net.ipv4.ip_forward               = 0   # SKIP if has_containers or has_vpn
-kernel.dmesg_restrict             = 1
-kernel.kptr_restrict              = 2
-net.ipv6.conf.all.disable_ipv6   = 1   # [OPTIONAL] — only suggest, don't auto-apply
-fs.suid_dumpable                  = 0
-```
-
-#### `harden_kernel_params`
-```
-RISK: MEDIUM | dry_run=True | confirmed: bool
-inputs: dry_run: bool = True, confirmed: bool = False, skip_params: list[str] = []
-output: ChangePreview | ChangeRecord
-```
-Logic:
-1. `fingerprint_environment()` → has_vpn, has_containers, has_asymmetric_routing
-2. Auto-exclude `net.ipv4.ip_forward` if `has_containers or has_vpn`
-3. Auto-exclude `net.ipv4.conf.all.rp_filter` if `has_asymmetric_routing`
-4. Write to `/etc/sysctl.d/99-mcp-hardening.conf`
-5. Apply with `sysctl -p /etc/sysctl.d/99-mcp-hardening.conf`
-6. Verify each param with `sysctl {param}`
-
-Confirmation prompt:
-```
-"Kernel parameter hardening will write /etc/sysctl.d/99-mcp-hardening.conf
- and apply changes immediately. Changes persist across reboot.
-
-Environment detection results:
- - VPN interfaces detected: {has_vpn} → ip_forward param: {included/excluded}
- - Container bridges detected: {has_containers} → ip_forward param: {included/excluded}
- - Asymmetric routing detected: {has_asymmetric_routing} → rp_filter: {included/excluded}
-
-Proposed changes:
-{diff}
-
-Proceed? [yes/no]"
-```
-
----
-
-### MODULE: services.py
-
-#### `list_enabled_services`
-```
-RISK: LOW | sync
-output: list[{name, description, enabled, active, safe_to_disable_server: bool, safe_to_disable_desktop: bool, reason: str}]
-```
-Maintain a curated list of services with `safe_to_disable_server` and `safe_to_disable_desktop` flags. Examples:
-```python
-SAFE_TO_DISABLE = {
-    "avahi-daemon":   {"server": True,  "desktop": False, "reason": "mDNS/Bonjour — not needed on servers"},
-    "cups":           {"server": True,  "desktop": False, "reason": "Printing service — not needed on servers"},
-    "bluetooth":      {"server": True,  "desktop": False, "reason": "Bluetooth — not needed on servers"},
-    "whoopsie":       {"server": True,  "desktop": True,  "reason": "Ubuntu error reporting"},
-    "apport":         {"server": True,  "desktop": True,  "reason": "Crash reporting"},
-    "snapd":          {"server": False, "desktop": False, "reason": "Review manually"},
+interface CommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;          // 124 on timeout
+  timedOut: boolean;
+  duration: number;          // Wall-clock ms
+  permissionDenied: boolean; // Detected by SudoGuard patterns
 }
 ```
 
-#### `disable_service`
-```
-RISK: MEDIUM | dry_run=True | confirmed: bool
-inputs: service_name: str, dry_run: bool = True, confirmed: bool = False
-```
-Confirmation prompt:
-```
-"Disabling {service_name} will stop it now and prevent it starting on reboot.
- Description: {description}
- Known dependencies: {dependents}
- Reversal: systemctl enable {service_name} && systemctl start {service_name}
+**Execution flow:**
 
- Proceed? [yes/no]"
-```
+1. Resolve command via `resolveCommand()` or `resolveSudoCommand()` (allowlist enforcement)
+2. Call `prepareSudoOptions()` for transparent credential injection:
+   - Strategy 1: If `SudoSession` has a cached password → inject `-S -p ""` and pipe password via stdin
+   - Strategy 2: If no session but askpass helper available → inject `-A` with `SUDO_ASKPASS` env
+   - Strategy 3: Let sudo fail naturally (error caught by SudoGuard)
+3. Spawn with `shell: false`, `AbortController` for timeout, buffer capping
+4. Zero stdin buffer after writing (may contain password)
+5. Detect permission errors via `SudoGuard.isPermissionError()` on combined output
 
----
+### 4.2 Sanitizer ([`sanitizer.ts`](src/core/sanitizer.ts))
 
-### MODULE: mac.py
+See [Section 3.4](#34-input-sanitization) for the complete validator table. Key rejection patterns:
 
-#### `check_mac_status`
-```
-RISK: LOW | sync
-output: {backend: "apparmor"|"selinux"|"none", mode: "enforcing"|"permissive"|"disabled", profiles: list[{name, mode, recent_violations: int}]}
-```
+- `SHELL_METACHAR_RE = /[;|&$\`(){}<>\n\r]/` — [line 8](src/core/sanitizer.ts:8)
+- `CONTROL_CHAR_RE = /[\x00-\x08\x0e-\x1f\x7f]/` — [line 14](src/core/sanitizer.ts:14)
+- `PATH_TRAVERSAL_RE = /(^|[\/\\])\.\.([\/\\]|$)/` — [line 19](src/core/sanitizer.ts:19)
 
-#### `enable_mac_complain_mode`
-```
-RISK: LOW | confirmed: bool
-```
-Confirmation prompt:
-```
-"Enabling AppArmor COMPLAIN mode will log policy violations but not block them.
- No applications will be interrupted. This is the recommended first step
- before enabling enforcement.
- Proceed? [yes/no]"
-```
+`validateFilePath()` additionally checks:
+- No null bytes
+- Path resolves within `config.allowedDirs` (default: `/tmp,/home,/var/log,/etc`)
+- Path is not within `config.protectedPaths` (default: `/boot,/usr/lib/systemd,/usr/bin,/usr/sbin`)
 
-#### `get_mac_violations`
-```
-RISK: LOW | sync
-inputs: hours_back: int = 168  # 7 days
-output: list[{profile, operation, denied_resource, count}] sorted by count desc
-```
-Logic: Parse `/var/log/audit/audit.log` or `journalctl` for `apparmor="ALLOWED"` type=AVC entries.
+### 4.3 Command Allowlist ([`command-allowlist.ts`](src/core/command-allowlist.ts))
 
-#### `enable_mac_enforce_profile`
-```
-RISK: MEDIUM | confirmed: bool
-inputs: profile_name: str, confirmed: bool = False
-```
-Confirmation prompt:
-```
-"Enforcing AppArmor profile [{profile_name}] will block all actions
- that violate its rules. Recent violations for this profile: {violation_count}.
- Applications using this profile may be interrupted if violations exist.
- Proceed? [yes/no]"
-```
+**Structure:**
 
-#### `enable_mac_enforce_global`
-```
-RISK: HIGH | confirm_string: str
-CONFIRM_STRING_CONSTANT = "CONFIRM-ENFORCE"
-inputs: confirm_string: str = ""
-```
-Confirmation prompt:
-```
-"⚠️  HIGH RISK OPERATION
-
-Enabling global AppArmor enforcement will immediately block ALL applications
-from performing actions that violate their profiles.
-
-Profiles with recent violations ({violation_count} total):
-{violation_summary}
-
-Applications with violations WILL LIKELY CRASH OR BECOME INACCESSIBLE
-until their profiles are corrected.
-
-Recommended: Use enable_mac_enforce_profile() per-profile instead.
-
-To proceed anyway, type exactly: CONFIRM-ENFORCE"
-```
-
----
-
-### MODULE: fim.py
-
-#### `check_aide_status`
-```
-RISK: LOW | sync
-output: {installed: bool, database_exists: bool, database_age_days: int | None, last_check: datetime | None}
-```
-
-#### `init_aide_database`
-```
-RISK: LOW | background_job=True
-inputs: scope: Literal["critical", "full"] = "critical"
-  # critical = /etc /bin /sbin /usr/bin /usr/sbin
-  # full     = entire filesystem
-output: JobStatus (immediate)
-```
-Scoped AIDE config:
-```
-# critical scope — write to /etc/aide/aide-mcp.conf
-/etc        Full
-/bin        Binlib
-/sbin       Binlib
-/usr/bin    Binlib
-/usr/sbin   Binlib
-```
-Confirmation prompt:
-```
-"Building the AIDE baseline will take:
- - Critical directories (/etc, /bin, /sbin, /usr): ~2 minutes
- - Full filesystem: 10–30 minutes
-
-Scope selected: {scope}
-Resource impact: Moderate CPU + IO during build. Runs in background.
-
-Note: This is read-only. It creates a snapshot database — no changes to your files.
-Proceed? [yes/no]"
-```
-
-#### `run_aide_check`
-```
-RISK: LOW | background_job=True
-output: JobStatus → AideReport({added: list[str], removed: list[str], changed: list[str], unchanged_count: int})
-```
-
-#### `schedule_aide_check` `[OPTIONAL]`
-```
-RISK: LOW | confirmed: bool
-inputs: schedule: str = "daily"  # creates systemd timer
-```
-
----
-
-### MODULE: malware.py
-
-#### `run_rkhunter`
-```
-RISK: LOW | background_job=True
-output: JobStatus → RkhunterReport({warnings: list[str], found_rootkits: list[str], suspicious_files: list[str]})
-```
-Logic: `rkhunter --check --sk --rwo`, parse output.
-
-#### `run_chkrootkit`
-```
-RISK: LOW | background_job=True
-output: JobStatus → {infected: list[str], not_infected: list[str]}
-```
-
-#### `run_clamav_scan`
-```
-RISK: LOW | background_job=True
-inputs: scope: Literal["targeted", "full"] = "targeted"
-  # targeted = /tmp /home /var/www /var/tmp
-  # full     = /
-```
-Confirmation prompt:
-```
-"ClamAV scan resource requirements:
- - Targeted (/tmp, /home, /var/www): 5–10 minutes, ~400 MB RAM
- - Full filesystem: 20–60 minutes, ~400 MB RAM, sustained CPU usage
-
-Scope selected: {scope}
-Runs in background. Read-only — no files will be modified.
-Proceed? [yes/no]"
-```
-
-#### `full_malware_scan`
-```
-RISK: LOW | background_job=True
-inputs: clamav_scope: Literal["targeted", "full"] = "targeted"
-output: JobStatus → {rkhunter: RkhunterReport, chkrootkit: dict, clamav: dict, summary: str}
-```
-Logic: Run rkhunter, chkrootkit, clamscan in sequence. Return unified report.
-
----
-
-### MODULE: auth.py
-
-#### `check_auth_policy`
-```
-RISK: LOW | sync
-output: {
-  password_min_length: int | None,
-  password_complexity: bool,
-  account_lockout_enabled: bool,
-  lockout_attempts: int | None,
-  lockout_duration: str | None,
-  cis_failures: list[str]
+```typescript
+interface AllowlistEntry {
+  binary: string;          // e.g. "iptables"
+  candidates: string[];    // e.g. ["/usr/sbin/iptables", "/sbin/iptables"]
+  resolvedPath?: string;   // Filled at startup; undefined if not found
 }
 ```
-Logic: Parse `/etc/pam.d/common-auth`, `/etc/pam.d/common-password`, `/etc/security/pwquality.conf`, `/etc/security/faillock.conf`.
 
-#### `harden_password_policy`
-```
-RISK: MEDIUM | dry_run=True | confirmed: bool
-inputs:
-  min_length: int = 14
-  require_uppercase: bool = True
-  require_lowercase: bool = True
-  require_digits: bool = True
-  require_special: bool = True
-  dry_run: bool = True
-  confirmed: bool = False
-```
-Logic: Modify `/etc/security/pwquality.conf`. Does NOT retroactively affect existing passwords.
+The allowlist contains 115 binary definitions organized into categories: privilege management, firewall, kernel/sysctl, systemd, networking, logging/audit, IDS/rootkit, malware, compliance, container, encryption, WireGuard, SSH, user management, package managers, coreutils, hashing, process inspection, boot, supply chain, secrets scanners, eBPF, and GUI askpass helpers.
 
-#### `harden_account_lockout`
+**Resolution:**
+
+- [`initializeAllowlist()`](src/core/command-allowlist.ts:289): Called once at startup. Iterates all entries, checks `existsSync()` for each candidate path. First match wins.
+- [`resolveCommand(command)`](src/core/command-allowlist.ts:323): Returns the resolved absolute path. Throws if not allowlisted or not found on disk.
+- [`resolveSudoCommand(args)`](src/core/command-allowlist.ts:397): Resolves both `sudo` itself and the target binary in the args (skipping sudo flags like `-S`, `-p`, `-A`, `-k`, `-n`, `-v`).
+- Bare names already in use as absolute paths are validated against candidate lists.
+- Lazy resolution: if `initializeAllowlist()` hasn't run, `resolveCommand()` tries candidates on-the-fly.
+
+### 4.4 Sudo Session ([`sudo-session.ts`](src/core/sudo-session.ts))
+
+**Singleton** managing elevated privilege credentials for non-interactive (no-TTY) environments.
+
+**Lifecycle:**
+
+1. **Elevate**: User calls `sudo_elevate` tool with their password
+2. **Validate**: `elevate()` runs `sudo -S -k -v -p ""` with password piped on stdin to test credentials
+3. **Store**: Password stored in a `Buffer` (not a V8 string) — `this.passwordBuf = Buffer.from(password, "utf-8")`
+4. **Timer**: Auto-expiry timer set (default 15 minutes). Timer is `unref()`'d to avoid keeping the process alive.
+5. **Use**: `getPassword()` returns a **copy** of the buffer. Executor pipes it to `sudo -S` via stdin.
+6. **Drop**: `drop()` zeroes the buffer (`passwordBuf.fill(0)`), clears state, fires `sudo -k` to invalidate system cache.
+7. **Cleanup**: Process exit/signal handlers call `drop()` automatically.
+
+**Status interface:**
+
+```typescript
+interface SudoSessionStatus {
+  elevated: boolean;
+  username: string | null;
+  expiresAt: string | null;       // ISO 8601
+  remainingSeconds: number | null;
+}
 ```
-RISK: MEDIUM | dry_run=True | confirmed: bool
-inputs:
-  deny_attempts: int = 5
-  unlock_time: int = 900        # seconds (0 = never auto-unlock)
-  dry_run: bool = True
-  confirmed: bool = False
+
+### 4.5 Pre-flight ([`preflight.ts`](src/core/preflight.ts) + [`tool-wrapper.ts`](src/core/tool-wrapper.ts))
+
+#### The Proxy Pattern
+
+[`createPreflightServer()`](src/core/tool-wrapper.ts:96) creates a `Proxy<McpServer>` that intercepts only the `tool` property:
+
+```typescript
+return new Proxy(server, {
+  get(target, prop, receiver) {
+    if (prop === "tool") {
+      return createWrappedToolMethod(target, ctx);
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+});
 ```
-Logic: Configure `pam_faillock` in `/etc/pam.d/common-auth` and `/etc/pam.d/common-account`.
+
+The wrapped `.tool()` method:
+1. Reads `args[0]` as tool name, `args[args.length - 1]` as handler (works for all 6 SDK overloads)
+2. Checks bypass set (sudo management tools: `sudo_elevate`, `sudo_elevate_gui`, `sudo_status`, `sudo_drop`, `sudo_extend`, `preflight_batch_check`)
+3. Wraps the handler in a pre-flight function
+4. Forwards all args (with wrapped handler) to the real `server.tool()`
+
+#### Pipeline Stages
+
+The [`PreflightEngine.runPreflight()`](src/core/preflight.ts:241) method executes:
+
+1. **Cache check**: Return cached passing result if available (60s TTL). Skipped when params are provided (safeguard checks depend on runtime params).
+2. **Manifest resolution**: Look up [`ToolManifest`](src/core/tool-registry.ts:22) from the registry. Missing manifest → pass with warning.
+3. **Dependency checking**: Check binaries, Python modules, npm packages, libraries, required files.
+4. **Auto-installation**: If enabled and dependencies missing, attempt installation via `AutoInstaller.resolveAll()`.
+5. **Privilege validation**: Check sudo requirements via `PrivilegeManager.checkForTool()`.
+6. **Safeguard checks**: If params provided, run `SafeguardRegistry.checkSafety()` for blocking/warning conditions.
+7. **Result assembly**: Determine pass/fail, generate human-readable summary.
+
+#### Caching
+
+| Cache | TTL | Invalidation |
+|-------|-----|-------------|
+| `PreflightEngine.resultCache` | 60s | `invalidatePreflightCaches()` after sudo elevate/drop |
+| `PrivilegeManager.cachedStatus` | 30s | Same invalidation trigger |
+| `dependency-validator` binary cache | Startup | `clearDependencyCache()` after auto-install |
+
+### 4.6 Safeguards ([`safeguards.ts`](src/core/safeguards.ts))
+
+The [`SafeguardRegistry`](src/core/safeguards.ts:140) singleton detects running applications and evaluates operation safety.
+
+**Detection domains** (all run in parallel):
+- VS Code (process, config dir, IPC sockets)
+- Docker (socket, running containers)
+- MCP servers (workspace config, node processes)
+- Databases (TCP port probing: PostgreSQL:5432, MySQL:3306, MongoDB:27017, Redis:6379)
+- Web servers (nginx, apache2, httpd process detection)
+
+**Blocker conditions** (prevent execution):
+
+| Condition | Trigger |
+|-----------|---------|
+| SSH lockout | SSH config modification while connected via SSH |
+| SSH port block | Firewall rule dropping port 22 during SSH session |
+| INPUT DROP policy | Setting INPUT default to DROP during SSH session |
+| Password auth disable | Disabling PasswordAuthentication without authorized_keys |
+| Database service stop | Stopping a database service with active connections |
+
+**Warnings** (non-blocking): Docker networking impact, database connectivity, web server traffic, MCP server communication.
+
+**Result interface:**
+
+```typescript
+interface SafetyResult {
+  safe: boolean;           // true if no blockers
+  warnings: string[];      // Non-blocking concerns
+  blockers: string[];      // Fatal: operation should not proceed
+  impactedApps: string[];  // Affected application categories
+}
+```
+
+### 4.7 Changelog & Rollback ([`changelog.ts`](src/core/changelog.ts), [`rollback.ts`](src/core/rollback.ts), [`backup-manager.ts`](src/core/backup-manager.ts))
+
+#### Changelog
+
+**Entry schema:**
+
+```typescript
+interface ChangeEntry {
+  id: string;                // UUID v4
+  timestamp: string;         // ISO 8601
+  tool: string;              // MCP tool name
+  action: string;            // Description of action
+  target: string;            // File, service, etc.
+  before?: string;           // State before change
+  after?: string;            // State after change
+  backupPath?: string;       // Path to backup file
+  dryRun: boolean;           // Whether this was dry-run
+  success: boolean;          // Whether action succeeded
+  error?: string;            // Error message if failed
+  rollbackCommand?: string;  // Command to undo
+}
+```
+
+**State file schema (version 1):**
+
+```typescript
+interface ChangelogState {
+  version: 1;
+  entries: ChangeEntry[];
+}
+```
+
+Stored at `~/.kali-defense/changelog.json`. Migrates from bare-array format (pre-v0.5.0). Max 10,000 entries with rotation.
+
+#### Rollback Manager
+
+**Change record types:** `"file" | "sysctl" | "service" | "firewall"`
+
+```typescript
+interface RollbackState {
+  version: 1;
+  changes: ChangeRecord[];
+}
+```
+
+Stored at `~/.kali-defense/rollback-state.json`. Supports rollback by operation ID or session ID. Rollback strategies:
+- **file**: Copy backup file back to original location
+- **sysctl**: `sysctl -w <key>=<originalValue>`
+- **service**: `systemctl start|stop <service>` (inverse of change)
+- **firewall**: Execute the stored rollback command string
+
+#### Backup Manager
+
+```typescript
+interface BackupManifest {
+  version: 1;
+  backups: BackupEntry[];
+}
+
+interface BackupEntry {
+  id: string;           // UUID v4
+  originalPath: string;
+  backupPath: string;   // ~/.kali-defense/backups/<timestamp>_<filename>
+  timestamp: string;    // ISO 8601
+  sizeBytes: number;
+}
+```
+
+Stored at `~/.kali-defense/backups/manifest.json`. Supports backup, restore by ID, listing, and pruning by age.
+
+### 4.8 Secure FS ([`secure-fs.ts`](src/core/secure-fs.ts))
+
+Six functions enforcing owner-only permissions:
+
+| Function | Permission | Purpose |
+|----------|-----------|---------|
+| `secureWriteFileSync()` | 0o600 | Write file, create parent dirs at 0o700 |
+| `secureMkdirSync()` | 0o700 | Create directory |
+| `secureCopyFileSync()` | 0o600 | Copy file with secure dest permissions |
+| `verifySecurePermissions()` | — | Check `(mode & 0o077) === 0` |
+| `hardenFilePermissions()` | 0o600 | Fix existing file permissions |
+| `hardenDirPermissions()` | 0o700 | Fix existing directory permissions |
+
+All functions call `chmodSync()` explicitly after the operation to override any umask interference.
+
+### 4.9 Spawn Safe ([`spawn-safe.ts`](src/core/spawn-safe.ts))
+
+Low-level process spawning layer with **no dependencies on executor.ts or sudo-session.ts**. Used by modules that can't import the executor due to circular dependency concerns.
+
+**Exports:**
+
+- `spawnSafe(command, args, options)` → async `ChildProcess`
+- `execFileSafe(command, args, options)` → sync `Buffer | string`
+
+Both functions:
+1. Resolve the command through the allowlist (`resolveCommand()`)
+2. Force `shell: false` (non-negotiable)
+3. Log to stderr
+4. Fall back to `isAllowlisted()` if allowlist not yet initialized (early startup)
+
+**Users:** [`sudo-session.ts`](src/core/sudo-session.ts:52) and [`auto-installer.ts`](src/core/auto-installer.ts:21)
+
+### 4.10 Configuration ([`config.ts`](src/core/config.ts))
+
+All configuration via environment variables with defensive defaults. `getConfig()` is called fresh each invocation.
+
+```typescript
+interface DefenseConfig {
+  defaultTimeout: number;         // KALI_DEFENSE_TIMEOUT_DEFAULT (seconds→ms), default: 120s
+  maxBuffer: number;              // KALI_DEFENSE_MAX_OUTPUT_SIZE, default: 10MB
+  allowedDirs: string[];          // KALI_DEFENSE_ALLOWED_DIRS, default: /tmp,/home,/var/log,/etc
+  logLevel: string;               // KALI_DEFENSE_LOG_LEVEL, default: "info"
+  dryRun: boolean;                // KALI_DEFENSE_DRY_RUN, default: false (tools default true individually)
+  changelogPath: string;          // KALI_DEFENSE_CHANGELOG_PATH, default: ~/.kali-defense/changelog.json
+  backupDir: string;              // KALI_DEFENSE_BACKUP_DIR, default: ~/.kali-defense/backups
+  autoInstall: boolean;           // KALI_DEFENSE_AUTO_INSTALL, default: false
+  protectedPaths: string[];       // KALI_DEFENSE_PROTECTED_PATHS, default: /boot,/usr/lib/systemd,...
+  requireConfirmation: boolean;   // KALI_DEFENSE_REQUIRE_CONFIRMATION, default: true
+  quarantineDir: string;          // KALI_DEFENSE_QUARANTINE_DIR, default: ~/.kali-defense/quarantine
+  policyDir: string;              // KALI_DEFENSE_POLICY_DIR, default: ~/.kali-defense/policies
+  toolTimeouts: Record<string, number>; // KALI_DEFENSE_TIMEOUT_<TOOL>
+  sudoSessionTimeout: number;     // KALI_DEFENSE_SUDO_TIMEOUT (minutes→ms), default: 15 min
+}
+```
+
+Per-tool timeout overrides support 14 known tools: lynis, aide, clamav, oscap, snort, suricata, rkhunter, chkrootkit, tcpdump, auditd, nmap, fail2ban-client, debsums, yara.
+
+### 4.11 Auto-Installer ([`auto-installer.ts`](src/core/auto-installer.ts))
+
+Singleton multi-package-manager dependency resolver. Supports:
+
+- **System packages**: apt, dnf, yum, pacman, apk, zypper, brew (7 managers)
+- **Python modules**: pip3/pip with user-site fallback then sudo
+- **npm packages**: `npm install -g` with user-level fallback then sudo
+- **Libraries**: Dev-package pattern resolution per distro family
+
+**Supply chain protections:**
+
+1. Binary must be in `DEFENSIVE_TOOLS` catalog
+2. Package name resolved from catalog (never raw binary name)
+3. Package name validated via regex
+4. Package must be in approved allowlist (built from catalog)
+5. All installs logged to audit changelog
+
+### 4.12 Distro Support ([`distro.ts`](src/core/distro.ts), [`distro-adapter.ts`](src/core/distro-adapter.ts))
+
+**Detection cascade:**
+
+1. `process.platform === "darwin"` → macOS
+2. `/proc/version` contains "microsoft" → WSL
+3. Parse `/etc/os-release` (ID, PRETTY_NAME, VERSION_ID)
+4. Fall back to `lsb_release -a`
+5. Fall back to distro-specific files (`/etc/debian_version`, `/etc/redhat-release`, etc.)
+
+**Supported families:**
+
+| Family | Distros | Package Manager | Init System |
+|--------|---------|----------------|-------------|
+| debian | Debian, Ubuntu, Kali, Mint, Pop, Elementary, Parrot | apt | systemd |
+| rhel | RHEL, CentOS, Fedora, Rocky, AlmaLinux, Amazon | dnf/yum | systemd |
+| arch | Arch, Manjaro | pacman | systemd |
+| alpine | Alpine | apk | openrc |
+| suse | openSUSE, SLES | zypper | systemd |
+
+**DistroAdapter** provides unified access to:
+- Package manager commands (`installCmd`, `removeCmd`, `updateCmd`, etc.)
+- Service manager commands (`startCmd`, `stopCmd`, `enableCmd`, etc.)
+- Firewall backend commands (iptables, nftables, ufw, firewalld)
+- Distro-specific paths (syslog, auth log, PAM configs, GRUB, etc.)
+- Package integrity checking (debsums, rpm -V, pacman -Qk)
+- Auto-update configuration
+- Firewall persistence setup
 
 ---
 
-### MODULE: updates.py
+## 5. Tool System
 
-#### `check_pending_updates`
-```
-RISK: LOW | sync
-output: {security_updates: int, other_updates: int, packages: list[{name, current_version, new_version, is_security: bool}]}
-```
-Logic: `apt list --upgradable 2>/dev/null` (debian) or `dnf check-update --security` (rhel).
+### 5.1 Tool Registration Pattern
 
-#### `check_needrestart`
-```
-RISK: LOW | sync
-output: {services_needing_restart: list[str], kernel_update_pending: bool}
+Every tool module exports a single function:
+
+```typescript
+export function registerXxxTools(server: McpServer): void {
+  server.tool(
+    "tool_name",               // 1st arg: tool name (string)
+    "Description",             // 2nd arg: description (string)
+    {                          // 3rd arg: Zod schema (plain object, NOT z.object())
+      action: z.enum(["list", "add", "delete"]).describe("..."),
+      param: z.string().optional().describe("..."),
+      dry_run: z.boolean().optional().default(true).describe("Preview changes"),
+    },
+    async (params) => {        // 4th arg: handler function
+      // 1. Validate inputs via sanitizer
+      // 2. Build command args
+      // 3. Execute via executeCommand()
+      // 4. Log change via logChange()
+      // 5. Return { content: [{ type: "text", text: "..." }] }
+    },
+  );
+}
 ```
 
-#### `configure_unattended_upgrades`
-```
-RISK: MEDIUM | dry_run=True | confirmed: bool
-inputs:
-  mode: Literal["download_only", "auto_install"] = "download_only"
-  dry_run: bool = True
-  confirmed: bool = False
-```
-Confirmation prompt:
-```
-"Configuring automatic security updates in [{mode}] mode.
+**Action parameter pattern**: Most tools use a single `action` enum parameter to consolidate related operations. For example, `firewall_iptables` accepts `action: "list" | "add" | "delete" | "set_policy" | "create_chain"`. This pattern reduced the tool count from 157 (pre-v0.5.0) to 78.
 
-- download_only: Security patches downloaded automatically, installed manually.
-  Safe for production — you control when changes are applied.
-- auto_install: Patches applied automatically. May restart services (including sshd).
-  On kernel updates, a reboot will be required.
+### 5.2 Tool Modules (21 files, 78 tools)
 
-Mode selected: {mode}
-Proceed? [yes/no]"
+| # | Module | File | Tools | Tool Names |
+|---|--------|------|-------|------------|
+| 1 | Sudo Management | `sudo-management.ts` | 6 | sudo_elevate, sudo_elevate_gui, sudo_status, sudo_drop, sudo_extend, preflight_batch_check |
+| 2 | Firewall | `firewall.ts` | 5 | firewall_iptables, firewall_ufw, firewall_persist, firewall_nftables_list, firewall_policy_audit |
+| 3 | Hardening | `hardening.ts` | 8 | harden_sysctl, harden_service, harden_permissions, harden_systemd, harden_kernel, harden_bootloader, harden_misc, memory_protection |
+| 4 | IDS | `ids.ts` | 3 | ids_aide_manage, ids_rootkit_scan, ids_file_integrity_check |
+| 5 | Logging | `logging.ts` | 4 | log_auditd, log_journalctl_query, log_fail2ban, log_system |
+| 6 | Network Defense | `network-defense.ts` | 3 | netdef_connections, netdef_capture, netdef_security_audit |
+| 7 | Compliance | `compliance.ts` | 7 | compliance_lynis_audit, compliance_oscap_scan, compliance_check, compliance_policy_evaluate, compliance_report, compliance_cron_restrict, compliance_tmp_hardening |
+| 8 | Malware | `malware.ts` | 4 | malware_clamav, malware_yara_scan, malware_file_scan, malware_quarantine_manage |
+| 9 | Backup | `backup.ts` | 1 | backup |
+| 10 | Access Control | `access-control.ts` | 6 | access_ssh, access_sudo_audit, access_user_audit, access_password_policy, access_pam, access_restrict_shell |
+| 11 | Encryption | `encryption.ts` | 4 | crypto_tls, crypto_gpg_keys, crypto_luks_manage, crypto_file_hash |
+| 12 | Container Security | `container-security.ts` | 6 | container_docker, container_apparmor, container_selinux_manage, container_namespace_check, container_image_scan, container_security_config |
+| 13 | Meta | `meta.ts` | 5 | defense_check_tools, defense_workflow, defense_change_history, security_posture, scheduled_audit |
+| 14 | Patch Management | `patch-management.ts` | 5 | patch_update_audit, patch_unattended_audit, patch_integrity_check, patch_kernel_audit, vulnerability_intel |
+| 15 | Secrets | `secrets.ts` | 4 | secrets_scan, secrets_env_audit, secrets_ssh_key_sprawl, scan_git_history |
+| 16 | Incident Response | `incident-response.ts` | 1 | incident_response |
+| 17 | Supply Chain | `supply-chain-security.ts` | 1 | supply_chain |
+| 18 | Drift Detection | `drift-detection.ts` | 1 | drift_baseline |
+| 19 | Zero Trust | `zero-trust-network.ts` | 1 | zero_trust |
+| 20 | eBPF Security | `ebpf-security.ts` | 2 | list_ebpf_programs, falco |
+| 21 | App Hardening | `app-hardening.ts` | 1 | app_harden |
+
+### 5.3 Tool Naming Convention
+
+Tools follow a `category_action` or `category_subject` pattern:
+
+- `firewall_iptables` — category + subject (action is a parameter)
+- `harden_sysctl` — category + subject
+- `access_ssh` — category + subject
+- `ids_rootkit_scan` — category + specific_action
+- `sudo_elevate` — category + action
+
+Multi-word categories use underscores. The naming is consistent enough for the [`inferCategory()`](src/core/tool-registry.ts:215) function to map tool names to categories via prefix matching.
+
+---
+
+## 6. State Management
+
+### 6.1 Directory Layout (`~/.kali-defense/`)
+
+```
+~/.kali-defense/                      [0o700]
+├── changelog.json                    [0o600] — Versioned audit trail
+├── rollback-state.json               [0o600] — Change tracking for rollback
+├── backups/                          [0o700]
+│   ├── manifest.json                 [0o600] — Backup inventory
+│   ├── 2026-03-04T10-30-00-000Z_sshd_config  [0o600]
+│   └── ...
+├── quarantine/                       [0o700] — Isolated malware samples
+├── policies/                         [0o700] — Custom compliance policies
+└── baselines/                        [0o700] — Drift detection baselines
+```
+
+### 6.2 Changelog Schema (version 1)
+
+```json
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "timestamp": "2026-03-04T10:30:00.000Z",
+      "tool": "harden_sysctl",
+      "action": "Set sysctl parameter",
+      "target": "net.ipv4.ip_forward",
+      "before": "1",
+      "after": "0",
+      "backupPath": null,
+      "dryRun": false,
+      "success": true,
+      "error": null,
+      "rollbackCommand": "sysctl -w net.ipv4.ip_forward=1"
+    }
+  ]
+}
+```
+
+### 6.3 Rollback State Schema (version 1)
+
+```json
+{
+  "version": 1,
+  "changes": [
+    {
+      "id": "uuid",
+      "operationId": "uuid",
+      "sessionId": "uuid",
+      "type": "sysctl",
+      "target": "net.ipv4.ip_forward",
+      "originalValue": "1",
+      "timestamp": "2026-03-04T10:30:00.000Z",
+      "rolledBack": false,
+      "changelogRef": "changelog-entry-uuid"
+    }
+  ]
+}
+```
+
+### 6.4 Backup Manifest Schema (version 1)
+
+```json
+{
+  "version": 1,
+  "backups": [
+    {
+      "id": "uuid",
+      "originalPath": "/etc/ssh/sshd_config",
+      "backupPath": "/home/user/.kali-defense/backups/2026-03-04T10-30-00-000Z_sshd_config",
+      "timestamp": "2026-03-04T10:30:00.000Z",
+      "sizeBytes": 3452
+    }
+  ]
+}
 ```
 
 ---
 
-### MODULE: compliance.py
+## 7. Testing
 
-#### `run_cis_scan`
+### 7.1 Framework
+
+- **Test runner**: vitest ^4.0.18
+- **Coverage**: @vitest/coverage-v8 ^4.0.18
+- **Config**: [`vitest.config.ts`](vitest.config.ts)
+
+### 7.2 Test Structure
+
 ```
-RISK: LOW | background_job=True
-inputs: level: Literal[1, 2] = 1
-output: JobStatus → ComplianceReport
-```
-```python
-class ComplianceReport(BaseModel):
-    profile: str
-    pass_count: int
-    fail_count: int
-    error_count: int
-    score_percent: float
-    failures: list[{rule_id: str, title: str, severity: str, fix_text: str}]
-    report_path: str   # path to generated HTML report
-```
-Logic: `oscap xccdf eval --profile cis_level{level} --results /tmp/mcp-cis-results.xml --report /tmp/mcp-cis-report.html /usr/share/scap-security-guide/ssg-{distro}-ds.xml`
-Confirmation prompt:
-```
-"Running an OpenSCAP CIS Level {level} benchmark scan will evaluate ~300 rules.
-Read-only. Produces an HTML compliance report.
-Estimated time: 3–8 minutes.
-Proceed? [yes/no]"
+tests/
+└── core/
+    ├── changelog.test.ts
+    ├── command-allowlist.test.ts
+    ├── config.test.ts
+    ├── safeguards.test.ts
+    ├── sanitizer.test.ts
+    └── secure-fs.test.ts
 ```
 
-#### `run_stig_scan` `[OPTIONAL]`
+Tests cover `src/core/**/*.ts` only. Tool modules (`src/tools/**/*.ts`) and the entry point (`src/index.ts`) are excluded from coverage.
+
+### 7.3 Coverage Targets
+
+From [`vitest.config.ts`](vitest.config.ts:12):
+
+```typescript
+thresholds: {
+  lines: 50,
+  functions: 50,
+  branches: 40,
+  statements: 50,
+}
 ```
-RISK: LOW | background_job=True
-inputs: none
-output: JobStatus → ComplianceReport
-```
+
+Test timeout: 10,000ms. Environment: `node`. Globals enabled.
 
 ---
 
-### MODULE: orchestrator.py
+## 8. Dependencies
 
-#### `full_harden`
-```
-RISK: varies per step | interactive confirmation flow
-inputs:
-  allow_ports: list[str] = ["22/tcp"]
-  clamav_scope: Literal["targeted", "full"] = "targeted"
-  aide_scope: Literal["critical", "full"] = "critical"
-  skip_steps: list[str] = []    # tool names to skip
-  dry_run: bool = True          # if True: preview entire plan, apply nothing
-output: FullHardenReport
-```
-```python
-class FullHardenReport(BaseModel):
-    environment: EnvironmentProfile
-    lynis_before: int            # hardening_index before
-    lynis_after: int | None      # hardening_index after (None if dry_run)
-    steps_completed: list[str]
-    steps_skipped: list[str]
-    steps_failed: list[str]
-    change_ids: list[str]        # for rollback
-    report_path: str             # HTML report path
-```
-Execution order:
-```
-1.  fingerprint_environment()                     — no confirmation
-2.  run_lynis_audit()                             — LOW: single prompt
-3.  Present full plan with per-step risk levels   — user reviews, confirms plan
-4.  check_firewall_status()                       — no confirmation
-5.  harden_firewall_baseline()                    — MEDIUM: confirm
-6.  check_ssh_status()                            — no confirmation
-7.  harden_ssh_config()                           — HIGH: confirm_string
-8.  check_kernel_params()                         — no confirmation
-9.  harden_kernel_params()                        — MEDIUM: confirm
-10. list_enabled_services()                       — no confirmation
-11. disable_service() per recommended service     — MEDIUM: confirm each
-12. check_auth_policy()                           — no confirmation
-13. harden_password_policy()                      — MEDIUM: confirm
-14. harden_account_lockout()                      — MEDIUM: confirm
-15. check_fail2ban_status()                       — no confirmation
-16. install_fail2ban_baseline()                   — MEDIUM: confirm
-17. check_aide_status()                           — no confirmation
-18. init_aide_database()                          — LOW: single prompt
-19. run_rkhunter()                                — LOW
-20. run_clamav_scan()                             — LOW: scope prompt
-21. check_mac_status()                            — no confirmation
-22. enable_mac_complain_mode()                    — LOW: confirm
-23. configure_unattended_upgrades()               — MEDIUM: confirm
-24. run_lynis_audit()                             — final score
-25. generate HTML report                          — write to ~/mcp-harden-report.html
-```
-On `dry_run=True`: steps 4–25 return ChangePreview only; nothing applied.
+### 8.1 Runtime
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@modelcontextprotocol/sdk` | ^1.12.1 | MCP server framework (McpServer, StdioServerTransport) |
+| `zod` | ^3.25.0 | Schema validation for tool parameters |
+
+### 8.2 Dev
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `typescript` | ^5.8.3 | TypeScript compiler |
+| `@types/node` | ^22.15.0 | Node.js type definitions |
+| `vitest` | ^4.0.18 | Test runner |
+| `@vitest/coverage-v8` | ^4.0.18 | Code coverage |
+| `tsx` | ^4.19.4 | TypeScript execution for development (`npm run dev`) |
+
+### 8.3 System (External Binaries)
+
+The server operates on 115 allowlisted binaries. Key categories:
+
+| Category | Required Binaries | Optional Binaries |
+|----------|------------------|-------------------|
+| Firewall | iptables, ufw | ip6tables, nft, netfilter-persistent |
+| Hardening | sysctl, systemctl, stat, cat | lsmod, modprobe, readelf, checksec |
+| IDS | sha256sum | aide, rkhunter, chkrootkit |
+| Logging | journalctl | auditctl, ausearch, aureport, fail2ban-client |
+| Network | ss | tcpdump, nmap, ip |
+| Compliance | | lynis, oscap |
+| Malware | | clamscan, freshclam, yara |
+| Access | cat | sshd, passwd, usermod, chage |
+| Crypto | openssl | gpg, cryptsetup |
+| Container | | docker, trivy, grype, apparmor_status |
+| Package Mgmt | | apt, dpkg, dnf, rpm, pacman, apk, zypper |
 
 ---
 
-## BACKGROUND JOB PATTERN
+## 9. Environment Variables
 
-All tools marked `background_job=True` follow this contract:
-
-```python
-# Tool returns immediately:
-{"job_id": "uuid4", "status": "running", "estimated_seconds": 180, ...}
-
-# Polling tool (always available):
-get_job_status(job_id: str) → JobStatus
-
-# Result retrieval:
-get_job_result(job_id: str) → JobStatus  # with result populated when complete
-```
-
-Implement with `asyncio.Task` stored in a module-level `JOBS: dict[str, asyncio.Task]`.
-Poll interval recommendation for LLM: 15 seconds.
-
----
-
-## SAFETY RULES — Hard stops (non-negotiable)
-
-| Condition | Action |
-|-----------|--------|
-| SSH port not in firewall allow_ports | Auto-add it, warn user, block raw removal |
-| current_session_auth_method == "password" AND disable_password_auth == True | HARD BLOCK — return error, do not proceed |
-| confirm_string mismatch on HIGH risk tool | Return ChangePreview, do not apply |
-| sshd -t fails on new config | Abort, do not write, do not restart sshd |
-| BackupManager.snapshot() fails | Abort entire harden_* call, return error |
-| Any harden_* step fails mid-execution | Auto-restore from snapshot, return error with change_id for manual rollback |
-| AppArmor global enforce with violation_count > 0 | Require confirm_string AND display per-profile violation summary |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KALI_DEFENSE_TIMEOUT_DEFAULT` | `120` (seconds) | Default command timeout |
+| `KALI_DEFENSE_MAX_OUTPUT_SIZE` | `10485760` (10MB) | Max stdout/stderr buffer |
+| `KALI_DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log,/etc` | Directories allowed for file operations |
+| `KALI_DEFENSE_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
+| `KALI_DEFENSE_DRY_RUN` | `false`* | Global dry-run mode (*tools default true individually) |
+| `KALI_DEFENSE_CHANGELOG_PATH` | `~/.kali-defense/changelog.json` | Changelog file location |
+| `KALI_DEFENSE_BACKUP_DIR` | `~/.kali-defense/backups` | Backup directory |
+| `KALI_DEFENSE_AUTO_INSTALL` | `false` | Auto-install missing tools via package manager |
+| `KALI_DEFENSE_PROTECTED_PATHS` | `/boot,/usr/lib/systemd,/usr/bin,/usr/sbin` | Paths protected from modification |
+| `KALI_DEFENSE_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
+| `KALI_DEFENSE_QUARANTINE_DIR` | `~/.kali-defense/quarantine` | Malware quarantine directory |
+| `KALI_DEFENSE_POLICY_DIR` | `~/.kali-defense/policies` | Custom compliance policy files |
+| `KALI_DEFENSE_TIMEOUT_<TOOL>` | — | Per-tool timeout in seconds (e.g., `KALI_DEFENSE_TIMEOUT_LYNIS=300`) |
+| `KALI_DEFENSE_SUDO_TIMEOUT` | `15` (minutes) | Sudo session expiry timeout |
+| `KALI_DEFENSE_PREFLIGHT` | `true` | Enable/disable pre-flight validation |
+| `KALI_DEFENSE_PREFLIGHT_BANNERS` | `true` | Prepend status banners to tool output |
 
 ---
 
-## EXTERNAL DEPENDENCIES — Install detection pattern
+## 10. Future Considerations
 
-For every external tool, check binary existence before use:
+Items intentionally deferred from the current implementation:
 
-```python
-async def check_tool_available(tool: str) -> bool:
-    rc, _, _ = await safe_execute("which", [ALLOWED_COMMANDS[tool]])
-    return rc == 0
-
-# If not available, return:
-{"error": f"{tool} is not installed.", "install_command": "apt install {package}"}
-# Never raise an exception for missing optional tools
-```
-
----
-
-## RESOURCES (MCP Resources — read-only, always current)
-
-Expose as MCP Resources for ambient context in the LLM's conversation:
-
-| Resource URI | Content |
-|---|---|
-| `system://firewall/rules` | Current UFW/firewalld rules as JSON |
-| `system://ssh/config` | Parsed sshd_config key-value pairs |
-| `system://open-ports` | Output of check_open_ports() |
-| `system://kernel-params` | CIS sysctl params + current values |
-| `system://lynis-score` | Latest hardening index score |
-| `system://changes` | Last 10 ChangeRecords |
-
----
-
-## TESTING REQUIREMENTS
-
-`tests/test_command_runner.py` must cover:
-- Shell metacharacter injection: `;`, `|`, `&`, `` ` ``, `$()`, `>`, `<`
-- Tool not in allowlist → ValueError
-- Argument with embedded newline → ValueError
-- Valid call returns (returncode, stdout, stderr) tuple
-
-`tests/test_validators.py` must cover:
-- confirm_string mismatch on HIGH risk tool → no apply
-- dry_run=True → no filesystem mutation
-- BackupManager.snapshot() creates files at expected paths
-- rollback_change restores file content exactly
-
----
-
-## pyproject.toml (minimum)
-
-```toml
-[project]
-name = "kali-defense-mcp-server"
-version = "1.0.0"
-requires-python = ">=3.11"
-dependencies = [
-    "mcp[cli]>=1.0.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "aiosqlite>=0.19.0",
-    "aiofiles>=23.0.0",
-]
-
-[project.scripts]
-kali-defense-mcp = "src.server:main"
-```
-
----
-
-## IMPLEMENTATION ORDER
-
-Implement modules in this exact sequence. Each module depends on the previous:
-
-```
-1. validators/inputs.py         — all Pydantic models
-2. executors/command_runner.py  — safe_execute + ALLOWED_COMMANDS
-3. state/backups.py             — BackupManager
-4. state/changelog.py           — SQLite changelog
-5. tools/environment.py         — fingerprint_environment
-6. tools/rollback.py            — list_changes, rollback_change
-7. server.py                    — FastMCP app skeleton, register tools from step 5+6
-8. tools/assessment.py          — run_lynis_audit, get_lynis_score, check_open_ports
-9. tools/firewall.py            — all firewall tools
-10. tools/ssh.py                — all SSH tools
-11. tools/kernel.py             — all kernel tools
-12. tools/services.py           — all service tools
-13. tools/mac.py                — all MAC tools
-14. tools/fim.py                — all AIDE tools
-15. tools/malware.py            — all malware tools
-16. tools/auth.py               — all auth tools
-17. tools/updates.py            — all update tools
-18. tools/compliance.py         — OpenSCAP tools
-19. tools/orchestrator.py       — full_harden (depends on all above)
-20. tests/                      — test suite
-```
+- **Rate limiting**: `config.ts` has no rate limit implementation (placeholder removed)
+- **Multi-user sessions**: `SudoSession` is a process-wide singleton; no per-user credential isolation
+- **Network transport**: Only stdio supported; no HTTP/SSE/WebSocket transport
+- **Network timeouts**: No connect-timeout for remote TLS checks or port probes
+- **Tool-level RBAC**: No role-based access control per tool
+- **Encrypted state files**: State files use permission-based security only (0o600), not encryption at rest
+- **Atomic state file writes**: No write-then-rename pattern for crash safety
+- **Structured logging**: All logging goes to stderr as unstructured text (`console.error`)
+- **Metrics/telemetry**: No Prometheus, OpenTelemetry, or other metrics export
+- **Plugin system**: Tool modules are statically imported; no dynamic loading
+- **Changelog size limits**: 10,000 entry cap exists but no time-based retention policy
+- **Cross-platform**: Linux only; macOS detection exists in `distro.ts` but tools are Linux-specific

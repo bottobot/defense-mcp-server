@@ -4,11 +4,7 @@
  * Detects running applications, assesses their security posture,
  * and applies hardening measures while preserving functionality.
  *
- * Registers 4 tools:
- *   - app_harden_audit: Detect and audit running applications for security risks
- *   - app_harden_recommend: Generate hardening recommendations for a specific app
- *   - app_harden_firewall: Generate/apply firewall rules to restrict an app's network exposure
- *   - app_harden_systemd: Apply systemd sandboxing to an application's service unit
+ * Registers 1 tool: app_harden (actions: audit, recommend, firewall, systemd).
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -488,387 +484,382 @@ async function detectRunningApps(): Promise<DetectedApp[]> {
 
 export function registerAppHardeningTools(server: McpServer): void {
 
-  // ── 1. app_harden_audit ────────────────────────────────────────────────
-
   server.tool(
-    "app_harden_audit",
-    "Detect running applications and audit their security posture. Identifies risky apps, open ports, and generates a prioritized hardening plan while preserving functionality.",
-    {},
-    async () => {
-      try {
-        const sections: string[] = [];
-        sections.push("🔍 Application Security Audit");
-        sections.push("=".repeat(55));
-
-        const apps = await detectRunningApps();
-
-        if (apps.length === 0) {
-          sections.push("\nNo known applications detected.");
-          sections.push("Recognized apps: " + Object.values(APP_PROFILES).map((p) => p.name).join(", "));
-          return { content: [createTextContent(sections.join("\n"))] };
-        }
-
-        sections.push(`\nDetected ${apps.length} application(s):\n`);
-
-        const riskOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-        apps.sort((a, b) => riskOrder[a.profile.riskLevel] - riskOrder[b.profile.riskLevel]);
-
-        let totalRisks = 0;
-
-        for (const app of apps) {
-          const riskIcon = app.profile.riskLevel === "critical" ? "⛔" :
-            app.profile.riskLevel === "high" ? "🔴" : app.profile.riskLevel === "medium" ? "🟡" : "🟢";
-
-          sections.push(`── ${riskIcon} ${app.profile.name} ──`);
-          sections.push(`  Category:     ${app.profile.category}`);
-          sections.push(`  Risk Level:   ${app.profile.riskLevel.toUpperCase()}`);
-          sections.push(`  Running as:   ${app.user}`);
-          sections.push(`  PIDs:         ${app.pids.join(", ")}`);
-          if (app.serviceUnit) sections.push(`  Service Unit: ${app.serviceUnit}`);
-
-          if (app.listenPorts.length > 0) {
-            sections.push(`  Listening Ports:`);
-            for (const lp of app.listenPorts) {
-              const external = !lp.address.includes("127.0.0.1") && !lp.address.includes("::1");
-              sections.push(`    ${lp.protocol}/${lp.port} on ${lp.address} [${external ? "⚠️ EXTERNAL" : "✅ localhost"}]`);
-            }
-          }
-
-          sections.push(`  Security Concerns:`);
-          for (const concern of app.profile.securityConcerns) {
-            sections.push(`    ⚠️ ${concern}`);
-            totalRisks++;
-          }
-
-          sections.push(`  Top Recommendations:`);
-          for (const rec of app.profile.recommendations.slice(0, 3)) {
-            sections.push(`    💡 ${rec}`);
-          }
-          if (app.profile.recommendations.length > 3) {
-            sections.push(`    ... +${app.profile.recommendations.length - 3} more (use app_harden_recommend)`);
-          }
-          sections.push("");
-        }
-
-        sections.push("── Summary ──");
-        sections.push(`  Applications: ${apps.length} | Concerns: ${totalRisks} | Critical/High: ${apps.filter((a) => ["critical", "high"].includes(a.profile.riskLevel)).length}`);
-
-        logChange(createChangeEntry({
-          tool: "app_harden_audit",
-          action: "Application security audit",
-          target: "system",
-          after: `${apps.length} apps, ${totalRisks} concerns`,
-          dryRun: false,
-          success: true,
-        }));
-
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
-      }
-    }
-  );
-
-  // ── 2. app_harden_recommend ────────────────────────────────────────────
-
-  server.tool(
-    "app_harden_recommend",
-    "Generate detailed hardening recommendations for a specific application while preserving its functionality. Covers network, filesystem, systemd, and application-level settings.",
+    "app_harden",
+    "Application hardening: audit running apps, get recommendations, apply firewall rules, or apply systemd sandboxing.",
     {
-      app_name: z.string().describe(
-        "Application name to get recommendations for. Available: " +
-        Object.keys(APP_PROFILES).join(", ")
-      ),
-    },
-    async ({ app_name }) => {
-      try {
-        const profileId = app_name.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const profile = APP_PROFILES[profileId];
-
-        if (!profile) {
-          const available = Object.entries(APP_PROFILES).map(([k, v]) => `${k} (${v.name})`).join(", ");
-          return {
-            content: [createErrorContent(`Unknown application '${app_name}'. Available: ${available}`)],
-            isError: true,
-          };
-        }
-
-        const sections: string[] = [];
-        sections.push(`🛡️ Hardening Guide: ${profile.name}`);
-        sections.push("=".repeat(55));
-        sections.push(`Category: ${profile.category} | Risk: ${profile.riskLevel.toUpperCase()}`);
-
-        sections.push("\n── Security Concerns ──");
-        for (const concern of profile.securityConcerns) {
-          sections.push(`  ⚠️ ${concern}`);
-        }
-
-        sections.push("\n── Network Hardening ──");
-        if (profile.requiredPorts.length > 0) {
-          sections.push("  Ports that MUST remain open (core functionality):");
-          for (const p of profile.requiredPorts) {
-            sections.push(`    ✅ ${p.protocol}/${p.port} — ${p.purpose}`);
-          }
-        }
-        if (profile.localhostOnlyPorts.length > 0) {
-          sections.push("  Ports to restrict to localhost/LAN:");
-          for (const p of profile.localhostOnlyPorts) {
-            sections.push(`    🔒 ${p.protocol}/${p.port} — ${p.purpose}`);
-          }
-        }
-        sections.push("  Firewall strategy:");
-        sections.push("    1. Allow required ports from any source");
-        sections.push("    2. Restrict localhost-only ports to 127.0.0.1");
-        sections.push("    3. Drop all other traffic to this application");
-        sections.push(`    → Use app_harden_firewall --app_name ${profileId} to generate rules`);
-
-        sections.push("\n── Systemd Sandboxing ──");
-        sections.push("  Recommended directives for the service unit:");
-        for (const [key, value] of Object.entries(profile.systemdHardening)) {
-          sections.push(`    ${key}=${value}`);
-        }
-        if (profile.writablePaths.length > 0) {
-          sections.push(`    ReadWritePaths=${profile.writablePaths.join(" ")}`);
-        }
-        sections.push(`    → Use app_harden_systemd --app_name ${profileId} to apply`);
-
-        sections.push("\n── Application-Level Recommendations ──");
-        for (let i = 0; i < profile.recommendations.length; i++) {
-          sections.push(`  ${i + 1}. ${profile.recommendations[i]}`);
-        }
-
-        sections.push("\n── Filesystem Permissions ──");
-        sections.push("  Writable paths (required for operation):");
-        for (const p of profile.writablePaths) {
-          sections.push(`    📝 ${p}`);
-        }
-        sections.push("  Read-only paths:");
-        for (const p of profile.readablePaths) {
-          sections.push(`    📖 ${p}`);
-        }
-
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
-      }
-    }
-  );
-
-  // ── 3. app_harden_firewall ─────────────────────────────────────────────
-
-  server.tool(
-    "app_harden_firewall",
-    "Generate and optionally apply firewall rules to restrict an application's network exposure while preserving its core functionality.",
-    {
-      app_name: z.string().describe("Application name (e.g., qbittorrent, nginx, redis)"),
-      lan_cidr: z.string().optional().default("192.168.0.0/16").describe("LAN CIDR for localhost-only ports (default: 192.168.0.0/16)"),
-      dry_run: z.boolean().optional().describe("Preview rules without applying"),
-    },
-    async ({ app_name, lan_cidr, dry_run }) => {
-      try {
-        const profileId = app_name.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const profile = APP_PROFILES[profileId];
-
-        if (!profile) {
-          return {
-            content: [createErrorContent(`Unknown application '${app_name}'. Available: ${Object.keys(APP_PROFILES).join(", ")}`)],
-            isError: true,
-          };
-        }
-
-        const effectiveDryRun = dry_run ?? getConfig().dryRun;
-        const sections: string[] = [];
-
-        sections.push(`🔥 Firewall Rules for ${profile.name}`);
-        sections.push("=".repeat(55));
-        sections.push(`LAN CIDR: ${lan_cidr}`);
-        sections.push(effectiveDryRun ? "\n[DRY RUN] Rules that would be applied:\n" : "\nApplying rules:\n");
-
-        const rules: string[] = [];
-
-        // Allow required ports from anywhere
-        for (const p of profile.requiredPorts) {
-          rules.push(`iptables -A INPUT -p ${p.protocol} --dport ${p.port} -j ACCEPT  # ${p.purpose}`);
-        }
-
-        // Restrict localhost-only ports to LAN
-        for (const p of profile.localhostOnlyPorts) {
-          rules.push(`iptables -A INPUT -p ${p.protocol} --dport ${p.port} -s 127.0.0.0/8 -j ACCEPT  # ${p.purpose} (localhost)`);
-          rules.push(`iptables -A INPUT -p ${p.protocol} --dport ${p.port} -s ${lan_cidr} -j ACCEPT  # ${p.purpose} (LAN)`);
-          rules.push(`iptables -A INPUT -p ${p.protocol} --dport ${p.port} -j DROP  # ${p.purpose} (block external)`);
-        }
-
-        for (const rule of rules) {
-          sections.push(`  ${rule}`);
-        }
-
-        if (!effectiveDryRun && rules.length > 0) {
-          let applied = 0;
-          let failed = 0;
-          for (const rule of rules) {
-            const parts = rule.split("#")[0].trim().split(/\s+/);
-            const result = await executeCommand({
-              command: "sudo",
-              args: parts,
-              timeout: 10000,
-            });
-            if (result.exitCode === 0) applied++;
-            else failed++;
-          }
-          sections.push(`\n✅ Applied ${applied} rules, ❌ ${failed} failed`);
-        }
-
-        sections.push("\n── Additional Recommendations ──");
-        sections.push("  • Consider using nftables for more granular control");
-        sections.push("  • Save rules with: sudo iptables-save > /etc/iptables/rules.v4");
-        sections.push("  • Install iptables-persistent for reboot survival");
-
-        logChange(createChangeEntry({
-          tool: "app_harden_firewall",
-          action: `Firewall rules for ${profile.name}`,
-          target: profileId,
-          after: `${rules.length} rules`,
-          dryRun: effectiveDryRun,
-          success: true,
-        }));
-
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
-      }
-    }
-  );
-
-  // ── 4. app_harden_systemd ──────────────────────────────────────────────
-
-  server.tool(
-    "app_harden_systemd",
-    "Apply systemd sandboxing to an application's service unit. Creates a drop-in override with security directives while preserving the app's ability to function.",
-    {
-      app_name: z.string().describe("Application name (e.g., qbittorrent, nginx, redis)"),
-      service_name: z.string().optional().describe("Override systemd service name (auto-detected if omitted)"),
+      action: z.enum(["audit", "recommend", "firewall", "systemd"]).describe("Action: audit=detect/audit apps, recommend=hardening guide, firewall=network rules, systemd=sandboxing"),
+      // recommend/firewall/systemd params
+      app_name: z.string().optional().describe("Application name (recommend/firewall/systemd). Available: " + Object.keys(APP_PROFILES).join(", ")),
+      // firewall params
+      lan_cidr: z.string().optional().default("192.168.0.0/16").describe("LAN CIDR for localhost-only ports (firewall action)"),
+      // systemd params
+      service_name: z.string().optional().describe("Override systemd service name (systemd action)"),
+      // shared
       dry_run: z.boolean().optional().describe("Preview changes without applying"),
     },
-    async ({ app_name, service_name, dry_run }) => {
-      try {
-        const profileId = app_name.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const profile = APP_PROFILES[profileId];
+    async (params) => {
+      const { action } = params;
 
-        if (!profile) {
-          return {
-            content: [createErrorContent(`Unknown application '${app_name}'. Available: ${Object.keys(APP_PROFILES).join(", ")}`)],
-            isError: true,
-          };
-        }
+      switch (action) {
+        // ── audit ───────────────────────────────────────────────────
+        case "audit": {
+          try {
+            const sections: string[] = [];
+            sections.push("🔍 Application Security Audit");
+            sections.push("=".repeat(55));
 
-        const effectiveDryRun = dry_run ?? getConfig().dryRun;
+            const apps = await detectRunningApps();
 
-        // Detect service unit if not provided
-        let svcName = service_name;
-        if (!svcName) {
-          const svcResult = await executeCommand({
-            command: "systemctl",
-            args: ["list-units", "--type=service", "--state=running", "--no-pager", "--no-legend"],
-            timeout: 10000,
-          });
-          if (svcResult.exitCode === 0) {
-            for (const procName of profile.processNames) {
-              for (const line of svcResult.stdout.split("\n")) {
-                if (line.toLowerCase().includes(procName.toLowerCase())) {
-                  svcName = line.trim().split(/\s+/)[0];
-                  break;
+            if (apps.length === 0) {
+              sections.push("\nNo known applications detected.");
+              sections.push("Recognized apps: " + Object.values(APP_PROFILES).map((p) => p.name).join(", "));
+              return { content: [createTextContent(sections.join("\n"))] };
+            }
+
+            sections.push(`\nDetected ${apps.length} application(s):\n`);
+
+            const riskOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+            apps.sort((a, b) => riskOrder[a.profile.riskLevel] - riskOrder[b.profile.riskLevel]);
+
+            let totalRisks = 0;
+
+            for (const app of apps) {
+              const riskIcon = app.profile.riskLevel === "critical" ? "⛔" :
+                app.profile.riskLevel === "high" ? "🔴" : app.profile.riskLevel === "medium" ? "🟡" : "🟢";
+
+              sections.push(`── ${riskIcon} ${app.profile.name} ──`);
+              sections.push(`  Category:     ${app.profile.category}`);
+              sections.push(`  Risk Level:   ${app.profile.riskLevel.toUpperCase()}`);
+              sections.push(`  Running as:   ${app.user}`);
+              sections.push(`  PIDs:         ${app.pids.join(", ")}`);
+              if (app.serviceUnit) sections.push(`  Service Unit: ${app.serviceUnit}`);
+
+              if (app.listenPorts.length > 0) {
+                sections.push(`  Listening Ports:`);
+                for (const lp of app.listenPorts) {
+                  const external = !lp.address.includes("127.0.0.1") && !lp.address.includes("::1");
+                  sections.push(`    ${lp.protocol}/${lp.port} on ${lp.address} [${external ? "⚠️ EXTERNAL" : "✅ localhost"}]`);
                 }
               }
-              if (svcName) break;
+
+              sections.push(`  Security Concerns:`);
+              for (const concern of app.profile.securityConcerns) {
+                sections.push(`    ⚠️ ${concern}`);
+                totalRisks++;
+              }
+
+              sections.push(`  Top Recommendations:`);
+              for (const rec of app.profile.recommendations.slice(0, 3)) {
+                sections.push(`    💡 ${rec}`);
+              }
+              if (app.profile.recommendations.length > 3) {
+                sections.push(`    ... +${app.profile.recommendations.length - 3} more (use action=recommend)`);
+              }
+              sections.push("");
             }
+
+            sections.push("── Summary ──");
+            sections.push(`  Applications: ${apps.length} | Concerns: ${totalRisks} | Critical/High: ${apps.filter((a) => ["critical", "high"].includes(a.profile.riskLevel)).length}`);
+
+            logChange(createChangeEntry({
+              tool: "app_harden",
+              action: "Application security audit",
+              target: "system",
+              after: `${apps.length} apps, ${totalRisks} concerns`,
+              dryRun: false,
+              success: true,
+            }));
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
           }
         }
 
-        const sections: string[] = [];
-        sections.push(`🔒 Systemd Hardening: ${profile.name}`);
-        sections.push("=".repeat(55));
+        // ── recommend ───────────────────────────────────────────────
+        case "recommend": {
+          const { app_name } = params;
+          try {
+            if (!app_name) {
+              return { content: [createErrorContent("app_name is required for recommend action")], isError: true };
+            }
 
-        if (!svcName) {
-          sections.push(`\n⚠️ No running systemd service found for ${profile.name}.`);
-          sections.push("Provide --service_name manually if the service uses a different name.");
-          sections.push("\nRecommended override content for when the service is configured:\n");
-        } else {
-          sections.push(`Service: ${svcName}`);
-        }
+            const profileId = app_name.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const profile = APP_PROFILES[profileId];
 
-        // Build override content
-        const overrideLines = ["[Service]"];
-        for (const [key, value] of Object.entries(profile.systemdHardening)) {
-          overrideLines.push(`${key}=${value}`);
-        }
-        if (profile.writablePaths.length > 0) {
-          overrideLines.push(`ReadWritePaths=${profile.writablePaths.join(" ")}`);
-        }
+            if (!profile) {
+              const available = Object.entries(APP_PROFILES).map(([k, v]) => `${k} (${v.name})`).join(", ");
+              return {
+                content: [createErrorContent(`Unknown application '${app_name}'. Available: ${available}`)],
+                isError: true,
+              };
+            }
 
-        sections.push(effectiveDryRun ? "\n[DRY RUN] Override that would be created:\n" : "\nApplying override:\n");
-        sections.push("  # /etc/systemd/system/" + (svcName ?? `${profileId}.service`) + ".d/hardening.conf");
-        for (const line of overrideLines) {
-          sections.push(`  ${line}`);
-        }
+            const sections: string[] = [];
+            sections.push(`🛡️ Hardening Guide: ${profile.name}`);
+            sections.push("=".repeat(55));
+            sections.push(`Category: ${profile.category} | Risk: ${profile.riskLevel.toUpperCase()}`);
 
-        if (!effectiveDryRun && svcName) {
-          const overrideDir = `/etc/systemd/system/${svcName}.d`;
-          const overridePath = `${overrideDir}/hardening.conf`;
-          const overrideContent = overrideLines.join("\n") + "\n";
+            sections.push("\n── Security Concerns ──");
+            for (const concern of profile.securityConcerns) {
+              sections.push(`  ⚠️ ${concern}`);
+            }
 
-          // Create directory
-          await executeCommand({ command: "sudo", args: ["mkdir", "-p", overrideDir], timeout: 5000 });
+            sections.push("\n── Network Hardening ──");
+            if (profile.requiredPorts.length > 0) {
+              sections.push("  Ports that MUST remain open (core functionality):");
+              for (const p of profile.requiredPorts) {
+                sections.push(`    ✅ ${p.protocol}/${p.port} — ${p.purpose}`);
+              }
+            }
+            if (profile.localhostOnlyPorts.length > 0) {
+              sections.push("  Ports to restrict to localhost/LAN:");
+              for (const p of profile.localhostOnlyPorts) {
+                sections.push(`    🔒 ${p.protocol}/${p.port} — ${p.purpose}`);
+              }
+            }
+            sections.push("  Firewall strategy:");
+            sections.push("    1. Allow required ports from any source");
+            sections.push("    2. Restrict localhost-only ports to 127.0.0.1");
+            sections.push("    3. Drop all other traffic to this application");
+            sections.push(`    → Use app_harden action=firewall app_name=${profileId} to generate rules`);
 
-          // Write override
-          const writeResult = await executeCommand({
-            command: "sudo",
-            args: ["tee", overridePath],
-            stdin: overrideContent,
-            timeout: 5000,
-          });
+            sections.push("\n── Systemd Sandboxing ──");
+            sections.push("  Recommended directives for the service unit:");
+            for (const [key, value] of Object.entries(profile.systemdHardening)) {
+              sections.push(`    ${key}=${value}`);
+            }
+            if (profile.writablePaths.length > 0) {
+              sections.push(`    ReadWritePaths=${profile.writablePaths.join(" ")}`);
+            }
+            sections.push(`    → Use app_harden action=systemd app_name=${profileId} to apply`);
 
-          if (writeResult.exitCode === 0) {
-            // Reload systemd
-            await executeCommand({ command: "sudo", args: ["systemctl", "daemon-reload"], timeout: 10000 });
-            sections.push(`\n✅ Override written to ${overridePath}`);
-            sections.push("✅ systemd daemon reloaded");
-            sections.push(`\n⚠️ Restart the service to apply: sudo systemctl restart ${svcName}`);
-          } else {
-            sections.push(`\n❌ Failed to write override: ${writeResult.stderr}`);
+            sections.push("\n── Application-Level Recommendations ──");
+            for (let i = 0; i < profile.recommendations.length; i++) {
+              sections.push(`  ${i + 1}. ${profile.recommendations[i]}`);
+            }
+
+            sections.push("\n── Filesystem Permissions ──");
+            sections.push("  Writable paths (required for operation):");
+            for (const p of profile.writablePaths) {
+              sections.push(`    📝 ${p}`);
+            }
+            sections.push("  Read-only paths:");
+            for (const p of profile.readablePaths) {
+              sections.push(`    📖 ${p}`);
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
           }
         }
 
-        sections.push("\n── What These Directives Do ──");
-        const explanations: Record<string, string> = {
-          ProtectSystem: "Mounts /usr and /boot read-only (full) or entire filesystem (strict)",
-          ProtectHome: "Makes /home, /root, /run/user inaccessible or read-only",
-          PrivateTmp: "Creates a private /tmp namespace for this service",
-          NoNewPrivileges: "Prevents the service from gaining new privileges via setuid/setgid",
-          ProtectKernelTunables: "Makes /proc/sys, /sys read-only",
-          ProtectKernelModules: "Prevents loading/unloading kernel modules",
-          ProtectControlGroups: "Makes /sys/fs/cgroup read-only",
-          RestrictNamespaces: "Restricts creation of new namespaces",
-          RestrictRealtime: "Prevents acquiring realtime scheduling",
-          MemoryDenyWriteExecute: "Prevents creating writable+executable memory mappings",
-        };
-        for (const [key] of Object.entries(profile.systemdHardening)) {
-          if (explanations[key]) {
-            sections.push(`  ${key}: ${explanations[key]}`);
+        // ── firewall ────────────────────────────────────────────────
+        case "firewall": {
+          const { app_name, lan_cidr, dry_run } = params;
+          try {
+            if (!app_name) {
+              return { content: [createErrorContent("app_name is required for firewall action")], isError: true };
+            }
+
+            const profileId = app_name.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const profile = APP_PROFILES[profileId];
+
+            if (!profile) {
+              return {
+                content: [createErrorContent(`Unknown application '${app_name}'. Available: ${Object.keys(APP_PROFILES).join(", ")}`)],
+                isError: true,
+              };
+            }
+
+            const effectiveDryRun = dry_run ?? getConfig().dryRun;
+            const sections: string[] = [];
+
+            sections.push(`🔥 Firewall Rules for ${profile.name}`);
+            sections.push("=".repeat(55));
+            sections.push(`LAN CIDR: ${lan_cidr}`);
+            sections.push(effectiveDryRun ? "\n[DRY RUN] Rules that would be applied:\n" : "\nApplying rules:\n");
+
+            const rules: string[] = [];
+
+            for (const p of profile.requiredPorts) {
+              rules.push(`iptables -A INPUT -p ${p.protocol} --dport ${p.port} -j ACCEPT  # ${p.purpose}`);
+            }
+
+            for (const p of profile.localhostOnlyPorts) {
+              rules.push(`iptables -A INPUT -p ${p.protocol} --dport ${p.port} -s 127.0.0.0/8 -j ACCEPT  # ${p.purpose} (localhost)`);
+              rules.push(`iptables -A INPUT -p ${p.protocol} --dport ${p.port} -s ${lan_cidr} -j ACCEPT  # ${p.purpose} (LAN)`);
+              rules.push(`iptables -A INPUT -p ${p.protocol} --dport ${p.port} -j DROP  # ${p.purpose} (block external)`);
+            }
+
+            for (const rule of rules) {
+              sections.push(`  ${rule}`);
+            }
+
+            if (!effectiveDryRun && rules.length > 0) {
+              let applied = 0;
+              let failed = 0;
+              for (const rule of rules) {
+                const parts = rule.split("#")[0].trim().split(/\s+/);
+                const result = await executeCommand({
+                  command: "sudo",
+                  args: parts,
+                  timeout: 10000,
+                });
+                if (result.exitCode === 0) applied++;
+                else failed++;
+              }
+              sections.push(`\n✅ Applied ${applied} rules, ❌ ${failed} failed`);
+            }
+
+            sections.push("\n── Additional Recommendations ──");
+            sections.push("  • Consider using nftables for more granular control");
+            sections.push("  • Save rules with: sudo iptables-save > /etc/iptables/rules.v4");
+            sections.push("  • Install iptables-persistent for reboot survival");
+
+            logChange(createChangeEntry({
+              tool: "app_harden",
+              action: `Firewall rules for ${profile.name}`,
+              target: profileId,
+              after: `${rules.length} rules`,
+              dryRun: effectiveDryRun,
+              success: true,
+            }));
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
           }
         }
 
-        logChange(createChangeEntry({
-          tool: "app_harden_systemd",
-          action: `Systemd hardening for ${profile.name}`,
-          target: svcName ?? profileId,
-          after: `${Object.keys(profile.systemdHardening).length} directives`,
-          dryRun: effectiveDryRun,
-          success: true,
-        }));
+        // ── systemd ─────────────────────────────────────────────────
+        case "systemd": {
+          const { app_name, service_name, dry_run } = params;
+          try {
+            if (!app_name) {
+              return { content: [createErrorContent("app_name is required for systemd action")], isError: true };
+            }
 
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
+            const profileId = app_name.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const profile = APP_PROFILES[profileId];
+
+            if (!profile) {
+              return {
+                content: [createErrorContent(`Unknown application '${app_name}'. Available: ${Object.keys(APP_PROFILES).join(", ")}`)],
+                isError: true,
+              };
+            }
+
+            const effectiveDryRun = dry_run ?? getConfig().dryRun;
+
+            let svcName = service_name;
+            if (!svcName) {
+              const svcResult = await executeCommand({
+                command: "systemctl",
+                args: ["list-units", "--type=service", "--state=running", "--no-pager", "--no-legend"],
+                timeout: 10000,
+              });
+              if (svcResult.exitCode === 0) {
+                for (const procName of profile.processNames) {
+                  for (const line of svcResult.stdout.split("\n")) {
+                    if (line.toLowerCase().includes(procName.toLowerCase())) {
+                      svcName = line.trim().split(/\s+/)[0];
+                      break;
+                    }
+                  }
+                  if (svcName) break;
+                }
+              }
+            }
+
+            const sections: string[] = [];
+            sections.push(`🔒 Systemd Hardening: ${profile.name}`);
+            sections.push("=".repeat(55));
+
+            if (!svcName) {
+              sections.push(`\n⚠️ No running systemd service found for ${profile.name}.`);
+              sections.push("Provide service_name manually if the service uses a different name.");
+              sections.push("\nRecommended override content for when the service is configured:\n");
+            } else {
+              sections.push(`Service: ${svcName}`);
+            }
+
+            const overrideLines = ["[Service]"];
+            for (const [key, value] of Object.entries(profile.systemdHardening)) {
+              overrideLines.push(`${key}=${value}`);
+            }
+            if (profile.writablePaths.length > 0) {
+              overrideLines.push(`ReadWritePaths=${profile.writablePaths.join(" ")}`);
+            }
+
+            sections.push(effectiveDryRun ? "\n[DRY RUN] Override that would be created:\n" : "\nApplying override:\n");
+            sections.push("  # /etc/systemd/system/" + (svcName ?? `${profileId}.service`) + ".d/hardening.conf");
+            for (const line of overrideLines) {
+              sections.push(`  ${line}`);
+            }
+
+            if (!effectiveDryRun && svcName) {
+              const overrideDir = `/etc/systemd/system/${svcName}.d`;
+              const overridePath = `${overrideDir}/hardening.conf`;
+              const overrideContent = overrideLines.join("\n") + "\n";
+
+              await executeCommand({ command: "sudo", args: ["mkdir", "-p", overrideDir], timeout: 5000 });
+
+              const writeResult = await executeCommand({
+                command: "sudo",
+                args: ["tee", overridePath],
+                stdin: overrideContent,
+                timeout: 5000,
+              });
+
+              if (writeResult.exitCode === 0) {
+                await executeCommand({ command: "sudo", args: ["systemctl", "daemon-reload"], timeout: 10000 });
+                sections.push(`\n✅ Override written to ${overridePath}`);
+                sections.push("✅ systemd daemon reloaded");
+                sections.push(`\n⚠️ Restart the service to apply: sudo systemctl restart ${svcName}`);
+              } else {
+                sections.push(`\n❌ Failed to write override: ${writeResult.stderr}`);
+              }
+            }
+
+            sections.push("\n── What These Directives Do ──");
+            const explanations: Record<string, string> = {
+              ProtectSystem: "Mounts /usr and /boot read-only (full) or entire filesystem (strict)",
+              ProtectHome: "Makes /home, /root, /run/user inaccessible or read-only",
+              PrivateTmp: "Creates a private /tmp namespace for this service",
+              NoNewPrivileges: "Prevents the service from gaining new privileges via setuid/setgid",
+              ProtectKernelTunables: "Makes /proc/sys, /sys read-only",
+              ProtectKernelModules: "Prevents loading/unloading kernel modules",
+              ProtectControlGroups: "Makes /sys/fs/cgroup read-only",
+              RestrictNamespaces: "Restricts creation of new namespaces",
+              RestrictRealtime: "Prevents acquiring realtime scheduling",
+              MemoryDenyWriteExecute: "Prevents creating writable+executable memory mappings",
+            };
+            for (const [key] of Object.entries(profile.systemdHardening)) {
+              if (explanations[key]) {
+                sections.push(`  ${key}: ${explanations[key]}`);
+              }
+            }
+
+            logChange(createChangeEntry({
+              tool: "app_harden",
+              action: `Systemd hardening for ${profile.name}`,
+              target: svcName ?? profileId,
+              after: `${Object.keys(profile.systemdHardening).length} directives`,
+              dryRun: effectiveDryRun,
+              success: true,
+            }));
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
+          }
+        }
+
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
   );

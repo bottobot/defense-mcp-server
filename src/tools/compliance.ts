@@ -1,9 +1,9 @@
 /**
  * Compliance and audit tools for Kali Defense MCP Server.
  *
- * Registers 7 tools: compliance_lynis_audit, compliance_oscap_scan,
- * compliance_cis_check, compliance_policy_evaluate, compliance_report,
- * compliance_cron_restrict, compliance_tmp_hardening.
+ * Registers 6 tools: compliance_lynis_audit, compliance_oscap_scan,
+ * compliance_check (actions: cis, framework), compliance_policy_evaluate,
+ * compliance_report, compliance_cron_restrict, compliance_tmp_hardening.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -20,6 +20,7 @@ import {
 import { logChange, createChangeEntry } from "../core/changelog.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
 import { sanitizeArgs, validateFilePath } from "../core/sanitizer.js";
+import { existsSync, readFileSync } from "node:fs";
 import {
   loadPolicy,
   evaluatePolicy,
@@ -656,79 +657,197 @@ export function registerComplianceTools(server: McpServer): void {
     }
   );
 
-  // ── 3. compliance_cis_check ─────────────────────────────────────────
+  // ── 3. compliance_check (merged: cis + framework) ───────────────────
 
   server.tool(
-    "compliance_cis_check",
-    "Run CIS benchmark checks for common system hardening requirements",
+    "compliance_check",
+    "Run compliance checks: CIS benchmark checks or framework-specific checks (PCI-DSS, HIPAA, SOC2, ISO 27001, GDPR).",
     {
-      section: z
-        .enum(["filesystem", "services", "network", "logging", "access", "system", "all"])
-        .optional()
-        .default("all")
-        .describe("CIS benchmark section to check"),
-      level: z
-        .enum(["1", "2"])
-        .optional()
-        .default("1")
-        .describe("CIS benchmark level (1 = basic, 2 = advanced)"),
+      action: z.enum(["cis", "framework"]).describe("Action: cis=CIS benchmark checks, framework=compliance framework check"),
+      // cis params
+      section: z.enum(["filesystem", "services", "network", "logging", "access", "system", "all"]).optional().default("all").describe("CIS benchmark section to check (cis action)"),
+      level: z.enum(["1", "2"]).optional().default("1").describe("CIS benchmark level (cis action)"),
+      // framework params
+      framework: z.enum(["pci-dss-v4", "hipaa", "soc2", "iso27001", "gdpr"]).optional().describe("Compliance framework (framework action)"),
+      dryRun: z.boolean().optional().default(false).describe("Preview only (framework action)"),
     },
-    async ({ section, level }) => {
-      try {
-        let results: CisCheckResult[] = [];
+    async (params) => {
+      const { action } = params;
 
-        const sections = section === "all"
-          ? ["filesystem", "services", "network", "logging", "access", "system"]
-          : [section];
+      switch (action) {
+        case "cis": {
+          const { section, level } = params;
+          try {
+            let results: CisCheckResult[] = [];
 
-        for (const sec of sections) {
-          switch (sec) {
-            case "filesystem":
-              results = results.concat(await cisFilesystemChecks(level));
-              break;
-            case "services":
-              results = results.concat(await cisServicesChecks(level));
-              break;
-            case "network":
-              results = results.concat(await cisNetworkChecks(level));
-              break;
-            case "logging":
-              results = results.concat(await cisLoggingChecks(level));
-              break;
-            case "access":
-              results = results.concat(await cisAccessChecks(level));
-              break;
-            case "system":
-              results = results.concat(await cisSystemChecks(level));
-              break;
+            const sections = section === "all"
+              ? ["filesystem", "services", "network", "logging", "access", "system"]
+              : [section];
+
+            for (const sec of sections) {
+              switch (sec) {
+                case "filesystem":
+                  results = results.concat(await cisFilesystemChecks(level));
+                  break;
+                case "services":
+                  results = results.concat(await cisServicesChecks(level));
+                  break;
+                case "network":
+                  results = results.concat(await cisNetworkChecks(level));
+                  break;
+                case "logging":
+                  results = results.concat(await cisLoggingChecks(level));
+                  break;
+                case "access":
+                  results = results.concat(await cisAccessChecks(level));
+                  break;
+                case "system":
+                  results = results.concat(await cisSystemChecks(level));
+                  break;
+              }
+            }
+
+            const passCount = results.filter((r) => r.status === "pass").length;
+            const failCount = results.filter((r) => r.status === "fail").length;
+            const warnCount = results.filter((r) => r.status === "warn").length;
+            const errorCount = results.filter((r) => r.status === "error").length;
+
+            const output = {
+              cisLevel: level,
+              sections: sections,
+              totalChecks: results.length,
+              summary: { pass: passCount, fail: failCount, warn: warnCount, error: errorCount },
+              compliancePercent: results.length > 0 ? Math.round((passCount / results.length) * 100) : 0,
+              results,
+            };
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        const passCount = results.filter((r) => r.status === "pass").length;
-        const failCount = results.filter((r) => r.status === "fail").length;
-        const warnCount = results.filter((r) => r.status === "warn").length;
-        const errorCount = results.filter((r) => r.status === "error").length;
+        case "framework": {
+          const { framework, dryRun } = params;
+          try {
+            if (!framework) {
+              return { content: [createErrorContent("framework is required for framework action")], isError: true };
+            }
 
-        const output = {
-          cisLevel: level,
-          sections: sections,
-          totalChecks: results.length,
-          summary: {
-            pass: passCount,
-            fail: failCount,
-            warn: warnCount,
-            error: errorCount,
-          },
-          compliancePercent: results.length > 0
-            ? Math.round((passCount / results.length) * 100)
-            : 0,
-          results,
-        };
+            type Framework = "pci-dss-v4" | "hipaa" | "soc2" | "iso27001" | "gdpr";
 
-        return { content: [formatToolOutput(output)] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
+            interface ComplianceCheckItem {
+              id: string;
+              description: string;
+              check: () => Promise<{ passed: boolean; detail: string; evidence?: string }>;
+            }
+
+            async function runSysctlCheckLocal(key: string, expected: string): Promise<{ passed: boolean; detail: string }> {
+              const r = await executeCommand({ command: "sysctl", args: ["-n", key], timeout: 5000 });
+              const actual = r.stdout.trim();
+              return { passed: actual === expected, detail: `${key} = ${actual} (expected: ${expected})` };
+            }
+
+            async function serviceInactiveLocal(svc: string): Promise<{ passed: boolean; detail: string }> {
+              const r = await executeCommand({ command: "systemctl", args: ["is-active", svc], timeout: 5000 });
+              const active = r.stdout.trim() === "active";
+              return { passed: !active, detail: `${svc}: ${r.stdout.trim()}` };
+            }
+
+            function filePermCheckLocal(filePath: string, maxPerm: string): { passed: boolean; detail: string } {
+              try {
+                const { statSync } = require("node:fs");
+                const stat = statSync(filePath);
+                const mode = (stat.mode & 0o777).toString(8);
+                return { passed: parseInt(mode, 8) <= parseInt(maxPerm, 8), detail: `${filePath}: ${mode} (max: ${maxPerm})` };
+              } catch {
+                return { passed: false, detail: `${filePath}: unable to check` };
+              }
+            }
+
+            function getFrameworkChecks(fw: Framework): ComplianceCheckItem[] {
+              const commonChecks: ComplianceCheckItem[] = [
+                { id: "AUTH-001", description: "Ensure no empty passwords in /etc/shadow", check: async () => { const r = await executeCommand({ command: "awk", args: ["-F:", '($2 == "" ) { print $1 }', "/etc/shadow"], timeout: 5000 }); return { passed: r.stdout.trim().length === 0, detail: r.stdout.trim() || "No empty passwords" }; } },
+                { id: "NET-001", description: "IP forwarding disabled", check: async () => runSysctlCheckLocal("net.ipv4.ip_forward", "0") },
+                { id: "NET-002", description: "SYN cookies enabled", check: async () => runSysctlCheckLocal("net.ipv4.tcp_syncookies", "1") },
+                { id: "KERN-001", description: "ASLR fully enabled", check: async () => runSysctlCheckLocal("kernel.randomize_va_space", "2") },
+                { id: "KERN-002", description: "dmesg access restricted", check: async () => runSysctlCheckLocal("kernel.dmesg_restrict", "1") },
+                { id: "FS-001", description: "/etc/passwd permissions ≤ 644", check: async () => filePermCheckLocal("/etc/passwd", "644") },
+                { id: "FS-002", description: "/etc/shadow permissions ≤ 640", check: async () => filePermCheckLocal("/etc/shadow", "640") },
+                { id: "SVC-001", description: "Telnet service disabled", check: async () => serviceInactiveLocal("telnet.socket") },
+                { id: "SSH-001", description: "SSH root login disabled", check: async () => { try { const content = readFileSync("/etc/ssh/sshd_config", "utf-8"); const match = content.match(/^\s*PermitRootLogin\s+(\S+)/m); const value = match?.[1] ?? "not set"; return { passed: value === "no" || value === "prohibit-password", detail: `PermitRootLogin: ${value}` }; } catch { return { passed: false, detail: "Unable to read sshd_config" }; } } },
+              ];
+
+              const frameworkSpecific: Record<Framework, ComplianceCheckItem[]> = {
+                "pci-dss-v4": [
+                  { id: "PCI-1.1", description: "Firewall rules present", check: async () => { const r = await executeCommand({ command: "iptables", args: ["-L", "-n"], timeout: 10000 }); const hasRules = r.stdout.split("\n").length > 8; return { passed: hasRules, detail: `${r.stdout.split("\n").length} iptables lines` }; } },
+                  { id: "PCI-8.2", description: "Password minimum length configured", check: async () => { try { const content = readFileSync("/etc/security/pwquality.conf", "utf-8"); const match = content.match(/minlen\s*=\s*(\d+)/); const len = match ? parseInt(match[1]) : 0; return { passed: len >= 12, detail: `minlen = ${len} (required: ≥12)` }; } catch { return { passed: false, detail: "pwquality.conf not found" }; } } },
+                ],
+                hipaa: [
+                  { id: "HIPAA-164.312a", description: "Audit logging enabled (auditd)", check: async () => { const r = await executeCommand({ command: "systemctl", args: ["is-active", "auditd"], timeout: 5000 }); return { passed: r.stdout.trim() === "active", detail: `auditd: ${r.stdout.trim()}` }; } },
+                ],
+                soc2: [
+                  { id: "SOC2-CC6.1", description: "System monitoring enabled", check: async () => { const r = await executeCommand({ command: "systemctl", args: ["is-active", "auditd"], timeout: 5000 }); return { passed: r.stdout.trim() === "active", detail: `auditd: ${r.stdout.trim()}` }; } },
+                ],
+                iso27001: [
+                  { id: "ISO-A.12.4.1", description: "Event logging active", check: async () => { const rsyslog = await executeCommand({ command: "systemctl", args: ["is-active", "rsyslog"], timeout: 5000 }); const journald = await executeCommand({ command: "systemctl", args: ["is-active", "systemd-journald"], timeout: 5000 }); const active = rsyslog.stdout.trim() === "active" || journald.stdout.trim() === "active"; return { passed: active, detail: `rsyslog: ${rsyslog.stdout.trim()}, journald: ${journald.stdout.trim()}` }; } },
+                ],
+                gdpr: [
+                  { id: "GDPR-Art32", description: "Encryption capabilities available", check: async () => { const r = await executeCommand({ command: "which", args: ["openssl"], timeout: 5000 }); return { passed: r.exitCode === 0, detail: r.exitCode === 0 ? "openssl available" : "openssl not found" }; } },
+                ],
+              };
+
+              return [...commonChecks, ...(frameworkSpecific[fw] ?? [])];
+            }
+
+            if (dryRun) {
+              const checks = getFrameworkChecks(framework);
+              return {
+                content: [formatToolOutput({
+                  dryRun: true,
+                  framework,
+                  checksCount: checks.length,
+                  checkIds: checks.map((c) => ({ id: c.id, description: c.description })),
+                })],
+              };
+            }
+
+            const checks = getFrameworkChecks(framework);
+            const results: { id: string; description: string; passed: boolean; detail: string }[] = [];
+
+            for (const check of checks) {
+              try {
+                const result = await check.check();
+                results.push({ id: check.id, description: check.description, ...result });
+              } catch (err) {
+                results.push({ id: check.id, description: check.description, passed: false, detail: `Check error: ${err instanceof Error ? err.message : String(err)}` });
+              }
+            }
+
+            const passed = results.filter((r) => r.passed).length;
+            const failed = results.filter((r) => !r.passed).length;
+            const score = Math.round((passed / results.length) * 100);
+
+            return {
+              content: [formatToolOutput({
+                framework,
+                totalChecks: results.length,
+                passed,
+                failed,
+                score,
+                rating: score >= 80 ? "COMPLIANT" : score >= 60 ? "PARTIALLY_COMPLIANT" : "NON_COMPLIANT",
+                results,
+              })],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Compliance check failed: ${msg}`)], isError: true };
+          }
+        }
+
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
   );
@@ -1190,6 +1309,8 @@ export function registerComplianceTools(server: McpServer): void {
   // ── 7. compliance_tmp_hardening ─────────────────────────────────────
   // GAP-31: Tool to audit and apply /tmp mount hardening (CIS 1.1.4)
 
+  // GAP-31: Tool to audit and apply /tmp mount hardening (CIS 1.1.4)
+
   server.tool(
     "compliance_tmp_hardening",
     "Audit and apply /tmp mount hardening with nodev,nosuid,noexec options (CIS 1.1.4)",
@@ -1371,4 +1492,5 @@ export function registerComplianceTools(server: McpServer): void {
       }
     }
   );
+
 }

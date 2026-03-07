@@ -1,10 +1,8 @@
 /**
  * Access control and authentication auditing tools for Kali Defense MCP Server.
  *
- * Registers 9 tools: access_ssh_audit, access_ssh_harden,
- * access_sudo_audit, access_user_audit, access_password_policy,
- * access_pam_audit, access_ssh_cipher_audit, access_pam_configure,
- * access_restrict_shell.
+ * Registers 6 tools: access_ssh, access_pam, access_sudo_audit,
+ * access_user_audit, access_password_policy, access_restrict_shell.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -154,374 +152,1060 @@ const SSH_HARDENING_CHECKS: SshCheck[] = [
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerAccessControlTools(server: McpServer): void {
-  // ── 1. access_ssh_audit ────────────────────────────────────────────────
+  // ── 1. access_ssh (merged: access_ssh_audit, access_ssh_harden, access_ssh_cipher_audit) ──
 
   server.tool(
-    "access_ssh_audit",
-    "Audit SSH server configuration against hardening best practices",
+    "access_ssh",
+    "SSH server security. Actions: audit=check config against best practices, harden=apply hardening settings, cipher_audit=audit cryptographic algorithms",
     {
+      action: z
+        .enum(["audit", "harden", "cipher_audit"])
+        .describe("Action: audit=check config, harden=apply settings, cipher_audit=check algorithms"),
+      // shared
       config_path: z
         .string()
         .optional()
         .default("/etc/ssh/sshd_config")
-        .describe("Path to sshd_config file (default: /etc/ssh/sshd_config)"),
-    },
-    async ({ config_path }) => {
-      try {
-        const result = await executeCommand({
-          command: "sudo",
-          args: ["cat", config_path],
-          toolName: "access_ssh_audit",
-          timeout: getToolTimeout("access_ssh_audit"),
-        });
-
-        if (result.exitCode !== 0) {
-          return {
-            content: [
-              createErrorContent(
-                `Cannot read SSH config (exit ${result.exitCode}): ${result.stderr}`
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        const configContent = result.stdout;
-
-        // Parse the SSH config into key-value pairs
-        const configValues: Record<string, string> = {};
-        for (const line of configContent.split("\n")) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith("#")) continue;
-
-          const parts = trimmed.split(/\s+/);
-          if (parts.length >= 2) {
-            configValues[parts[0]] = parts.slice(1).join(" ");
-          }
-        }
-
-        // Check each recommendation
-        const findings: Array<{
-          setting: string;
-          currentValue: string | null;
-          recommendedValue: string;
-          status: "pass" | "fail" | "warn";
-          severity: string;
-          description: string;
-        }> = [];
-
-        for (const check of SSH_HARDENING_CHECKS) {
-          const currentValue = configValues[check.key] ?? null;
-
-          let status: "pass" | "fail" | "warn";
-
-          if (currentValue === null) {
-            // Setting not explicitly configured - check if it's a numeric comparison
-            if (check.key === "MaxAuthTries" || check.key === "ClientAliveCountMax") {
-              status = "warn";
-            } else if (check.key === "ClientAliveInterval" || check.key === "Banner") {
-              status = "warn";
-            } else {
-              // For critical boolean settings, missing means default (which may be insecure)
-              status = "warn";
-            }
-          } else if (check.key === "MaxAuthTries") {
-            status = parseInt(currentValue, 10) <= parseInt(check.recommended, 10) ? "pass" : "fail";
-          } else if (check.key === "ClientAliveCountMax") {
-            status = parseInt(currentValue, 10) <= parseInt(check.recommended, 10) ? "pass" : "fail";
-          } else if (check.key === "ClientAliveInterval") {
-            status = parseInt(currentValue, 10) > 0 ? "pass" : "fail";
-          } else if (check.key === "Banner") {
-            status = currentValue && currentValue !== "none" ? "pass" : "fail";
-          } else if (check.key === "LoginGraceTime" || check.key === "MaxSessions") {
-            status = parseInt(currentValue, 10) <= parseInt(check.recommended, 10) ? "pass" : "fail";
-          } else if (check.key === "Ciphers" || check.key === "MACs" || check.key === "KexAlgorithms" || check.key === "HostKeyAlgorithms") {
-            // For algorithm lists, check if only recommended algorithms are used
-            const configuredAlgs = currentValue.split(",").map(s => s.trim());
-            const recommendedAlgs = check.recommended.split(",").map(s => s.trim());
-            const hasWeak = configuredAlgs.some(a => !recommendedAlgs.includes(a));
-            status = hasWeak ? "fail" : "pass";
-          } else {
-            status = currentValue.toLowerCase() === check.recommended.toLowerCase() ? "pass" : "fail";
-          }
-
-          findings.push({
-            setting: check.key,
-            currentValue,
-            recommendedValue: check.recommended,
-            status,
-            severity: check.severity,
-            description: check.description,
-          });
-        }
-
-        const passed = findings.filter((f) => f.status === "pass").length;
-        const failed = findings.filter((f) => f.status === "fail").length;
-        const warned = findings.filter((f) => f.status === "warn").length;
-
-        const entry = createChangeEntry({
-          tool: "access_ssh_audit",
-          action: "SSH configuration audit",
-          target: config_path,
-          after: `Pass: ${passed}, Fail: ${failed}, Warn: ${warned}`,
-          dryRun: false,
-          success: true,
-        });
-        logChange(entry);
-
-        const output = {
-          configPath: config_path,
-          summary: { passed, failed, warned, total: findings.length },
-          findings,
-        };
-
-        return { content: [formatToolOutput(output)] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
-
-  // ── 2. access_ssh_harden ───────────────────────────────────────────────
-
-  server.tool(
-    "access_ssh_harden",
-    "Apply SSH hardening settings to sshd_config",
-    {
+        .describe("Path to sshd_config file"),
+      // harden params
       settings: z
         .string()
         .optional()
-        .describe(
-          "Comma-separated key=value pairs, e.g. 'PermitRootLogin=no,MaxAuthTries=4'"
-        ),
+        .describe("Comma-separated key=value pairs for harden, e.g. 'PermitRootLogin=no,MaxAuthTries=4'"),
       apply_recommended: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Apply all recommended hardening settings (default: false)"),
+        .describe("Apply all recommended hardening settings (for harden)"),
       restart_sshd: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Restart sshd after applying changes (default: false)"),
+        .describe("Restart sshd after applying changes (for harden)"),
+      // shared
       dry_run: z
         .boolean()
         .optional()
-        .describe("Preview the changes without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
+        .default(true)
+        .describe("Preview changes (for harden)"),
     },
-    async ({ settings, apply_recommended, restart_sshd, dry_run }) => {
-      try {
-        const configPath = "/etc/ssh/sshd_config";
+    async (params) => {
+      const { action } = params;
 
-        // Build the settings to apply
-        const settingsToApply: Record<string, string> = {};
-
-        if (apply_recommended) {
-          for (const check of SSH_HARDENING_CHECKS) {
-            settingsToApply[check.key] = check.recommended;
-          }
-        }
-
-        if (settings) {
-          for (const pair of settings.split(",")) {
-            const trimmed = pair.trim();
-            const eqIdx = trimmed.indexOf("=");
-            if (eqIdx > 0) {
-              const key = trimmed.substring(0, eqIdx).trim();
-              const value = trimmed.substring(eqIdx + 1).trim();
-              settingsToApply[key] = value;
-            }
-          }
-        }
-
-        if (Object.keys(settingsToApply).length === 0) {
-          return {
-            content: [
-              createErrorContent(
-                "No settings specified. Provide 'settings' or set 'apply_recommended' to true."
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        const sedCommands: string[] = [];
-        for (const [key, value] of Object.entries(settingsToApply)) {
-          // For each setting: uncomment and set, or append if not present
-          // First try to replace existing (commented or uncommented) line
-          sedCommands.push(
-            `sudo sed -i 's|^#*\\s*${key}\\s.*|${key} ${value}|' ${configPath}`
-          );
-        }
-
-        // Check which settings need to be appended (not in file at all)
-        const grepCommands: string[] = [];
-        for (const key of Object.keys(settingsToApply)) {
-          grepCommands.push(
-            `grep -q '^#*\\s*${key}\\s' ${configPath} || echo '${key} ${settingsToApply[key]}' | sudo tee -a ${configPath}`
-          );
-        }
-
-        if (dry_run ?? getConfig().dryRun) {
-          const entry = createChangeEntry({
-            tool: "access_ssh_harden",
-            action: "[DRY-RUN] Apply SSH hardening",
-            target: configPath,
-            after: JSON.stringify(settingsToApply),
-            dryRun: true,
-            success: true,
-          });
-          logChange(entry);
-
-          return {
-            content: [
-              createTextContent(
-                `[DRY-RUN] Would apply the following SSH hardening to ${configPath}:\n\n` +
-                  Object.entries(settingsToApply)
-                    .map(([k, v]) => `  ${k} ${v}`)
-                    .join("\n") +
-                  `\n\nSed commands:\n${sedCommands.map((c) => `  ${c}`).join("\n")}` +
-                  `\n\nAppend commands:\n${grepCommands.map((c) => `  ${c}`).join("\n")}` +
-                  (restart_sshd
-                    ? "\n\nWould also restart sshd."
-                    : "\n\nsshd will NOT be restarted.")
-              ),
-            ],
-          };
-        }
-
-        // Backup the config file first
-        let backupPath: string | undefined;
-        try {
-          backupPath = backupFile(configPath);
-        } catch {
-          // May not be readable without sudo; use command-based backup
-          await executeCommand({
-            command: "sudo",
-            args: ["cp", configPath, `${configPath}.bak.${Date.now()}`],
-            toolName: "access_ssh_harden",
-          });
-        }
-
-        // Apply sed replacements for existing settings
-        // GAP-11/17: Use | as sed delimiter to handle / in algorithm names and paths
-        for (const [key, value] of Object.entries(settingsToApply)) {
-          await executeCommand({
-            command: "sudo",
-            args: [
-              "sed",
-              "-i",
-              `s|^#*\\s*${key}\\s.*|${key} ${value}|`,
-              configPath,
-            ],
-            toolName: "access_ssh_harden",
-            timeout: getToolTimeout("access_ssh_harden"),
-          });
-
-          // If the key wasn't in the file at all, append it
-          const grepResult = await executeCommand({
-            command: "grep",
-            args: ["-q", `^${key}\\s`, configPath],
-            toolName: "access_ssh_harden",
-          });
-
-          if (grepResult.exitCode !== 0) {
-            await executeCommand({
+      switch (action) {
+        // ── audit ────────────────────────────────────────────────────
+        case "audit": {
+          try {
+            const config_path = params.config_path ?? "/etc/ssh/sshd_config";
+            const result = await executeCommand({
               command: "sudo",
-              args: ["bash", "-c", `echo '${key} ${value}' >> ${configPath}`],
-              toolName: "access_ssh_harden",
+              args: ["cat", config_path],
+              toolName: "access_ssh",
+              timeout: getToolTimeout("access_ssh"),
             });
+
+            if (result.exitCode !== 0) {
+              return {
+                content: [
+                  createErrorContent(
+                    `Cannot read SSH config (exit ${result.exitCode}): ${result.stderr}`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const configContent = result.stdout;
+
+            // Parse the SSH config into key-value pairs
+            const configValues: Record<string, string> = {};
+            for (const line of configContent.split("\n")) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("#")) continue;
+
+              const parts = trimmed.split(/\s+/);
+              if (parts.length >= 2) {
+                configValues[parts[0]] = parts.slice(1).join(" ");
+              }
+            }
+
+            // Check each recommendation
+            const findings: Array<{
+              setting: string;
+              currentValue: string | null;
+              recommendedValue: string;
+              status: "pass" | "fail" | "warn";
+              severity: string;
+              description: string;
+            }> = [];
+
+            for (const check of SSH_HARDENING_CHECKS) {
+              const currentValue = configValues[check.key] ?? null;
+
+              let status: "pass" | "fail" | "warn";
+
+              if (currentValue === null) {
+                if (check.key === "MaxAuthTries" || check.key === "ClientAliveCountMax") {
+                  status = "warn";
+                } else if (check.key === "ClientAliveInterval" || check.key === "Banner") {
+                  status = "warn";
+                } else {
+                  status = "warn";
+                }
+              } else if (check.key === "MaxAuthTries") {
+                status = parseInt(currentValue, 10) <= parseInt(check.recommended, 10) ? "pass" : "fail";
+              } else if (check.key === "ClientAliveCountMax") {
+                status = parseInt(currentValue, 10) <= parseInt(check.recommended, 10) ? "pass" : "fail";
+              } else if (check.key === "ClientAliveInterval") {
+                status = parseInt(currentValue, 10) > 0 ? "pass" : "fail";
+              } else if (check.key === "Banner") {
+                status = currentValue && currentValue !== "none" ? "pass" : "fail";
+              } else if (check.key === "LoginGraceTime" || check.key === "MaxSessions") {
+                status = parseInt(currentValue, 10) <= parseInt(check.recommended, 10) ? "pass" : "fail";
+              } else if (check.key === "Ciphers" || check.key === "MACs" || check.key === "KexAlgorithms" || check.key === "HostKeyAlgorithms") {
+                const configuredAlgs = currentValue.split(",").map(s => s.trim());
+                const recommendedAlgs = check.recommended.split(",").map(s => s.trim());
+                const hasWeak = configuredAlgs.some(a => !recommendedAlgs.includes(a));
+                status = hasWeak ? "fail" : "pass";
+              } else {
+                status = currentValue.toLowerCase() === check.recommended.toLowerCase() ? "pass" : "fail";
+              }
+
+              findings.push({
+                setting: check.key,
+                currentValue,
+                recommendedValue: check.recommended,
+                status,
+                severity: check.severity,
+                description: check.description,
+              });
+            }
+
+            const passed = findings.filter((f) => f.status === "pass").length;
+            const failed = findings.filter((f) => f.status === "fail").length;
+            const warned = findings.filter((f) => f.status === "warn").length;
+
+            const entry = createChangeEntry({
+              tool: "access_ssh",
+              action: "SSH configuration audit",
+              target: config_path,
+              after: `Pass: ${passed}, Fail: ${failed}, Warn: ${warned}`,
+              dryRun: false,
+              success: true,
+            });
+            logChange(entry);
+
+            const output = {
+              configPath: config_path,
+              summary: { passed, failed, warned, total: findings.length },
+              findings,
+            };
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        // Validate the config
-        const testResult = await executeCommand({
-          command: "sudo",
-          args: ["sshd", "-t"],
-          toolName: "access_ssh_harden",
-          timeout: getToolTimeout("access_ssh_harden"),
-        });
+        // ── harden ───────────────────────────────────────────────────
+        case "harden": {
+          try {
+            const configPath = params.config_path ?? "/etc/ssh/sshd_config";
 
-        if (testResult.exitCode !== 0) {
-          const entry = createChangeEntry({
-            tool: "access_ssh_harden",
-            action: "Apply SSH hardening (config validation FAILED)",
-            target: configPath,
-            after: JSON.stringify(settingsToApply),
-            backupPath,
-            dryRun: false,
-            success: false,
-            error: `sshd -t failed: ${testResult.stderr}`,
-            rollbackCommand: backupPath
-              ? `sudo cp ${backupPath} ${configPath}`
-              : undefined,
-          });
-          logChange(entry);
+            // Build the settings to apply
+            const settingsToApply: Record<string, string> = {};
 
-          return {
-            content: [
-              createErrorContent(
-                `SSH config validation failed after changes. ` +
-                  `Config may be invalid.\n${testResult.stderr}\n\n` +
-                  (backupPath
-                    ? `Rollback: sudo cp ${backupPath} ${configPath}`
-                    : "Manual rollback may be required.")
-              ),
-            ],
-            isError: true,
-          };
+            if (params.apply_recommended) {
+              for (const check of SSH_HARDENING_CHECKS) {
+                settingsToApply[check.key] = check.recommended;
+              }
+            }
+
+            if (params.settings) {
+              for (const pair of params.settings.split(",")) {
+                const trimmed = pair.trim();
+                const eqIdx = trimmed.indexOf("=");
+                if (eqIdx > 0) {
+                  const key = trimmed.substring(0, eqIdx).trim();
+                  const value = trimmed.substring(eqIdx + 1).trim();
+                  settingsToApply[key] = value;
+                }
+              }
+            }
+
+            if (Object.keys(settingsToApply).length === 0) {
+              return {
+                content: [
+                  createErrorContent(
+                    "No settings specified. Provide 'settings' or set 'apply_recommended' to true."
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const sedCommands: string[] = [];
+            for (const [key, value] of Object.entries(settingsToApply)) {
+              sedCommands.push(
+                `sudo sed -i 's|^#*\\s*${key}\\s.*|${key} ${value}|' ${configPath}`
+              );
+            }
+
+            const grepCommands: string[] = [];
+            for (const key of Object.keys(settingsToApply)) {
+              grepCommands.push(
+                `grep -q '^#*\\s*${key}\\s' ${configPath} || echo '${key} ${settingsToApply[key]}' | sudo tee -a ${configPath}`
+              );
+            }
+
+            if (params.dry_run ?? getConfig().dryRun) {
+              const entry = createChangeEntry({
+                tool: "access_ssh",
+                action: "[DRY-RUN] Apply SSH hardening",
+                target: configPath,
+                after: JSON.stringify(settingsToApply),
+                dryRun: true,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `[DRY-RUN] Would apply the following SSH hardening to ${configPath}:\n\n` +
+                      Object.entries(settingsToApply)
+                        .map(([k, v]) => `  ${k} ${v}`)
+                        .join("\n") +
+                      `\n\nSed commands:\n${sedCommands.map((c) => `  ${c}`).join("\n")}` +
+                      `\n\nAppend commands:\n${grepCommands.map((c) => `  ${c}`).join("\n")}` +
+                      (params.restart_sshd
+                        ? "\n\nWould also restart sshd."
+                        : "\n\nsshd will NOT be restarted.")
+                  ),
+                ],
+              };
+            }
+
+            // Backup the config file first
+            let backupPath: string | undefined;
+            try {
+              backupPath = backupFile(configPath);
+            } catch {
+              await executeCommand({
+                command: "sudo",
+                args: ["cp", configPath, `${configPath}.bak.${Date.now()}`],
+                toolName: "access_ssh",
+              });
+            }
+
+            // Apply sed replacements for existing settings
+            for (const [key, value] of Object.entries(settingsToApply)) {
+              await executeCommand({
+                command: "sudo",
+                args: [
+                  "sed",
+                  "-i",
+                  `s|^#*\\s*${key}\\s.*|${key} ${value}|`,
+                  configPath,
+                ],
+                toolName: "access_ssh",
+                timeout: getToolTimeout("access_ssh"),
+              });
+
+              const grepResult = await executeCommand({
+                command: "grep",
+                args: ["-q", `^${key}\\s`, configPath],
+                toolName: "access_ssh",
+              });
+
+              if (grepResult.exitCode !== 0) {
+                await executeCommand({
+                  command: "sudo",
+                  args: ["bash", "-c", `echo '${key} ${value}' >> ${configPath}`],
+                  toolName: "access_ssh",
+                });
+              }
+            }
+
+            // Validate the config
+            const testResult = await executeCommand({
+              command: "sudo",
+              args: ["sshd", "-t"],
+              toolName: "access_ssh",
+              timeout: getToolTimeout("access_ssh"),
+            });
+
+            if (testResult.exitCode !== 0) {
+              const entry = createChangeEntry({
+                tool: "access_ssh",
+                action: "Apply SSH hardening (config validation FAILED)",
+                target: configPath,
+                after: JSON.stringify(settingsToApply),
+                backupPath,
+                dryRun: false,
+                success: false,
+                error: `sshd -t failed: ${testResult.stderr}`,
+                rollbackCommand: backupPath
+                  ? `sudo cp ${backupPath} ${configPath}`
+                  : undefined,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createErrorContent(
+                    `SSH config validation failed after changes. ` +
+                      `Config may be invalid.\n${testResult.stderr}\n\n` +
+                      (backupPath
+                        ? `Rollback: sudo cp ${backupPath} ${configPath}`
+                        : "Manual rollback may be required.")
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            // Restart sshd if requested
+            let restartOutput = "";
+            if (params.restart_sshd) {
+              const restartResult = await executeCommand({
+                command: "sudo",
+                args: ["systemctl", "restart", "sshd"],
+                toolName: "access_ssh",
+                timeout: getToolTimeout("access_ssh"),
+              });
+
+              restartOutput =
+                restartResult.exitCode === 0
+                  ? "sshd restarted successfully."
+                  : `sshd restart failed: ${restartResult.stderr}`;
+            }
+
+            const entry = createChangeEntry({
+              tool: "access_ssh",
+              action: "Apply SSH hardening",
+              target: configPath,
+              after: JSON.stringify(settingsToApply),
+              backupPath,
+              dryRun: false,
+              success: true,
+              rollbackCommand: backupPath
+                ? `sudo cp ${backupPath} ${configPath} && sudo systemctl restart sshd`
+                : undefined,
+            });
+            logChange(entry);
+
+            return {
+              content: [
+                createTextContent(
+                  `SSH hardening applied to ${configPath}.\n\n` +
+                    `Settings applied:\n${Object.entries(settingsToApply).map(([k, v]) => `  ${k} = ${v}`).join("\n")}` +
+                    (backupPath ? `\n\nBackup: ${backupPath}` : "") +
+                    `\nConfig validation: passed` +
+                    (restartOutput ? `\n${restartOutput}` : "\nsshd NOT restarted.")
+                ),
+              ],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
         }
 
-        // Restart sshd if requested
-        let restartOutput = "";
-        if (restart_sshd) {
-          const restartResult = await executeCommand({
-            command: "sudo",
-            args: ["systemctl", "restart", "sshd"],
-            toolName: "access_ssh_harden",
-            timeout: getToolTimeout("access_ssh_harden"),
-          });
+        // ── cipher_audit ─────────────────────────────────────────────
+        case "cipher_audit": {
+          try {
+            const config_path = params.config_path ?? "/etc/ssh/sshd_config";
 
-          restartOutput =
-            restartResult.exitCode === 0
-              ? "sshd restarted successfully."
-              : `sshd restart failed: ${restartResult.stderr}`;
+            // Read the SSH config
+            const result = await executeCommand({
+              command: "cat",
+              args: [config_path],
+              timeout: 10000,
+              toolName: "access_ssh",
+            });
+
+            const config = result.stdout;
+
+            // Also get runtime config if possible
+            const runtimeResult = await executeCommand({
+              command: "sudo",
+              args: ["sshd", "-T"],
+              timeout: 10000,
+              toolName: "access_ssh",
+            });
+            const runtimeConfig = runtimeResult.exitCode === 0 ? runtimeResult.stdout : "";
+
+            // Define weak algorithms per Mozilla Modern guidelines
+            const WEAK_KEXALGORITHMS = [
+              "diffie-hellman-group1-sha1",
+              "diffie-hellman-group14-sha1",
+              "diffie-hellman-group-exchange-sha1",
+              "ecdh-sha2-nistp256",
+              "ecdh-sha2-nistp384",
+              "ecdh-sha2-nistp521",
+            ];
+            const RECOMMENDED_KEXALGORITHMS = [
+              "sntrup761x25519-sha512@openssh.com",
+              "curve25519-sha256",
+              "curve25519-sha256@libssh.org",
+              "diffie-hellman-group16-sha512",
+              "diffie-hellman-group18-sha512",
+              "diffie-hellman-group-exchange-sha256",
+            ];
+
+            const WEAK_CIPHERS = [
+              "3des-cbc", "aes128-cbc", "aes192-cbc", "aes256-cbc",
+              "blowfish-cbc", "cast128-cbc", "arcfour", "arcfour128", "arcfour256",
+              "rijndael-cbc@lysator.liu.se",
+            ];
+            const RECOMMENDED_CIPHERS = [
+              "chacha20-poly1305@openssh.com",
+              "aes256-gcm@openssh.com",
+              "aes128-gcm@openssh.com",
+              "aes256-ctr",
+              "aes192-ctr",
+              "aes128-ctr",
+            ];
+
+            const WEAK_MACS = [
+              "hmac-md5", "hmac-md5-96", "hmac-sha1", "hmac-sha1-96",
+              "umac-64@openssh.com", "hmac-ripemd160",
+              "hmac-sha1-etm@openssh.com", "hmac-md5-etm@openssh.com",
+            ];
+            const RECOMMENDED_MACS = [
+              "hmac-sha2-512-etm@openssh.com",
+              "hmac-sha2-256-etm@openssh.com",
+              "umac-128-etm@openssh.com",
+              "hmac-sha2-512",
+              "hmac-sha2-256",
+            ];
+
+            const WEAK_HOSTKEYS = [
+              "ssh-dss", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+            ];
+            const RECOMMENDED_HOSTKEYS = [
+              "ssh-ed25519",
+              "ssh-ed25519-cert-v01@openssh.com",
+              "sk-ssh-ed25519@openssh.com",
+              "rsa-sha2-512",
+              "rsa-sha2-256",
+            ];
+
+            function getAlgorithms(key: string): string[] {
+              const runtimeMatch = runtimeConfig.match(new RegExp(`^${key}\\s+(.+)$`, "mi"));
+              if (runtimeMatch) return runtimeMatch[1].split(",").map(s => s.trim());
+              const configMatch = config.match(new RegExp(`^\\s*${key}\\s+(.+)$`, "mi"));
+              if (configMatch) return configMatch[1].split(",").map(s => s.trim());
+              return [];
+            }
+
+            const findings: Array<{category: string, status: string, configured: string[], weak_found: string[], recommended: string[], note: string}> = [];
+
+            const checks = [
+              { key: "KexAlgorithms", label: "Key Exchange", weak: WEAK_KEXALGORITHMS, recommended: RECOMMENDED_KEXALGORITHMS },
+              { key: "Ciphers", label: "Ciphers", weak: WEAK_CIPHERS, recommended: RECOMMENDED_CIPHERS },
+              { key: "MACs", label: "MACs", weak: WEAK_MACS, recommended: RECOMMENDED_MACS },
+              { key: "HostKeyAlgorithms", label: "Host Key Algorithms", weak: WEAK_HOSTKEYS, recommended: RECOMMENDED_HOSTKEYS },
+            ];
+
+            for (const check of checks) {
+              const configured = getAlgorithms(check.key);
+              const weakFound = configured.filter(a => check.weak.includes(a));
+
+              let status = "PASS";
+              let note = "";
+
+              if (configured.length === 0) {
+                status = "WARN";
+                note = `${check.key} not explicitly set — using system defaults which may include weak algorithms`;
+              } else if (weakFound.length > 0) {
+                status = "FAIL";
+                note = `Found ${weakFound.length} weak algorithm(s): ${weakFound.join(", ")}`;
+              } else {
+                note = `All ${configured.length} configured algorithms are acceptable`;
+              }
+
+              findings.push({
+                category: check.label,
+                status,
+                configured,
+                weak_found: weakFound,
+                recommended: check.recommended,
+                note,
+              });
+            }
+
+            // Check SSH host key files
+            const hostKeyCheck = await executeCommand({
+              command: "ls",
+              args: ["-la", "/etc/ssh/"],
+              timeout: 5000,
+              toolName: "access_ssh",
+            });
+
+            const hasDSA = hostKeyCheck.stdout.includes("ssh_host_dsa_key");
+            const hasECDSA = hostKeyCheck.stdout.includes("ssh_host_ecdsa_key");
+            const hasED25519 = hostKeyCheck.stdout.includes("ssh_host_ed25519_key");
+            const hasRSA = hostKeyCheck.stdout.includes("ssh_host_rsa_key");
+
+            const hostKeyFindings: Array<{key: string, status: string, note: string}> = [];
+            if (hasDSA) hostKeyFindings.push({ key: "DSA", status: "FAIL", note: "DSA host key present — should be removed" });
+            if (hasECDSA) hostKeyFindings.push({ key: "ECDSA", status: "WARN", note: "ECDSA host key present — consider ED25519 only" });
+            if (hasED25519) hostKeyFindings.push({ key: "ED25519", status: "PASS", note: "ED25519 host key present — recommended" });
+            if (hasRSA) hostKeyFindings.push({ key: "RSA", status: "PASS", note: "RSA host key present — acceptable with RSA-SHA2" });
+
+            const passCount = findings.filter(f => f.status === "PASS").length;
+            const failCount = findings.filter(f => f.status === "FAIL").length;
+            const warnCount = findings.filter(f => f.status === "WARN").length;
+
+            return {
+              content: [createTextContent(JSON.stringify({
+                summary: {
+                  algorithmChecks: findings.length,
+                  pass: passCount,
+                  fail: failCount,
+                  warn: warnCount,
+                  hostKeys: hostKeyFindings,
+                },
+                algorithmAudit: findings,
+                hostKeyAudit: hostKeyFindings,
+                recommendation: failCount > 0
+                  ? "CRITICAL: Weak SSH algorithms detected. Apply Mozilla Modern SSH configuration immediately."
+                  : warnCount > 0
+                  ? "WARNING: SSH algorithms not explicitly configured. Set explicit algorithms in sshd_config."
+                  : "PASS: SSH cryptographic configuration meets modern standards.",
+              }, null, 2))],
+            };
+          } catch (error) {
+            return {
+              content: [createErrorContent(error instanceof Error ? error.message : String(error))],
+              isError: true,
+            };
+          }
         }
 
-        const entry = createChangeEntry({
-          tool: "access_ssh_harden",
-          action: "Apply SSH hardening",
-          target: configPath,
-          after: JSON.stringify(settingsToApply),
-          backupPath,
-          dryRun: false,
-          success: true,
-          rollbackCommand: backupPath
-            ? `sudo cp ${backupPath} ${configPath} && sudo systemctl restart sshd`
-            : undefined,
-        });
-        logChange(entry);
-
-        return {
-          content: [
-            createTextContent(
-              `SSH hardening applied to ${configPath}.\n\n` +
-                `Settings applied:\n${Object.entries(settingsToApply).map(([k, v]) => `  ${k} = ${v}`).join("\n")}` +
-                (backupPath ? `\n\nBackup: ${backupPath}` : "") +
-                `\nConfig validation: passed` +
-                (restartOutput ? `\n${restartOutput}` : "\nsshd NOT restarted.")
-            ),
-          ],
-        };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
   );
 
-  // ── 3. access_sudo_audit ───────────────────────────────────────────────
+  // ── 2. access_pam (merged: access_pam_audit, access_pam_configure) ──
+
+  server.tool(
+    "access_pam",
+    "PAM configuration security. Actions: audit=check PAM config for issues, configure=set up pam_pwquality or pam_faillock",
+    {
+      action: z
+        .enum(["audit", "configure"])
+        .describe("Action: audit=check PAM config, configure=set up PAM modules"),
+      // audit params
+      service: z
+        .string()
+        .optional()
+        .describe("Specific PAM service to audit, e.g. 'sshd', 'login', 'sudo' (for audit)"),
+      check_all: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Check common-auth, common-password, etc. (for audit)"),
+      // configure params
+      module: z
+        .enum(["pwquality", "faillock"])
+        .optional()
+        .describe("PAM module to configure (required for configure)"),
+      settings: z
+        .object({
+          // pwquality settings
+          minlen: z.number().optional(),
+          dcredit: z.number().optional(),
+          ucredit: z.number().optional(),
+          lcredit: z.number().optional(),
+          ocredit: z.number().optional(),
+          minclass: z.number().optional(),
+          maxrepeat: z.number().optional(),
+          reject_username: z.boolean().optional(),
+          // faillock settings
+          deny: z.number().optional(),
+          unlock_time: z.number().optional(),
+          fail_interval: z.number().optional(),
+        })
+        .optional()
+        .describe("Module-specific settings (for configure)"),
+      // shared
+      dry_run: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Preview changes (for configure)"),
+    },
+    async (params) => {
+      const { action } = params;
+
+      switch (action) {
+        // ── audit ────────────────────────────────────────────────────
+        case "audit": {
+          try {
+            const filesToCheck: string[] = [];
+
+            if (params.service) {
+              filesToCheck.push(`/etc/pam.d/${params.service}`);
+            }
+
+            if (params.check_all) {
+              const daPam = await getDistroAdapter();
+              filesToCheck.push(...daPam.paths.pamAllConfigs);
+            }
+
+            if (filesToCheck.length === 0) {
+              return {
+                content: [
+                  createErrorContent(
+                    "Specify a 'service' name or set 'check_all' to true."
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const uniqueFiles = [...new Set(filesToCheck)];
+
+            const fileContents: Record<string, string> = {};
+            let unreadableCount = 0;
+            for (const filePath of uniqueFiles) {
+              const result = await executeCommand({
+                command: "sudo",
+                args: ["cat", filePath],
+                toolName: "access_pam",
+                timeout: getToolTimeout("access_pam"),
+              });
+
+              if (result.exitCode === 0) {
+                fileContents[filePath] = result.stdout;
+              } else {
+                fileContents[filePath] = `[ERROR: ${result.stderr.trim()}]`;
+              }
+            }
+
+            const findings: Array<{
+              file: string;
+              type: string;
+              severity: "critical" | "high" | "medium" | "low" | "info" | "warning";
+              detail: string;
+            }> = [];
+
+            for (const [filePath, content] of Object.entries(fileContents)) {
+              if (content.startsWith("[ERROR:")) {
+                unreadableCount++;
+                const isPermissionDenied =
+                  content.toLowerCase().includes("permission denied") ||
+                  content.toLowerCase().includes("operation not permitted");
+                findings.push({
+                  file: filePath,
+                  type: "FILE_UNREADABLE",
+                  severity: isPermissionDenied ? "warning" : "medium",
+                  detail: isPermissionDenied
+                    ? `Permission denied — could not read ${filePath}. Results may be incomplete.`
+                    : `Could not read ${filePath}: ${content}. Results may be incomplete.`,
+                });
+                continue;
+              }
+
+              // Check for password hashing algorithm
+              if (content.includes("pam_unix.so")) {
+                if (content.includes("sha512")) {
+                  findings.push({
+                    file: filePath,
+                    type: "HASH_ALGORITHM",
+                    severity: "info",
+                    detail: "pam_unix.so is using SHA-512 hashing (good)",
+                  });
+                } else if (content.includes("md5")) {
+                  findings.push({
+                    file: filePath,
+                    type: "HASH_ALGORITHM",
+                    severity: "critical",
+                    detail:
+                      "pam_unix.so is using MD5 hashing — upgrade to SHA-512",
+                  });
+                } else if (!content.includes("sha256") && !content.includes("sha512")) {
+                  findings.push({
+                    file: filePath,
+                    type: "HASH_ALGORITHM",
+                    severity: "medium",
+                    detail:
+                      "pam_unix.so password hashing algorithm not explicitly set",
+                  });
+                }
+              }
+
+              // Check for account lockout
+              const hasLockout =
+                content.includes("pam_tally2") ||
+                content.includes("pam_faillock");
+              if (!hasLockout && (filePath.includes("common-auth") || filePath.includes("sshd"))) {
+                findings.push({
+                  file: filePath,
+                  type: "LOCKOUT_POLICY",
+                  severity: "high",
+                  detail:
+                    "No account lockout module (pam_tally2/pam_faillock) configured",
+                });
+              } else if (hasLockout) {
+                findings.push({
+                  file: filePath,
+                  type: "LOCKOUT_POLICY",
+                  severity: "info",
+                  detail: "Account lockout module is present",
+                });
+              }
+
+              // Check for password complexity
+              const hasComplexity =
+                content.includes("pam_pwquality") ||
+                content.includes("pam_cracklib");
+              if (
+                !hasComplexity &&
+                (filePath.includes("common-password") || filePath.includes("passwd"))
+              ) {
+                findings.push({
+                  file: filePath,
+                  type: "PASSWORD_COMPLEXITY",
+                  severity: "high",
+                  detail:
+                    "No password complexity module (pam_pwquality/pam_cracklib) configured",
+                });
+              } else if (hasComplexity) {
+                findings.push({
+                  file: filePath,
+                  type: "PASSWORD_COMPLEXITY",
+                  severity: "info",
+                  detail: "Password complexity module is present",
+                });
+              }
+
+              // Check for pam_limits.so
+              if (
+                content.includes("pam_limits.so") &&
+                filePath.includes("common-session")
+              ) {
+                findings.push({
+                  file: filePath,
+                  type: "RESOURCE_LIMITS",
+                  severity: "info",
+                  detail: "pam_limits.so is configured for resource limits",
+                });
+              } else if (
+                !content.includes("pam_limits.so") &&
+                filePath.includes("common-session")
+              ) {
+                findings.push({
+                  file: filePath,
+                  type: "RESOURCE_LIMITS",
+                  severity: "medium",
+                  detail:
+                    "pam_limits.so is not configured — resource limits not enforced",
+                });
+              }
+
+              // Check for ordering issues
+              const lines = content
+                .split("\n")
+                .filter((l) => l.trim() && !l.trim().startsWith("#"));
+              let lastType = "";
+              for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                const type = parts[0];
+                if (type === "account" && lastType === "session") {
+                  findings.push({
+                    file: filePath,
+                    type: "PAM_ORDERING",
+                    severity: "medium",
+                    detail:
+                      "PAM ordering issue: 'account' entries found after 'session' entries",
+                  });
+                  break;
+                }
+                if (type) lastType = type;
+              }
+            }
+
+            const entry = createChangeEntry({
+              tool: "access_pam",
+              action: `PAM audit${params.service ? ` (${params.service})` : ""}${params.check_all ? " (all common)" : ""}`,
+              target: uniqueFiles.join(", "),
+              after: `Findings: ${findings.length}`,
+              dryRun: false,
+              success: true,
+            });
+            logChange(entry);
+
+            const output = {
+              filesChecked: uniqueFiles,
+              totalFindings: findings.length,
+              unreadableFiles: unreadableCount,
+              findings,
+              ...(unreadableCount > 0
+                ? {
+                    warning: `${unreadableCount} file(s) could not be read (insufficient permissions?). Audit results may be incomplete.`,
+                  }
+                : {}),
+              fileContents: Object.fromEntries(
+                Object.entries(fileContents).map(([k, v]) => [
+                  k,
+                  v.startsWith("[ERROR:") ? v : `${v.split("\n").length} lines`,
+                ])
+              ),
+            };
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── configure ────────────────────────────────────────────────
+        case "configure": {
+          try {
+            if (!params.module) {
+              return { content: [createErrorContent("Error: 'module' is required for configure action (pwquality or faillock)")], isError: true };
+            }
+
+            const pamModule = params.module;
+            const isDryRun = params.dry_run ?? getConfig().dryRun;
+
+            if (pamModule === "pwquality") {
+              const defaults = {
+                minlen: 14,
+                dcredit: -1,
+                ucredit: -1,
+                lcredit: -1,
+                ocredit: -1,
+                minclass: 3,
+                maxrepeat: 3,
+                reject_username: true,
+              };
+
+              const merged = {
+                minlen: params.settings?.minlen ?? defaults.minlen,
+                dcredit: params.settings?.dcredit ?? defaults.dcredit,
+                ucredit: params.settings?.ucredit ?? defaults.ucredit,
+                lcredit: params.settings?.lcredit ?? defaults.lcredit,
+                ocredit: params.settings?.ocredit ?? defaults.ocredit,
+                minclass: params.settings?.minclass ?? defaults.minclass,
+                maxrepeat: params.settings?.maxrepeat ?? defaults.maxrepeat,
+                reject_username: params.settings?.reject_username ?? defaults.reject_username,
+              };
+
+              const targetFile = "/etc/security/pwquality.conf";
+              const configLines = [
+                `minlen = ${merged.minlen}`,
+                `dcredit = ${merged.dcredit}`,
+                `ucredit = ${merged.ucredit}`,
+                `lcredit = ${merged.lcredit}`,
+                `ocredit = ${merged.ocredit}`,
+                `minclass = ${merged.minclass}`,
+                `maxrepeat = ${merged.maxrepeat}`,
+                merged.reject_username ? `reject_username` : `# reject_username`,
+              ];
+
+              if (isDryRun) {
+                const entry = createChangeEntry({
+                  tool: "access_pam",
+                  action: "[DRY-RUN] Configure pam_pwquality",
+                  target: targetFile,
+                  after: JSON.stringify(merged),
+                  dryRun: true,
+                  success: true,
+                });
+                logChange(entry);
+
+                return {
+                  content: [
+                    createTextContent(
+                      `[DRY-RUN] Would write the following to ${targetFile}:\n\n` +
+                        configLines.map((l) => `  ${l}`).join("\n")
+                    ),
+                  ],
+                };
+              }
+
+              // Backup the target file
+              await executeCommand({
+                command: "sudo",
+                args: ["cp", targetFile, `${targetFile}.bak.${Date.now()}`],
+                toolName: "access_pam",
+              });
+
+              // Read current file content
+              const currentResult = await executeCommand({
+                command: "sudo",
+                args: ["cat", targetFile],
+                toolName: "access_pam",
+              });
+
+              let currentContent = currentResult.exitCode === 0 ? currentResult.stdout : "";
+
+              // Update each setting
+              for (const line of configLines) {
+                const key = line.split(/\s*=\s*/)[0].replace(/^#\s*/, "").trim();
+                const keyRegex = new RegExp(`^#?\\s*${key}(\\s*=|\\s|$)`, "m");
+                if (keyRegex.test(currentContent)) {
+                  currentContent = currentContent.replace(
+                    new RegExp(`^#?\\s*${key}(\\s*=.*|\\s*)$`, "m"),
+                    line
+                  );
+                } else {
+                  currentContent += `\n${line}`;
+                }
+              }
+
+              await executeCommand({
+                command: "sudo",
+                args: ["tee", targetFile],
+                toolName: "access_pam",
+                timeout: getToolTimeout("access_pam"),
+                stdin: currentContent,
+              });
+
+              const entry = createChangeEntry({
+                tool: "access_pam",
+                action: "Configure pam_pwquality",
+                target: targetFile,
+                after: JSON.stringify(merged),
+                dryRun: false,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `pam_pwquality configured in ${targetFile}:\n\n` +
+                      configLines.map((l) => `  ${l}`).join("\n")
+                  ),
+                ],
+              };
+            }
+
+            // module === "faillock"
+            const defaults = {
+              deny: 5,
+              unlock_time: 900,
+              fail_interval: 900,
+            };
+
+            const merged = {
+              deny: params.settings?.deny ?? defaults.deny,
+              unlock_time: params.settings?.unlock_time ?? defaults.unlock_time,
+              fail_interval: params.settings?.fail_interval ?? defaults.fail_interval,
+            };
+
+            const targetFile = (await getDistroAdapter()).paths.pamAuth;
+            const failArgs = `deny=${merged.deny} unlock_time=${merged.unlock_time} fail_interval=${merged.fail_interval}`;
+            const preLine = `auth    required    pam_faillock.so preauth silent ${failArgs}`;
+            const authLine = `auth    [default=die] pam_faillock.so authfail ${failArgs}`;
+
+            if (isDryRun) {
+              const entry = createChangeEntry({
+                tool: "access_pam",
+                action: "[DRY-RUN] Configure pam_faillock",
+                target: targetFile,
+                after: JSON.stringify(merged),
+                dryRun: true,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `[DRY-RUN] Would add/update pam_faillock.so in ${targetFile}:\n\n` +
+                      `  ${preLine}\n  ${authLine}\n\n` +
+                      `Settings: ${JSON.stringify(merged)}`
+                  ),
+                ],
+              };
+            }
+
+            // Backup the target file
+            await executeCommand({
+              command: "sudo",
+              args: ["cp", targetFile, `${targetFile}.bak.${Date.now()}`],
+              toolName: "access_pam",
+            });
+
+            // Remove existing pam_faillock lines first
+            await executeCommand({
+              command: "sudo",
+              args: [
+                "sed",
+                "-i",
+                "/pam_faillock\\.so/d",
+                targetFile,
+              ],
+              toolName: "access_pam",
+            });
+
+            // Insert preauth line before pam_unix.so auth line
+            await executeCommand({
+              command: "sudo",
+              args: [
+                "sed",
+                "-i",
+                `0,/pam_unix\\.so/s|.*pam_unix\\.so.*|${preLine}\\n&|`,
+                targetFile,
+              ],
+              toolName: "access_pam",
+            });
+
+            // Insert authfail line after pam_unix.so auth line
+            await executeCommand({
+              command: "sudo",
+              args: [
+                "sed",
+                "-i",
+                `0,/pam_unix\\.so/{/pam_unix\\.so/a\\${authLine}}`,
+                targetFile,
+              ],
+              toolName: "access_pam",
+            });
+
+            const entry = createChangeEntry({
+              tool: "access_pam",
+              action: "Configure pam_faillock",
+              target: targetFile,
+              after: JSON.stringify(merged),
+              dryRun: false,
+              success: true,
+            });
+            logChange(entry);
+
+            return {
+              content: [
+                createTextContent(
+                  `pam_faillock configured in ${targetFile}:\n\n` +
+                    `  ${preLine}\n  ${authLine}\n\n` +
+                    `Settings: ${JSON.stringify(merged)}`
+                ),
+              ],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
+      }
+    }
+  );
+
+  // ── 3. access_sudo_audit (kept as-is) ─────────────────────────────────────
 
   server.tool(
     "access_sudo_audit",
@@ -597,7 +1281,6 @@ export function registerAccessControlTools(server: McpServer): void {
           const trimmed = line.trim();
           if (!trimmed || trimmed.startsWith("#")) continue;
 
-          // Check for NOPASSWD entries
           if (check_nopasswd && trimmed.includes("NOPASSWD")) {
             findings.push({
               type: "NOPASSWD",
@@ -607,7 +1290,6 @@ export function registerAccessControlTools(server: McpServer): void {
             });
           }
 
-          // Check for ALL=(ALL) ALL grants
           if (
             check_insecure &&
             trimmed.includes("ALL=(ALL)") &&
@@ -622,7 +1304,6 @@ export function registerAccessControlTools(server: McpServer): void {
             });
           }
 
-          // Check for !authenticate
           if (check_insecure && trimmed.includes("!authenticate")) {
             findings.push({
               type: "NO_AUTHENTICATE",
@@ -690,7 +1371,7 @@ export function registerAccessControlTools(server: McpServer): void {
     }
   );
 
-  // ── 4. access_user_audit ───────────────────────────────────────────────
+  // ── 4. access_user_audit (kept as-is) ─────────────────────────────────────
 
   server.tool(
     "access_user_audit",
@@ -704,7 +1385,6 @@ export function registerAccessControlTools(server: McpServer): void {
     },
     async ({ check_type }) => {
       try {
-        // Read /etc/passwd
         const passwdResult = await executeCommand({
           command: "cat",
           args: ["/etc/passwd"],
@@ -712,21 +1392,18 @@ export function registerAccessControlTools(server: McpServer): void {
           timeout: getToolTimeout("access_user_audit"),
         });
 
-        // Read /etc/shadow (needs sudo)
         const shadowResult = await executeCommand({
           command: "sudo",
           args: ["cat", "/etc/shadow"],
           toolName: "access_user_audit",
         });
 
-        // Get lastlog
         const lastlogResult = await executeCommand({
           command: "lastlog",
           args: [],
           toolName: "access_user_audit",
         });
 
-        // Parse passwd entries
         const users = passwdResult.stdout
           .split("\n")
           .filter((l) => l.trim().length > 0)
@@ -742,7 +1419,6 @@ export function registerAccessControlTools(server: McpServer): void {
             };
           });
 
-        // Parse shadow entries
         const shadowMap: Record<string, string> = {};
         if (shadowResult.exitCode === 0) {
           for (const line of shadowResult.stdout.split("\n")) {
@@ -753,7 +1429,6 @@ export function registerAccessControlTools(server: McpServer): void {
           }
         }
 
-        // Parse lastlog
         const lastlogMap: Record<string, string> = {};
         for (const line of lastlogResult.stdout.split("\n").slice(1)) {
           const trimmed = line.trim();
@@ -788,7 +1463,6 @@ export function registerAccessControlTools(server: McpServer): void {
 
         const results: Record<string, Array<Record<string, unknown>>> = {};
 
-        // Privileged users (UID 0)
         if (check_type === "all" || check_type === "privileged") {
           results.privileged = users
             .filter((u) => u.uid === 0)
@@ -803,13 +1477,11 @@ export function registerAccessControlTools(server: McpServer): void {
             }));
         }
 
-        // Inactive users (never logged in or 90+ days)
         if (check_type === "all" || check_type === "inactive") {
           results.inactive = users
             .filter((u) => {
               const lastLogin = lastlogMap[u.username];
               if (!lastLogin || lastLogin === "never") return true;
-              // Check if login was more than 90 days ago
               const loginDate = new Date(lastLogin);
               const daysSince =
                 (Date.now() - loginDate.getTime()) / (1000 * 60 * 60 * 24);
@@ -824,7 +1496,6 @@ export function registerAccessControlTools(server: McpServer): void {
             }));
         }
 
-        // Users with no password
         if (check_type === "all" || check_type === "no_password") {
           results.no_password = users
             .filter((u) => {
@@ -839,7 +1510,6 @@ export function registerAccessControlTools(server: McpServer): void {
             }));
         }
 
-        // Users with login shells who shouldn't have them
         if (check_type === "all" || check_type === "shell") {
           const systemUsers = users.filter(
             (u) => u.uid < 1000 && u.uid !== 0
@@ -854,7 +1524,6 @@ export function registerAccessControlTools(server: McpServer): void {
             }));
         }
 
-        // Locked/disabled accounts
         if (check_type === "all" || check_type === "locked") {
           results.locked = users
             .filter((u) => {
@@ -904,7 +1573,7 @@ export function registerAccessControlTools(server: McpServer): void {
     }
   );
 
-  // ── 5. access_password_policy ──────────────────────────────────────────
+  // ── 5. access_password_policy (kept as-is) ────────────────────────────────
 
   server.tool(
     "access_password_policy",
@@ -945,7 +1614,6 @@ export function registerAccessControlTools(server: McpServer): void {
     async ({ action, min_days, max_days, warn_days, min_length, inactive_days, encrypt_method, dry_run }) => {
       try {
         if (action === "audit") {
-          // Read /etc/login.defs
           const loginDefsResult = await executeCommand({
             command: "cat",
             args: ["/etc/login.defs"],
@@ -953,14 +1621,12 @@ export function registerAccessControlTools(server: McpServer): void {
             timeout: getToolTimeout("access_password_policy"),
           });
 
-          // Read PAM common-password
           const pamResult = await executeCommand({
             command: "cat",
             args: [(await getDistroAdapter()).paths.pamPassword],
             toolName: "access_password_policy",
           });
 
-          // Parse login.defs
           const loginDefs: Record<string, string> = {};
           const passwordKeys = [
             "PASS_MAX_DAYS",
@@ -983,7 +1649,6 @@ export function registerAccessControlTools(server: McpServer): void {
             }
           }
 
-          // Analyze PAM modules
           const pamModules: Array<{ module: string; present: boolean }> = [
             { module: "pam_pwquality", present: false },
             { module: "pam_cracklib", present: false },
@@ -996,7 +1661,6 @@ export function registerAccessControlTools(server: McpServer): void {
             }
           }
 
-          // Also check INACTIVE from /etc/default/useradd
           const useraddResult = await executeCommand({
             command: "cat",
             args: ["/etc/default/useradd"],
@@ -1011,7 +1675,6 @@ export function registerAccessControlTools(server: McpServer): void {
             }
           }
 
-          // Recommendations
           const recommendations: string[] = [];
           const maxDays = parseInt(loginDefs["PASS_MAX_DAYS"] ?? "99999", 10);
           const minDays = parseInt(loginDefs["PASS_MIN_DAYS"] ?? "0", 10);
@@ -1076,7 +1739,6 @@ export function registerAccessControlTools(server: McpServer): void {
         if (min_length !== undefined) settingsToApply["PASS_MIN_LEN"] = String(min_length);
         if (encrypt_method !== undefined) settingsToApply["ENCRYPT_METHOD"] = encrypt_method;
 
-        // Track extra commands for INACTIVE and ENCRYPT_METHOD
         const extraCommands: string[] = [];
 
         if (inactive_days !== undefined) {
@@ -1174,7 +1836,6 @@ export function registerAccessControlTools(server: McpServer): void {
             timeout: getToolTimeout("access_password_policy"),
           });
 
-          // Also update /etc/default/useradd via sed (or append)
           const grepInactive = await executeCommand({
             command: "grep",
             args: ["-q", "^INACTIVE", "/etc/default/useradd"],
@@ -1237,697 +1898,7 @@ export function registerAccessControlTools(server: McpServer): void {
     }
   );
 
-  // ── 6. access_pam_audit ────────────────────────────────────────────────
-
-  server.tool(
-    "access_pam_audit",
-    "Audit PAM (Pluggable Authentication Modules) configuration for security issues",
-    {
-      service: z
-        .string()
-        .optional()
-        .describe(
-          "Specific PAM service to audit, e.g. 'sshd', 'login', 'sudo'"
-        ),
-      check_all: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe(
-          "Check common-auth, common-password, common-session, common-account (default: false)"
-        ),
-    },
-    async ({ service, check_all }) => {
-      try {
-        const filesToCheck: string[] = [];
-
-        if (service) {
-          filesToCheck.push(`/etc/pam.d/${service}`);
-        }
-
-        if (check_all) {
-          const daPam = await getDistroAdapter();
-          filesToCheck.push(...daPam.paths.pamAllConfigs);
-        }
-
-        if (filesToCheck.length === 0) {
-          return {
-            content: [
-              createErrorContent(
-                "Specify a 'service' name or set 'check_all' to true."
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        // Deduplicate
-        const uniqueFiles = [...new Set(filesToCheck)];
-
-        const fileContents: Record<string, string> = {};
-        let unreadableCount = 0;
-        for (const filePath of uniqueFiles) {
-          const result = await executeCommand({
-            command: "sudo",
-            args: ["cat", filePath],
-            toolName: "access_pam_audit",
-            timeout: getToolTimeout("access_pam_audit"),
-          });
-
-          if (result.exitCode === 0) {
-            fileContents[filePath] = result.stdout;
-          } else {
-            fileContents[filePath] = `[ERROR: ${result.stderr.trim()}]`;
-          }
-        }
-
-        // Analyze PAM configurations
-        const findings: Array<{
-          file: string;
-          type: string;
-          severity: "critical" | "high" | "medium" | "low" | "info" | "warning";
-          detail: string;
-        }> = [];
-
-        for (const [filePath, content] of Object.entries(fileContents)) {
-          if (content.startsWith("[ERROR:")) {
-            unreadableCount++;
-            const isPermissionDenied =
-              content.toLowerCase().includes("permission denied") ||
-              content.toLowerCase().includes("operation not permitted");
-            findings.push({
-              file: filePath,
-              type: "FILE_UNREADABLE",
-              severity: isPermissionDenied ? "warning" : "medium",
-              detail: isPermissionDenied
-                ? `Permission denied — could not read ${filePath}. Results may be incomplete.`
-                : `Could not read ${filePath}: ${content}. Results may be incomplete.`,
-            });
-            continue;
-          }
-
-          // Check for password hashing algorithm
-          if (content.includes("pam_unix.so")) {
-            if (content.includes("sha512")) {
-              findings.push({
-                file: filePath,
-                type: "HASH_ALGORITHM",
-                severity: "info",
-                detail: "pam_unix.so is using SHA-512 hashing (good)",
-              });
-            } else if (content.includes("md5")) {
-              findings.push({
-                file: filePath,
-                type: "HASH_ALGORITHM",
-                severity: "critical",
-                detail:
-                  "pam_unix.so is using MD5 hashing — upgrade to SHA-512",
-              });
-            } else if (!content.includes("sha256") && !content.includes("sha512")) {
-              findings.push({
-                file: filePath,
-                type: "HASH_ALGORITHM",
-                severity: "medium",
-                detail:
-                  "pam_unix.so password hashing algorithm not explicitly set",
-              });
-            }
-          }
-
-          // Check for account lockout (pam_tally2 or pam_faillock)
-          const hasLockout =
-            content.includes("pam_tally2") ||
-            content.includes("pam_faillock");
-          if (!hasLockout && (filePath.includes("common-auth") || filePath.includes("sshd"))) {
-            findings.push({
-              file: filePath,
-              type: "LOCKOUT_POLICY",
-              severity: "high",
-              detail:
-                "No account lockout module (pam_tally2/pam_faillock) configured",
-            });
-          } else if (hasLockout) {
-            findings.push({
-              file: filePath,
-              type: "LOCKOUT_POLICY",
-              severity: "info",
-              detail: "Account lockout module is present",
-            });
-          }
-
-          // Check for password complexity
-          const hasComplexity =
-            content.includes("pam_pwquality") ||
-            content.includes("pam_cracklib");
-          if (
-            !hasComplexity &&
-            (filePath.includes("common-password") || filePath.includes("passwd"))
-          ) {
-            findings.push({
-              file: filePath,
-              type: "PASSWORD_COMPLEXITY",
-              severity: "high",
-              detail:
-                "No password complexity module (pam_pwquality/pam_cracklib) configured",
-            });
-          } else if (hasComplexity) {
-            findings.push({
-              file: filePath,
-              type: "PASSWORD_COMPLEXITY",
-              severity: "info",
-              detail: "Password complexity module is present",
-            });
-          }
-
-          // Check for pam_limits.so
-          if (
-            content.includes("pam_limits.so") &&
-            filePath.includes("common-session")
-          ) {
-            findings.push({
-              file: filePath,
-              type: "RESOURCE_LIMITS",
-              severity: "info",
-              detail: "pam_limits.so is configured for resource limits",
-            });
-          } else if (
-            !content.includes("pam_limits.so") &&
-            filePath.includes("common-session")
-          ) {
-            findings.push({
-              file: filePath,
-              type: "RESOURCE_LIMITS",
-              severity: "medium",
-              detail:
-                "pam_limits.so is not configured — resource limits not enforced",
-            });
-          }
-
-          // Check for ordering issues — auth entries should come before account
-          const lines = content
-            .split("\n")
-            .filter((l) => l.trim() && !l.trim().startsWith("#"));
-          let lastType = "";
-          for (const line of lines) {
-            const parts = line.trim().split(/\s+/);
-            const type = parts[0];
-            if (type === "account" && lastType === "session") {
-              findings.push({
-                file: filePath,
-                type: "PAM_ORDERING",
-                severity: "medium",
-                detail:
-                  "PAM ordering issue: 'account' entries found after 'session' entries",
-              });
-              break;
-            }
-            if (type) lastType = type;
-          }
-        }
-
-        const entry = createChangeEntry({
-          tool: "access_pam_audit",
-          action: `PAM audit${service ? ` (${service})` : ""}${check_all ? " (all common)" : ""}`,
-          target: uniqueFiles.join(", "),
-          after: `Findings: ${findings.length}`,
-          dryRun: false,
-          success: true,
-        });
-        logChange(entry);
-
-        const output = {
-          filesChecked: uniqueFiles,
-          totalFindings: findings.length,
-          unreadableFiles: unreadableCount,
-          findings,
-          ...(unreadableCount > 0
-            ? {
-                warning: `${unreadableCount} file(s) could not be read (insufficient permissions?). Audit results may be incomplete.`,
-              }
-            : {}),
-          fileContents: Object.fromEntries(
-            Object.entries(fileContents).map(([k, v]) => [
-              k,
-              v.startsWith("[ERROR:") ? v : `${v.split("\n").length} lines`,
-            ])
-          ),
-        };
-
-        return { content: [formatToolOutput(output)] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
-
-  // ── 7. access_ssh_cipher_audit ──────────────────────────────────────────
-
-  server.tool(
-    "access_ssh_cipher_audit",
-    "Audit SSH server cryptographic algorithms (KexAlgorithms, Ciphers, MACs, HostKeyAlgorithms) against Mozilla/NIST hardening recommendations. Identifies weak or deprecated algorithms.",
-    {
-      config_path: z.string().optional().default("/etc/ssh/sshd_config").describe("Path to sshd_config file"),
-    },
-    async (params) => {
-      try {
-        // Read the SSH config
-        const result = await executeCommand({
-          command: "cat",
-          args: [params.config_path],
-          timeout: 10000,
-          toolName: "access_ssh_cipher_audit",
-        });
-
-        const config = result.stdout;
-
-        // Also get runtime config if possible
-        const runtimeResult = await executeCommand({
-          command: "sudo",
-          args: ["sshd", "-T"],
-          timeout: 10000,
-          toolName: "access_ssh_cipher_audit",
-        });
-        const runtimeConfig = runtimeResult.exitCode === 0 ? runtimeResult.stdout : "";
-
-        // Define weak algorithms per Mozilla Modern guidelines
-        const WEAK_KEXALGORITHMS = [
-          "diffie-hellman-group1-sha1",
-          "diffie-hellman-group14-sha1",
-          "diffie-hellman-group-exchange-sha1",
-          "ecdh-sha2-nistp256",
-          "ecdh-sha2-nistp384",
-          "ecdh-sha2-nistp521",
-        ];
-        const RECOMMENDED_KEXALGORITHMS = [
-          "sntrup761x25519-sha512@openssh.com",
-          "curve25519-sha256",
-          "curve25519-sha256@libssh.org",
-          "diffie-hellman-group16-sha512",
-          "diffie-hellman-group18-sha512",
-          "diffie-hellman-group-exchange-sha256",
-        ];
-
-        const WEAK_CIPHERS = [
-          "3des-cbc", "aes128-cbc", "aes192-cbc", "aes256-cbc",
-          "blowfish-cbc", "cast128-cbc", "arcfour", "arcfour128", "arcfour256",
-          "rijndael-cbc@lysator.liu.se",
-        ];
-        const RECOMMENDED_CIPHERS = [
-          "chacha20-poly1305@openssh.com",
-          "aes256-gcm@openssh.com",
-          "aes128-gcm@openssh.com",
-          "aes256-ctr",
-          "aes192-ctr",
-          "aes128-ctr",
-        ];
-
-        const WEAK_MACS = [
-          "hmac-md5", "hmac-md5-96", "hmac-sha1", "hmac-sha1-96",
-          "umac-64@openssh.com", "hmac-ripemd160",
-          "hmac-sha1-etm@openssh.com", "hmac-md5-etm@openssh.com",
-        ];
-        const RECOMMENDED_MACS = [
-          "hmac-sha2-512-etm@openssh.com",
-          "hmac-sha2-256-etm@openssh.com",
-          "umac-128-etm@openssh.com",
-          "hmac-sha2-512",
-          "hmac-sha2-256",
-        ];
-
-        const WEAK_HOSTKEYS = [
-          "ssh-dss", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
-        ];
-        const RECOMMENDED_HOSTKEYS = [
-          "ssh-ed25519",
-          "ssh-ed25519-cert-v01@openssh.com",
-          "sk-ssh-ed25519@openssh.com",
-          "rsa-sha2-512",
-          "rsa-sha2-256",
-        ];
-
-        // Parse configured algorithms from runtime or config
-        function getAlgorithms(key: string): string[] {
-          // Try runtime config first
-          const runtimeMatch = runtimeConfig.match(new RegExp(`^${key}\\s+(.+)$`, "mi"));
-          if (runtimeMatch) return runtimeMatch[1].split(",").map(s => s.trim());
-          // Fall back to config file
-          const configMatch = config.match(new RegExp(`^\\s*${key}\\s+(.+)$`, "mi"));
-          if (configMatch) return configMatch[1].split(",").map(s => s.trim());
-          return []; // Empty means system defaults
-        }
-
-        const findings: Array<{category: string, status: string, configured: string[], weak_found: string[], recommended: string[], note: string}> = [];
-
-        // Check each algorithm category
-        const checks = [
-          { key: "KexAlgorithms", label: "Key Exchange", weak: WEAK_KEXALGORITHMS, recommended: RECOMMENDED_KEXALGORITHMS },
-          { key: "Ciphers", label: "Ciphers", weak: WEAK_CIPHERS, recommended: RECOMMENDED_CIPHERS },
-          { key: "MACs", label: "MACs", weak: WEAK_MACS, recommended: RECOMMENDED_MACS },
-          { key: "HostKeyAlgorithms", label: "Host Key Algorithms", weak: WEAK_HOSTKEYS, recommended: RECOMMENDED_HOSTKEYS },
-        ];
-
-        for (const check of checks) {
-          const configured = getAlgorithms(check.key);
-          const weakFound = configured.filter(a => check.weak.includes(a));
-
-          let status = "PASS";
-          let note = "";
-
-          if (configured.length === 0) {
-            status = "WARN";
-            note = `${check.key} not explicitly set — using system defaults which may include weak algorithms`;
-          } else if (weakFound.length > 0) {
-            status = "FAIL";
-            note = `Found ${weakFound.length} weak algorithm(s): ${weakFound.join(", ")}`;
-          } else {
-            note = `All ${configured.length} configured algorithms are acceptable`;
-          }
-
-          findings.push({
-            category: check.label,
-            status,
-            configured,
-            weak_found: weakFound,
-            recommended: check.recommended,
-            note,
-          });
-        }
-
-        // Check SSH protocol version and host key files
-        const hostKeyCheck = await executeCommand({
-          command: "ls",
-          args: ["-la", "/etc/ssh/"],
-          timeout: 5000,
-          toolName: "access_ssh_cipher_audit",
-        });
-
-        const hasDSA = hostKeyCheck.stdout.includes("ssh_host_dsa_key");
-        const hasECDSA = hostKeyCheck.stdout.includes("ssh_host_ecdsa_key");
-        const hasED25519 = hostKeyCheck.stdout.includes("ssh_host_ed25519_key");
-        const hasRSA = hostKeyCheck.stdout.includes("ssh_host_rsa_key");
-
-        const hostKeyFindings: Array<{key: string, status: string, note: string}> = [];
-        if (hasDSA) hostKeyFindings.push({ key: "DSA", status: "FAIL", note: "DSA host key present — should be removed" });
-        if (hasECDSA) hostKeyFindings.push({ key: "ECDSA", status: "WARN", note: "ECDSA host key present — consider ED25519 only" });
-        if (hasED25519) hostKeyFindings.push({ key: "ED25519", status: "PASS", note: "ED25519 host key present — recommended" });
-        if (hasRSA) hostKeyFindings.push({ key: "RSA", status: "PASS", note: "RSA host key present — acceptable with RSA-SHA2" });
-
-        const passCount = findings.filter(f => f.status === "PASS").length;
-        const failCount = findings.filter(f => f.status === "FAIL").length;
-        const warnCount = findings.filter(f => f.status === "WARN").length;
-
-        return {
-          content: [createTextContent(JSON.stringify({
-            summary: {
-              algorithmChecks: findings.length,
-              pass: passCount,
-              fail: failCount,
-              warn: warnCount,
-              hostKeys: hostKeyFindings,
-            },
-            algorithmAudit: findings,
-            hostKeyAudit: hostKeyFindings,
-            recommendation: failCount > 0
-              ? "CRITICAL: Weak SSH algorithms detected. Apply Mozilla Modern SSH configuration immediately."
-              : warnCount > 0
-              ? "WARNING: SSH algorithms not explicitly configured. Set explicit algorithms in sshd_config."
-              : "PASS: SSH cryptographic configuration meets modern standards.",
-          }, null, 2))],
-        };
-      } catch (error) {
-        return {
-          content: [createErrorContent(error instanceof Error ? error.message : String(error))],
-          isError: true,
-        };
-      }
-    },
-  );
-
-  // ── 8. access_pam_configure ──────────────────────────────────────────
-
-  server.tool(
-    "access_pam_configure",
-    "Configure PAM modules (pam_pwquality for password complexity, pam_faillock for account lockout)",
-    {
-      module: z
-        .enum(["pwquality", "faillock"])
-        .describe("Which PAM module to configure"),
-      settings: z
-        .object({
-          // pwquality settings
-          minlen: z.number().optional(),
-          dcredit: z.number().optional(),
-          ucredit: z.number().optional(),
-          lcredit: z.number().optional(),
-          ocredit: z.number().optional(),
-          minclass: z.number().optional(),
-          maxrepeat: z.number().optional(),
-          reject_username: z.boolean().optional(),
-          // faillock settings
-          deny: z.number().optional(),
-          unlock_time: z.number().optional(),
-          fail_interval: z.number().optional(),
-        })
-        .optional()
-        .describe("Module-specific settings. Defaults applied if omitted."),
-      dry_run: z
-        .boolean()
-        .optional()
-        .describe("Preview changes without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
-    },
-    async ({ module: pamModule, settings, dry_run }) => {
-      try {
-        const isDryRun = dry_run ?? getConfig().dryRun;
-
-        if (pamModule === "pwquality") {
-          const defaults = {
-            minlen: 14,
-            dcredit: -1,
-            ucredit: -1,
-            lcredit: -1,
-            ocredit: -1,
-            minclass: 3,
-            maxrepeat: 3,
-            reject_username: true,
-          };
-
-          const merged = {
-            minlen: settings?.minlen ?? defaults.minlen,
-            dcredit: settings?.dcredit ?? defaults.dcredit,
-            ucredit: settings?.ucredit ?? defaults.ucredit,
-            lcredit: settings?.lcredit ?? defaults.lcredit,
-            ocredit: settings?.ocredit ?? defaults.ocredit,
-            minclass: settings?.minclass ?? defaults.minclass,
-            maxrepeat: settings?.maxrepeat ?? defaults.maxrepeat,
-            reject_username: settings?.reject_username ?? defaults.reject_username,
-          };
-
-          const targetFile = "/etc/security/pwquality.conf";
-          const configLines = [
-            `minlen = ${merged.minlen}`,
-            `dcredit = ${merged.dcredit}`,
-            `ucredit = ${merged.ucredit}`,
-            `lcredit = ${merged.lcredit}`,
-            `ocredit = ${merged.ocredit}`,
-            `minclass = ${merged.minclass}`,
-            `maxrepeat = ${merged.maxrepeat}`,
-            merged.reject_username ? `reject_username` : `# reject_username`,
-          ];
-
-          if (isDryRun) {
-            const entry = createChangeEntry({
-              tool: "access_pam_configure",
-              action: "[DRY-RUN] Configure pam_pwquality",
-              target: targetFile,
-              after: JSON.stringify(merged),
-              dryRun: true,
-              success: true,
-            });
-            logChange(entry);
-
-            return {
-              content: [
-                createTextContent(
-                  `[DRY-RUN] Would write the following to ${targetFile}:\n\n` +
-                    configLines.map((l) => `  ${l}`).join("\n")
-                ),
-              ],
-            };
-          }
-
-          // Backup the target file
-          await executeCommand({
-            command: "sudo",
-            args: ["cp", targetFile, `${targetFile}.bak.${Date.now()}`],
-            toolName: "access_pam_configure",
-          });
-
-          // Read current file content
-          const currentResult = await executeCommand({
-            command: "sudo",
-            args: ["cat", targetFile],
-            toolName: "access_pam_configure",
-          });
-
-          let currentContent = currentResult.exitCode === 0 ? currentResult.stdout : "";
-
-          // Update each setting: replace existing or append
-          for (const line of configLines) {
-            const key = line.split(/\s*=\s*/)[0].replace(/^#\s*/, "").trim();
-            // Check if key exists (commented or uncommented)
-            const keyRegex = new RegExp(`^#?\\s*${key}(\\s*=|\\s|$)`, "m");
-            if (keyRegex.test(currentContent)) {
-              // Replace existing line
-              currentContent = currentContent.replace(
-                new RegExp(`^#?\\s*${key}(\\s*=.*|\\s*)$`, "m"),
-                line
-              );
-            } else {
-              // Append
-              currentContent += `\n${line}`;
-            }
-          }
-
-          // Write the updated content using sudo tee
-          await executeCommand({
-            command: "sudo",
-            args: ["tee", targetFile],
-            toolName: "access_pam_configure",
-            timeout: getToolTimeout("access_pam_configure"),
-            stdin: currentContent,
-          });
-
-          const entry = createChangeEntry({
-            tool: "access_pam_configure",
-            action: "Configure pam_pwquality",
-            target: targetFile,
-            after: JSON.stringify(merged),
-            dryRun: false,
-            success: true,
-          });
-          logChange(entry);
-
-          return {
-            content: [
-              createTextContent(
-                `pam_pwquality configured in ${targetFile}:\n\n` +
-                  configLines.map((l) => `  ${l}`).join("\n")
-              ),
-            ],
-          };
-        }
-
-        // module === "faillock"
-        const defaults = {
-          deny: 5,
-          unlock_time: 900,
-          fail_interval: 900,
-        };
-
-        const merged = {
-          deny: settings?.deny ?? defaults.deny,
-          unlock_time: settings?.unlock_time ?? defaults.unlock_time,
-          fail_interval: settings?.fail_interval ?? defaults.fail_interval,
-        };
-
-        const targetFile = (await getDistroAdapter()).paths.pamAuth;
-        const failArgs = `deny=${merged.deny} unlock_time=${merged.unlock_time} fail_interval=${merged.fail_interval}`;
-        const preLine = `auth    required    pam_faillock.so preauth silent ${failArgs}`;
-        const authLine = `auth    [default=die] pam_faillock.so authfail ${failArgs}`;
-
-        if (isDryRun) {
-          const entry = createChangeEntry({
-            tool: "access_pam_configure",
-            action: "[DRY-RUN] Configure pam_faillock",
-            target: targetFile,
-            after: JSON.stringify(merged),
-            dryRun: true,
-            success: true,
-          });
-          logChange(entry);
-
-          return {
-            content: [
-              createTextContent(
-                `[DRY-RUN] Would add/update pam_faillock.so in ${targetFile}:\n\n` +
-                  `  ${preLine}\n  ${authLine}\n\n` +
-                  `Settings: ${JSON.stringify(merged)}`
-              ),
-            ],
-          };
-        }
-
-        // Backup the target file
-        await executeCommand({
-          command: "sudo",
-          args: ["cp", targetFile, `${targetFile}.bak.${Date.now()}`],
-          toolName: "access_pam_configure",
-        });
-
-        // Remove existing pam_faillock lines first
-        await executeCommand({
-          command: "sudo",
-          args: [
-            "sed",
-            "-i",
-            "/pam_faillock\\.so/d",
-            targetFile,
-          ],
-          toolName: "access_pam_configure",
-        });
-
-        // Insert preauth line before pam_unix.so auth line
-        await executeCommand({
-          command: "sudo",
-          args: [
-            "sed",
-            "-i",
-            `0,/pam_unix\\.so/s|.*pam_unix\\.so.*|${preLine}\\n&|`,
-            targetFile,
-          ],
-          toolName: "access_pam_configure",
-        });
-
-        // Insert authfail line after pam_unix.so auth line
-        await executeCommand({
-          command: "sudo",
-          args: [
-            "sed",
-            "-i",
-            `0,/pam_unix\\.so/{/pam_unix\\.so/a\\${authLine}}`,
-            targetFile,
-          ],
-          toolName: "access_pam_configure",
-        });
-
-        const entry = createChangeEntry({
-          tool: "access_pam_configure",
-          action: "Configure pam_faillock",
-          target: targetFile,
-          after: JSON.stringify(merged),
-          dryRun: false,
-          success: true,
-        });
-        logChange(entry);
-
-        return {
-          content: [
-            createTextContent(
-              `pam_faillock configured in ${targetFile}:\n\n` +
-                `  ${preLine}\n  ${authLine}\n\n` +
-                `Settings: ${JSON.stringify(merged)}`
-            ),
-          ],
-        };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
-
-  // ── 9. access_restrict_shell ─────────────────────────────────────────
+  // ── 6. access_restrict_shell (kept as-is) ─────────────────────────────────
 
   server.tool(
     "access_restrict_shell",
