@@ -7,9 +7,10 @@
  * `KALI_DEFENSE_AUTO_INSTALL=true`.
  *
  * Design constraints:
- *   - Uses `execFileSync` from `node:child_process` directly (NOT the
- *     executor) to avoid circular dependencies with `sudo-session`.
- *   - Every `execFileSync` call is wrapped in try/catch — install failures
+ *   - Uses `execFileSafe` from `spawn-safe.ts` (NOT the executor) to avoid
+ *     circular dependencies with `sudo-session`. spawn-safe enforces the
+ *     command allowlist and `shell: false` automatically.
+ *   - Every `execFileSafe` call is wrapped in try/catch — install failures
  *     must NEVER crash the server.
  *   - Logs exclusively to stderr (`console.error`) because the MCP server
  *     uses stdio for JSON-RPC transport.
@@ -17,11 +18,13 @@
  * @module auto-installer
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSafe } from "./spawn-safe.js";
 import { getConfig } from "./config.js";
 import { detectDistro, type DistroInfo, type PackageManagerName } from "./distro.js";
 import { DEFENSIVE_TOOLS, type ToolRequirement } from "./installer.js";
 import { SudoSession } from "./sudo-session.js";
+import { resolveCommand } from "./command-allowlist.js";
+import { logChange, createChangeEntry } from "./changelog.js";
 import type { ToolManifest } from "./tool-registry.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -77,6 +80,53 @@ const LIB_DEV_PATTERNS: Record<string, (lib: string) => string[]> = {
   alpine: (lib) => [`${lib}-dev`, `lib${lib}-dev`],
 };
 
+// ── Approved packages allowlist ──────────────────────────────────────────────
+
+/**
+ * Build a Set of all approved package names derived from DEFENSIVE_TOOLS.
+ * Only packages in this set may be installed by the auto-installer.
+ */
+function buildApprovedPackages(): Set<string> {
+  const approved = new Set<string>();
+  for (const tool of DEFENSIVE_TOOLS) {
+    const pkgs = tool.packages as Record<string, string | undefined>;
+    for (const value of Object.values(pkgs)) {
+      if (value) approved.add(value);
+    }
+  }
+  return approved;
+}
+
+let _approvedPackages: Set<string> | null = null;
+
+/** Get the lazily-built approved packages allowlist. */
+function getApprovedPackages(): Set<string> {
+  if (!_approvedPackages) {
+    _approvedPackages = buildApprovedPackages();
+  }
+  return _approvedPackages;
+}
+
+// ── Package name validation ──────────────────────────────────────────────────
+
+/**
+ * Validate that a package name contains only safe characters.
+ * Allowed: alphanumeric, hyphens, dots, plus signs, colons (for arch qualifiers).
+ * No shell metacharacters, no path separators, no spaces.
+ * Max length: 128 characters.
+ */
+export function validatePackageName(name: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9.+\-:]{0,127}$/.test(name);
+}
+
+/**
+ * Validate a pip/npm module name for safe characters.
+ * Slightly more permissive than system package names — also allows underscores.
+ */
+function validateModuleName(name: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,127}$/.test(name);
+}
+
 // ── Helper: DEFENSIVE_TOOLS lookup by binary name ────────────────────────────
 
 /** Build a lookup map from binary → ToolRequirement on first access. */
@@ -101,6 +151,10 @@ function isRoot(): boolean {
 /**
  * Run a command synchronously, optionally with sudo.
  * Returns `{ stdout, success }`.
+ *
+ * Uses execFileSafe for allowlist enforcement and shell: false.
+ * The target command inside sudo args is still resolved manually
+ * since execFileSafe only resolves the top-level command.
  */
 function execWithSudo(
   args: string[],
@@ -109,25 +163,32 @@ function execWithSudo(
   const timeout = options?.timeoutMs ?? 300_000;
   const needsSudo = (options?.useSudo ?? true) && !isRoot();
 
-  let command: string;
-  let cmdArgs: string[];
-
   if (needsSudo) {
-    command = "sudo";
+    // Resolve the target command via allowlist (sudo itself is resolved by execFileSafe)
+    const resolvedTargetCmd = resolveCommand(args[0]);
+    const resolvedArgs = [resolvedTargetCmd, ...args.slice(1)];
+
     const session = SudoSession.getInstance();
-    const password = session.getPassword();
+    const passwordBuf = session.getPassword(); // Returns Buffer | null (a copy)
     // Use -S to read password from stdin, -p '' to suppress prompt
-    cmdArgs = ["-S", "-p", "", ...args];
+    const cmdArgs = ["-S", "-p", "", ...resolvedArgs];
+
+    let inputBuf: Buffer | undefined;
+    if (passwordBuf) {
+      const newline = Buffer.from("\n");
+      inputBuf = Buffer.concat([passwordBuf, newline]);
+      passwordBuf.fill(0); // Zero the password copy immediately
+    }
 
     try {
-      const stdout = execFileSync(command, cmdArgs, {
+      const stdout = execFileSafe("sudo", cmdArgs, {
         timeout,
         maxBuffer: 10 * 1024 * 1024,
         encoding: "utf-8",
-        input: password ? password + "\n" : undefined,
-        stdio: password ? ["pipe", "pipe", "pipe"] : ["inherit", "pipe", "pipe"],
+        input: inputBuf,
+        stdio: inputBuf ? ["pipe", "pipe", "pipe"] : ["inherit", "pipe", "pipe"],
       });
-      return { stdout: stdout ?? "", success: true, stderr: "" };
+      return { stdout: (stdout ?? "") as string, success: true, stderr: "" };
     } catch (err: unknown) {
       const execErr = err as { stdout?: string; stderr?: string };
       return {
@@ -135,20 +196,20 @@ function execWithSudo(
         success: false,
         stderr: execErr.stderr ?? String(err),
       };
+    } finally {
+      // Zero the input buffer after use regardless of success/failure
+      if (inputBuf) inputBuf.fill(0);
     }
   } else {
-    // Running as root — execute directly
-    command = args[0];
-    cmdArgs = args.slice(1);
-
+    // Running as root — execute directly; execFileSafe resolves via allowlist
     try {
-      const stdout = execFileSync(command, cmdArgs, {
+      const stdout = execFileSafe(args[0], args.slice(1), {
         timeout,
         maxBuffer: 10 * 1024 * 1024,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       });
-      return { stdout: stdout ?? "", success: true, stderr: "" };
+      return { stdout: (stdout ?? "") as string, success: true, stderr: "" };
     } catch (err: unknown) {
       const execErr = err as { stdout?: string; stderr?: string };
       return {
@@ -162,6 +223,7 @@ function execWithSudo(
 
 /**
  * Run a command synchronously WITHOUT sudo.
+ * execFileSafe handles allowlist resolution and shell: false.
  */
 function execSimple(
   command: string,
@@ -169,14 +231,14 @@ function execSimple(
   options?: { timeoutMs?: number; input?: string },
 ): { stdout: string; success: boolean; stderr: string } {
   try {
-    const stdout = execFileSync(command, args, {
+    const stdout = execFileSafe(command, args, {
       timeout: options?.timeoutMs ?? 30_000,
       maxBuffer: 10 * 1024 * 1024,
       encoding: "utf-8",
       input: options?.input,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    return { stdout: stdout ?? "", success: true, stderr: "" };
+    return { stdout: (stdout ?? "") as string, success: true, stderr: "" };
   } catch (err: unknown) {
     const execErr = err as { stdout?: string; stderr?: string };
     return {
@@ -191,7 +253,7 @@ function execSimple(
 
 function binaryAvailable(binary: string): boolean {
   try {
-    execFileSync("which", [binary], {
+    execFileSafe("which", [binary], {
       timeout: 5_000,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -239,6 +301,12 @@ export class AutoInstaller {
   static instance(): AutoInstaller {
     if (!AutoInstaller._instance) {
       AutoInstaller._instance = new AutoInstaller();
+      // Fix E: Warn when auto-install is enabled
+      if (AutoInstaller._instance.isEnabled()) {
+        console.error(
+          "[auto-install] ⚠ Auto-installation is ENABLED. Packages will be installed with sudo when missing dependencies are detected.",
+        );
+      }
     }
     return AutoInstaller._instance;
   }
@@ -399,20 +467,73 @@ export class AutoInstaller {
       };
     }
 
-    // Step 1: Look up in DEFENSIVE_TOOLS
+    // Step 1: Look up in DEFENSIVE_TOOLS — only approved packages can be installed
     const lookup = getBinaryLookup();
     const toolReq = lookup.get(binary);
-    let packageName: string;
 
-    if (toolReq) {
-      // Resolve distro-specific package name
-      packageName =
-        (toolReq.packages as Record<string, string | undefined>)[distro.family] ??
-        toolReq.packages.fallback ??
-        binary;
-    } else {
-      // Fallback: use binary name as package name
-      packageName = binary;
+    if (!toolReq) {
+      // Binary not in approved package list — refuse to install
+      console.error(
+        `[auto-install] ⚠ Binary "${binary}" not in approved package list — skipping auto-install`,
+      );
+      return {
+        dependency: binary,
+        type: "binary",
+        method: "system-package",
+        success: false,
+        message: `Binary "${binary}" is not in the approved DEFENSIVE_TOOLS list. Auto-install refused.`,
+        duration: Date.now() - start,
+      };
+    }
+
+    // Resolve distro-specific package name (no raw binary name fallback)
+    const packageName: string =
+      (toolReq.packages as Record<string, string | undefined>)[distro.family] ??
+      toolReq.packages.fallback ??
+      "";
+
+    if (!packageName) {
+      console.error(
+        `[auto-install] ⚠ No package mapping for binary "${binary}" on ${distro.family} — skipping`,
+      );
+      return {
+        dependency: binary,
+        type: "binary",
+        method: "system-package",
+        success: false,
+        message: `No package mapping for "${binary}" on distro family "${distro.family}"`,
+        duration: Date.now() - start,
+      };
+    }
+
+    // Validate package name for safe characters
+    if (!validatePackageName(packageName)) {
+      console.error(
+        `[auto-install] ⚠ Invalid package name "${packageName}" for binary "${binary}" — skipping`,
+      );
+      return {
+        dependency: binary,
+        type: "binary",
+        method: "system-package",
+        success: false,
+        message: `Package name "${packageName}" contains invalid characters. Auto-install refused.`,
+        duration: Date.now() - start,
+      };
+    }
+
+    // Verify package is in the approved allowlist
+    if (!getApprovedPackages().has(packageName)) {
+      console.error(
+        `[auto-install] ⚠ Package "${packageName}" not in approved allowlist — skipping`,
+      );
+      return {
+        dependency: binary,
+        type: "binary",
+        method: "system-package",
+        success: false,
+        message: `Package "${packageName}" is not in the approved packages allowlist.`,
+        duration: Date.now() - start,
+      };
     }
 
     console.error(
@@ -459,6 +580,16 @@ export class AutoInstaller {
       console.error(
         `[auto-installer] ✓ Installed '${binary}' via ${distro.packageManager} (${elapsed}s)`,
       );
+      // Log successful installation to the audit changelog
+      logChange(createChangeEntry({
+        tool: "auto-installer",
+        action: `Installed system package: ${packageName}`,
+        target: packageName,
+        before: "not installed",
+        after: `installed via ${distro.packageManager}`,
+        dryRun: false,
+        success: true,
+      }));
     } else {
       console.error(
         `[auto-installer] ⚠ Package '${packageName}' installed but binary '${binary}' not found in PATH`,
@@ -503,6 +634,21 @@ export class AutoInstaller {
       };
     }
 
+    // Validate module name for safe characters
+    if (!validateModuleName(module)) {
+      console.error(
+        `[auto-install] ⚠ Invalid Python module name "${module}" — skipping`,
+      );
+      return {
+        dependency: module,
+        type: "python-module",
+        method: "pip",
+        success: false,
+        message: `Python module name "${module}" contains invalid characters. Auto-install refused.`,
+        duration: Date.now() - start,
+      };
+    }
+
     console.error(`[auto-installer] Installing Python module '${module}' via ${pip}...`);
 
     // Try user-site install first (no sudo needed)
@@ -540,6 +686,16 @@ export class AutoInstaller {
 
     if (verifyResult.success) {
       console.error(`[auto-installer] ✓ Installed Python module '${module}' (${elapsed}s)`);
+      // Log successful installation to the audit changelog
+      logChange(createChangeEntry({
+        tool: "auto-installer",
+        action: `Installed Python module: ${module}`,
+        target: module,
+        before: "not installed",
+        after: `installed via ${pip}`,
+        dryRun: false,
+        success: true,
+      }));
     } else {
       console.error(
         `[auto-installer] ⚠ pip install succeeded for '${module}' but import verification failed`,
@@ -576,6 +732,21 @@ export class AutoInstaller {
         method: "npm",
         success: false,
         message: "npm not found. Install Node.js/npm first.",
+        duration: Date.now() - start,
+      };
+    }
+
+    // Validate npm package name for safe characters
+    if (!validateModuleName(pkg)) {
+      console.error(
+        `[auto-install] ⚠ Invalid npm package name "${pkg}" — skipping`,
+      );
+      return {
+        dependency: pkg,
+        type: "npm-package",
+        method: "npm",
+        success: false,
+        message: `npm package name "${pkg}" contains invalid characters. Auto-install refused.`,
         duration: Date.now() - start,
       };
     }
@@ -620,6 +791,17 @@ export class AutoInstaller {
         `[auto-installer] ✓ npm package '${pkg}' installed (binary may differ from package name)`,
       );
     }
+
+    // Log successful npm installation to the audit changelog
+    logChange(createChangeEntry({
+      tool: "auto-installer",
+      action: `Installed npm package: ${pkg}`,
+      target: pkg,
+      before: "not installed",
+      after: "installed via npm (global)",
+      dryRun: false,
+      success: true,
+    }));
 
     return {
       dependency: pkg,
@@ -668,6 +850,14 @@ export class AutoInstaller {
     let lastError = "";
 
     for (const candidate of candidates) {
+      // Validate candidate package name for safe characters
+      if (!validatePackageName(candidate)) {
+        console.error(
+          `[auto-install] ⚠ Invalid library package name "${candidate}" — skipping candidate`,
+        );
+        continue;
+      }
+
       const installArgs = getInstallArgs(distro.packageManager, candidate);
       if (installArgs.length === 0) continue;
 
@@ -679,6 +869,16 @@ export class AutoInstaller {
         console.error(
           `[auto-installer] ✓ Installed library '${lib}' (package: ${candidate})`,
         );
+        // Log successful library installation to the audit changelog
+        logChange(createChangeEntry({
+          tool: "auto-installer",
+          action: `Installed library package: ${candidate}`,
+          target: candidate,
+          before: "not installed",
+          after: `installed via ${distro.packageManager}`,
+          dryRun: false,
+          success: true,
+        }));
         break;
       }
       lastError = result.stderr.slice(0, 200);

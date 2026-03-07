@@ -1,8 +1,8 @@
 /**
- * Secrets management tools for Kali Defense MCP Server.
+ * Secrets tools for Kali Defense MCP Server.
  *
- * Registers 3 tools: secrets_scan, secrets_env_audit,
- * secrets_ssh_key_sprawl.
+ * Registers 4 tools: secrets_scan, secrets_env_audit,
+ * secrets_ssh_key_sprawl, scan_git_history.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,11 +11,12 @@ import { executeCommand } from "../core/executor.js";
 import {
   createTextContent,
   createErrorContent,
+  formatToolOutput,
 } from "../core/parsers.js";
 
 // ── Registration entry point ───────────────────────────────────────────────
 
-export function registerSecretsManagementTools(server: McpServer): void {
+export function registerSecretsTools(server: McpServer): void {
   // ── 1. secrets_scan ────────────────────────────────────────────────────
 
   server.tool(
@@ -556,6 +557,75 @@ export function registerSecretsManagementTools(server: McpServer): void {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [createErrorContent(msg)], isError: true };
+      }
+    }
+  );
+
+  // ── 4. scan_git_history ───────────────────────────────────────────────
+
+  server.tool(
+    "scan_git_history",
+    "Scan git repository history for leaked secrets using truffleHog or gitleaks.",
+    {
+      repoPath: z.string().describe("Path to git repository"),
+      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+    },
+    async ({ repoPath, dryRun }) => {
+      try {
+        if (dryRun) {
+          return {
+            content: [formatToolOutput({
+              dryRun: true,
+              repoPath,
+              methods: ["truffleHog git", "gitleaks detect"],
+            })],
+          };
+        }
+
+        // Try truffleHog
+        const thWhich = await executeCommand({ command: "which", args: ["trufflehog"], timeout: 5000 });
+        if (thWhich.exitCode === 0) {
+          const result = await executeCommand({
+            command: "trufflehog",
+            args: ["git", `file://${repoPath}`, "--json"],
+            timeout: 300000,
+          });
+          const findings = result.stdout.trim().split("\n").filter(Boolean).map((l) => {
+            try { return JSON.parse(l); } catch { return { raw: l }; }
+          });
+          return {
+            content: [formatToolOutput({
+              tool: "trufflehog",
+              repoPath,
+              totalFindings: findings.length,
+              findings: findings.slice(0, 50),
+            })],
+          };
+        }
+
+        // Try gitleaks
+        const glWhich = await executeCommand({ command: "which", args: ["gitleaks"], timeout: 5000 });
+        if (glWhich.exitCode === 0) {
+          const result = await executeCommand({
+            command: "gitleaks",
+            args: ["detect", "--source", repoPath, "--report-format", "json", "--report-path", "/dev/stdout"],
+            timeout: 300000,
+          });
+          const findings = result.stdout.trim() ? JSON.parse(result.stdout) : [];
+          return {
+            content: [formatToolOutput({
+              tool: "gitleaks",
+              repoPath,
+              totalFindings: Array.isArray(findings) ? findings.length : 0,
+              findings: Array.isArray(findings) ? findings.slice(0, 50) : findings,
+            })],
+          };
+        }
+
+        return { content: [createErrorContent("Neither truffleHog nor gitleaks found. Install one for git history scanning.")], isError: true };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [createErrorContent(`Git history scan failed: ${msg}`)], isError: true };
       }
     }
   );

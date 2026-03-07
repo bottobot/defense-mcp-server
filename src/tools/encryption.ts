@@ -1,9 +1,8 @@
 /**
  * Encryption and cryptography tools for Kali Defense MCP Server.
  *
- * Registers 6 tools: crypto_tls_audit, crypto_cert_expiry,
- * crypto_gpg_keys, crypto_luks_manage, crypto_file_hash,
- * crypto_tls_config_audit.
+ * Registers 4 tools: crypto_tls (actions: remote_audit, cert_expiry, config_audit),
+ * crypto_gpg_keys, crypto_luks_manage, crypto_file_hash.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -70,35 +69,35 @@ function checkWeakProtocols(output: string): string[] {
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerEncryptionTools(server: McpServer): void {
-  // ── 1. crypto_tls_audit ──────────────────────────────────────────────────
+  // ── 1. crypto_tls (merged: remote_audit, cert_expiry, config_audit) ───
 
   server.tool(
-    "crypto_tls_audit",
-    "Audit SSL/TLS configuration of a remote host, checking ciphers, protocols, and certificate details",
+    "crypto_tls",
+    "TLS/SSL security: audit remote host TLS config, check certificate expiry, or audit local web server TLS configuration.",
     {
-      host: z.string().describe("Target hostname or IP address"),
-      port: z
-        .number()
-        .optional()
-        .default(443)
-        .describe("Target port (default: 443)"),
-      check_ciphers: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Check for weak cipher suites"),
-      check_protocols: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Check for weak protocol versions"),
-      check_certificate: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Check certificate details and validity"),
+      action: z.enum(["remote_audit", "cert_expiry", "config_audit"]).describe("Action: remote_audit=audit remote TLS, cert_expiry=check cert expiry, config_audit=audit local TLS config"),
+      // remote_audit params
+      host: z.string().optional().describe("Target hostname or IP address (remote_audit/cert_expiry)"),
+      port: z.number().optional().default(443).describe("Target port (remote_audit/cert_expiry)"),
+      check_ciphers: z.boolean().optional().default(true).describe("Check for weak cipher suites (remote_audit)"),
+      check_protocols: z.boolean().optional().default(true).describe("Check for weak protocol versions (remote_audit)"),
+      check_certificate: z.boolean().optional().default(true).describe("Check certificate details (remote_audit)"),
+      // cert_expiry params
+      cert_path: z.string().optional().describe("Local certificate file path to check (cert_expiry)"),
+      warn_days: z.number().optional().default(30).describe("Days before expiry to issue a warning (cert_expiry)"),
+      // config_audit params
+      service: z.enum(["apache", "nginx", "system", "all"]).optional().default("all").describe("Service to audit TLS config for (config_audit)"),
     },
-    async ({ host, port, check_ciphers, check_protocols, check_certificate }) => {
+    async (params) => {
+      const { action } = params;
+
+      switch (action) {
+      // ── remote_audit ────────────────────────────────────────────
+      case "remote_audit": {
+        const { host, port, check_ciphers, check_protocols, check_certificate } = params;
+        if (!host) {
+          return { content: [createErrorContent("host is required for remote_audit action")], isError: true };
+        }
       try {
         const validHost = validateTarget(host);
         const sections: string[] = [];
@@ -292,32 +291,11 @@ export function registerEncryptionTools(server: McpServer): void {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [createErrorContent(msg)], isError: true };
       }
-    }
-  );
+      }
 
-  // ── 2. crypto_cert_expiry ────────────────────────────────────────────────
-
-  server.tool(
-    "crypto_cert_expiry",
-    "Check SSL/TLS certificate expiry dates for local files or remote hosts",
-    {
-      cert_path: z
-        .string()
-        .optional()
-        .describe("Local certificate file path to check"),
-      host: z.string().optional().describe("Remote host to check"),
-      port: z
-        .number()
-        .optional()
-        .default(443)
-        .describe("Remote port (default: 443)"),
-      warn_days: z
-        .number()
-        .optional()
-        .default(30)
-        .describe("Days before expiry to issue a warning"),
-    },
-    async ({ cert_path, host, port, warn_days }) => {
+      // ── cert_expiry ─────────────────────────────────────────────
+      case "cert_expiry": {
+        const { cert_path, host, port, warn_days } = params;
       try {
         if (!cert_path && !host) {
           return {
@@ -474,10 +452,203 @@ export function registerEncryptionTools(server: McpServer): void {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [createErrorContent(msg)], isError: true };
       }
+      }
+
+      // ── config_audit ────────────────────────────────────────────
+      case "config_audit": {
+        const { service } = params;
+      try {
+        const sections: string[] = [];
+        sections.push("🔍 TLS Configuration Audit");
+        sections.push("=".repeat(40));
+
+        const findings: Array<{ level: string; msg: string }> = [];
+
+        // Apache audit
+        if (service === "apache" || service === "all") {
+          sections.push("\n── Apache TLS Configuration ──");
+
+          const apacheResult = await executeCommand({
+            command: "find",
+            args: ["/etc/apache2/sites-enabled/", "-type", "f", "-name", "*.conf"],
+            toolName: "crypto_tls",
+            timeout: 10000,
+          });
+
+          if (apacheResult.exitCode === 0 && apacheResult.stdout.trim()) {
+            const confFiles = apacheResult.stdout.trim().split("\n").filter((f) => f.trim());
+
+            for (const confFile of confFiles) {
+              const catResult = await executeCommand({
+                command: "cat",
+                args: [confFile.trim()],
+                toolName: "crypto_tls",
+                timeout: 5000,
+              });
+
+              if (catResult.exitCode === 0) {
+                const content = catResult.stdout;
+                sections.push(`\n  File: ${confFile.trim()}`);
+
+                const protoMatch = content.match(/SSLProtocol\s+(.+)/);
+                if (protoMatch) {
+                  sections.push(`  SSLProtocol: ${protoMatch[1].trim()}`);
+                  const proto = protoMatch[1];
+                  if (proto.includes("SSLv3") || proto.includes("TLSv1 ") || proto.includes("TLSv1.0") || proto.includes("TLSv1.1")) {
+                    findings.push({ level: "CRITICAL", msg: `${confFile}: Weak protocol in SSLProtocol: ${protoMatch[1].trim()}` });
+                  }
+                }
+
+                const cipherMatch = content.match(/SSLCipherSuite\s+(.+)/);
+                if (cipherMatch) {
+                  sections.push(`  SSLCipherSuite: ${cipherMatch[1].trim().substring(0, 80)}...`);
+                  const weakCiphers = checkWeakCiphers(cipherMatch[1]);
+                  if (weakCiphers.length > 0) {
+                    findings.push({ level: "WARNING", msg: `${confFile}: Weak ciphers found: ${weakCiphers.join(", ")}` });
+                  }
+                }
+              }
+            }
+          } else {
+            sections.push("  Apache not installed or no sites-enabled configuration found.");
+          }
+        }
+
+        // Nginx audit
+        if (service === "nginx" || service === "all") {
+          sections.push("\n── Nginx TLS Configuration ──");
+
+          const nginxResult = await executeCommand({
+            command: "find",
+            args: ["/etc/nginx/", "-type", "f", "-name", "*.conf"],
+            toolName: "crypto_tls",
+            timeout: 10000,
+          });
+
+          if (nginxResult.exitCode === 0 && nginxResult.stdout.trim()) {
+            const confFiles = nginxResult.stdout.trim().split("\n").filter((f) => f.trim());
+
+            for (const confFile of confFiles) {
+              const catResult = await executeCommand({
+                command: "cat",
+                args: [confFile.trim()],
+                toolName: "crypto_tls",
+                timeout: 5000,
+              });
+
+              if (catResult.exitCode === 0) {
+                const content = catResult.stdout;
+
+                if (content.includes("ssl_protocols") || content.includes("ssl_ciphers")) {
+                  sections.push(`\n  File: ${confFile.trim()}`);
+
+                  const protoMatch = content.match(/ssl_protocols\s+([^;]+)/);
+                  if (protoMatch) {
+                    sections.push(`  ssl_protocols: ${protoMatch[1].trim()}`);
+                    const proto = protoMatch[1];
+                    if (proto.includes("SSLv3") || proto.includes("TLSv1 ") || proto.includes("TLSv1.0") || proto.includes("TLSv1.1")) {
+                      findings.push({ level: "CRITICAL", msg: `${confFile}: Weak protocol in ssl_protocols: ${protoMatch[1].trim()}` });
+                    }
+                  }
+
+                  const cipherMatch = content.match(/ssl_ciphers\s+['"]?([^;'"]+)/);
+                  if (cipherMatch) {
+                    sections.push(`  ssl_ciphers: ${cipherMatch[1].trim().substring(0, 80)}...`);
+                    const weakCiphers = checkWeakCiphers(cipherMatch[1]);
+                    if (weakCiphers.length > 0) {
+                      findings.push({ level: "WARNING", msg: `${confFile}: Weak ciphers: ${weakCiphers.join(", ")}` });
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            sections.push("  Nginx not installed or no configuration found.");
+          }
+        }
+
+        // System-wide crypto audit
+        if (service === "system" || service === "all") {
+          sections.push("\n── System-Wide Crypto Configuration ──");
+
+          const opensslResult = await executeCommand({
+            command: "cat",
+            args: ["/etc/ssl/openssl.cnf"],
+            toolName: "crypto_tls",
+            timeout: 5000,
+          });
+
+          if (opensslResult.exitCode === 0) {
+            sections.push("\n  OpenSSL config (/etc/ssl/openssl.cnf): Found");
+
+            const minProtoMatch = opensslResult.stdout.match(/MinProtocol\s*=\s*(\S+)/);
+            if (minProtoMatch) sections.push(`  MinProtocol: ${minProtoMatch[1]}`);
+
+            const cipherStringMatch = opensslResult.stdout.match(/CipherString\s*=\s*(\S+)/);
+            if (cipherStringMatch) sections.push(`  CipherString: ${cipherStringMatch[1]}`);
+          } else {
+            sections.push("  OpenSSL config: Not found at /etc/ssl/openssl.cnf");
+          }
+
+          const policyResult = await executeCommand({
+            command: "cat",
+            args: ["/etc/crypto-policies/config"],
+            toolName: "crypto_tls",
+            timeout: 5000,
+          });
+
+          if (policyResult.exitCode === 0 && policyResult.stdout.trim()) {
+            sections.push(`\n  System crypto policy: ${policyResult.stdout.trim()}`);
+            const policy = policyResult.stdout.trim().toUpperCase();
+            if (policy === "LEGACY" || policy === "DEFAULT") {
+              findings.push({ level: "WARNING", msg: `System crypto policy is '${policyResult.stdout.trim()}' - consider using FUTURE or FIPS` });
+            }
+          }
+
+          const versionResult = await executeCommand({
+            command: "openssl",
+            args: ["version"],
+            toolName: "crypto_tls",
+            timeout: 5000,
+          });
+
+          if (versionResult.exitCode === 0) {
+            sections.push(`\n  OpenSSL version: ${versionResult.stdout.trim()}`);
+          }
+        }
+
+        // Summary
+        sections.push("\n── Findings Summary ──");
+        if (findings.length === 0) {
+          sections.push("  ✅ No critical TLS configuration issues found.");
+        } else {
+          const criticals = findings.filter((f) => f.level === "CRITICAL");
+          const warnings = findings.filter((f) => f.level === "WARNING");
+
+          if (criticals.length > 0) {
+            sections.push(`\n  ⛔ Critical (${criticals.length}):`);
+            for (const f of criticals) sections.push(`    - ${f.msg}`);
+          }
+          if (warnings.length > 0) {
+            sections.push(`\n  ⚠️ Warnings (${warnings.length}):`);
+            for (const f of warnings) sections.push(`    - ${f.msg}`);
+          }
+        }
+
+        return { content: [createTextContent(sections.join("\n"))] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [createErrorContent(msg)], isError: true };
+      }
+      }
+
+      default:
+        return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
+      }
     }
   );
 
-  // ── 3. crypto_gpg_keys ───────────────────────────────────────────────────
+  // ── 2. crypto_gpg_keys (kept as-is) ──────────────────────────────────────
 
   server.tool(
     "crypto_gpg_keys",
@@ -704,7 +875,7 @@ export function registerEncryptionTools(server: McpServer): void {
     }
   );
 
-  // ── 4. crypto_luks_manage ────────────────────────────────────────────────
+  // ── 3. crypto_luks_manage (kept as-is) ───────────────────────────────────
 
   server.tool(
     "crypto_luks_manage",
@@ -958,7 +1129,7 @@ export function registerEncryptionTools(server: McpServer): void {
     }
   );
 
-  // ── 5. crypto_file_hash ──────────────────────────────────────────────────
+  // ── 4. crypto_file_hash (kept as-is) ─────────────────────────────────────
 
   server.tool(
     "crypto_file_hash",
@@ -1057,291 +1228,4 @@ export function registerEncryptionTools(server: McpServer): void {
     }
   );
 
-  // ── 6. crypto_tls_config_audit ───────────────────────────────────────────
-
-  server.tool(
-    "crypto_tls_config_audit",
-    "Audit system TLS configuration for web servers and system-wide crypto policies",
-    {
-      service: z
-        .enum(["apache", "nginx", "system", "all"])
-        .optional()
-        .default("all")
-        .describe("Service to audit TLS config for (default: all)"),
-    },
-    async ({ service }) => {
-      try {
-        const sections: string[] = [];
-        sections.push("🔍 TLS Configuration Audit");
-        sections.push("=".repeat(40));
-
-        const findings: Array<{ level: string; msg: string }> = [];
-
-        // Apache audit
-        if (service === "apache" || service === "all") {
-          sections.push("\n── Apache TLS Configuration ──");
-
-          const apacheResult = await executeCommand({
-            command: "find",
-            args: [
-              "/etc/apache2/sites-enabled/",
-              "-type",
-              "f",
-              "-name",
-              "*.conf",
-            ],
-            toolName: "crypto_tls_config_audit",
-            timeout: 10000,
-          });
-
-          if (apacheResult.exitCode === 0 && apacheResult.stdout.trim()) {
-            const confFiles = apacheResult.stdout
-              .trim()
-              .split("\n")
-              .filter((f) => f.trim());
-
-            for (const confFile of confFiles) {
-              const catResult = await executeCommand({
-                command: "cat",
-                args: [confFile.trim()],
-                toolName: "crypto_tls_config_audit",
-                timeout: 5000,
-              });
-
-              if (catResult.exitCode === 0) {
-                const content = catResult.stdout;
-                sections.push(`\n  File: ${confFile.trim()}`);
-
-                // Check SSLProtocol
-                const protoMatch = content.match(/SSLProtocol\s+(.+)/);
-                if (protoMatch) {
-                  sections.push(`  SSLProtocol: ${protoMatch[1].trim()}`);
-                  const proto = protoMatch[1];
-                  if (
-                    proto.includes("SSLv3") ||
-                    proto.includes("TLSv1 ") ||
-                    proto.includes("TLSv1.0") ||
-                    proto.includes("TLSv1.1")
-                  ) {
-                    findings.push({
-                      level: "CRITICAL",
-                      msg: `${confFile}: Weak protocol in SSLProtocol: ${protoMatch[1].trim()}`,
-                    });
-                  }
-                }
-
-                // Check SSLCipherSuite
-                const cipherMatch = content.match(/SSLCipherSuite\s+(.+)/);
-                if (cipherMatch) {
-                  sections.push(
-                    `  SSLCipherSuite: ${cipherMatch[1].trim().substring(0, 80)}...`
-                  );
-                  const weakCiphers = checkWeakCiphers(cipherMatch[1]);
-                  if (weakCiphers.length > 0) {
-                    findings.push({
-                      level: "WARNING",
-                      msg: `${confFile}: Weak ciphers found: ${weakCiphers.join(", ")}`,
-                    });
-                  }
-                }
-              }
-            }
-          } else {
-            sections.push(
-              "  Apache not installed or no sites-enabled configuration found."
-            );
-          }
-        }
-
-        // Nginx audit
-        if (service === "nginx" || service === "all") {
-          sections.push("\n── Nginx TLS Configuration ──");
-
-          const nginxResult = await executeCommand({
-            command: "find",
-            args: [
-              "/etc/nginx/",
-              "-type",
-              "f",
-              "-name",
-              "*.conf",
-            ],
-            toolName: "crypto_tls_config_audit",
-            timeout: 10000,
-          });
-
-          if (nginxResult.exitCode === 0 && nginxResult.stdout.trim()) {
-            const confFiles = nginxResult.stdout
-              .trim()
-              .split("\n")
-              .filter((f) => f.trim());
-
-            for (const confFile of confFiles) {
-              const catResult = await executeCommand({
-                command: "cat",
-                args: [confFile.trim()],
-                toolName: "crypto_tls_config_audit",
-                timeout: 5000,
-              });
-
-              if (catResult.exitCode === 0) {
-                const content = catResult.stdout;
-
-                if (
-                  content.includes("ssl_protocols") ||
-                  content.includes("ssl_ciphers")
-                ) {
-                  sections.push(`\n  File: ${confFile.trim()}`);
-
-                  // Check ssl_protocols
-                  const protoMatch = content.match(
-                    /ssl_protocols\s+([^;]+)/
-                  );
-                  if (protoMatch) {
-                    sections.push(
-                      `  ssl_protocols: ${protoMatch[1].trim()}`
-                    );
-                    const proto = protoMatch[1];
-                    if (
-                      proto.includes("SSLv3") ||
-                      proto.includes("TLSv1 ") ||
-                      proto.includes("TLSv1.0") ||
-                      proto.includes("TLSv1.1")
-                    ) {
-                      findings.push({
-                        level: "CRITICAL",
-                        msg: `${confFile}: Weak protocol in ssl_protocols: ${protoMatch[1].trim()}`,
-                      });
-                    }
-                  }
-
-                  // Check ssl_ciphers
-                  const cipherMatch = content.match(
-                    /ssl_ciphers\s+['"]?([^;'"]+)/
-                  );
-                  if (cipherMatch) {
-                    sections.push(
-                      `  ssl_ciphers: ${cipherMatch[1].trim().substring(0, 80)}...`
-                    );
-                    const weakCiphers = checkWeakCiphers(cipherMatch[1]);
-                    if (weakCiphers.length > 0) {
-                      findings.push({
-                        level: "WARNING",
-                        msg: `${confFile}: Weak ciphers: ${weakCiphers.join(", ")}`,
-                      });
-                    }
-                  }
-                }
-              }
-            }
-          } else {
-            sections.push(
-              "  Nginx not installed or no configuration found."
-            );
-          }
-        }
-
-        // System-wide crypto audit
-        if (service === "system" || service === "all") {
-          sections.push("\n── System-Wide Crypto Configuration ──");
-
-          // Check openssl.cnf
-          const opensslResult = await executeCommand({
-            command: "cat",
-            args: ["/etc/ssl/openssl.cnf"],
-            toolName: "crypto_tls_config_audit",
-            timeout: 5000,
-          });
-
-          if (opensslResult.exitCode === 0) {
-            sections.push("\n  OpenSSL config (/etc/ssl/openssl.cnf): Found");
-
-            // Check for MinProtocol
-            const minProtoMatch = opensslResult.stdout.match(
-              /MinProtocol\s*=\s*(\S+)/
-            );
-            if (minProtoMatch) {
-              sections.push(
-                `  MinProtocol: ${minProtoMatch[1]}`
-              );
-            }
-
-            // Check for CipherString
-            const cipherStringMatch = opensslResult.stdout.match(
-              /CipherString\s*=\s*(\S+)/
-            );
-            if (cipherStringMatch) {
-              sections.push(
-                `  CipherString: ${cipherStringMatch[1]}`
-              );
-            }
-          } else {
-            sections.push("  OpenSSL config: Not found at /etc/ssl/openssl.cnf");
-          }
-
-          // Check crypto-policies (RHEL/Fedora)
-          const policyResult = await executeCommand({
-            command: "cat",
-            args: ["/etc/crypto-policies/config"],
-            toolName: "crypto_tls_config_audit",
-            timeout: 5000,
-          });
-
-          if (policyResult.exitCode === 0 && policyResult.stdout.trim()) {
-            sections.push(
-              `\n  System crypto policy: ${policyResult.stdout.trim()}`
-            );
-            const policy = policyResult.stdout.trim().toUpperCase();
-            if (policy === "LEGACY" || policy === "DEFAULT") {
-              findings.push({
-                level: "WARNING",
-                msg: `System crypto policy is '${policyResult.stdout.trim()}' - consider using FUTURE or FIPS`,
-              });
-            }
-          }
-
-          // Check OpenSSL version
-          const versionResult = await executeCommand({
-            command: "openssl",
-            args: ["version"],
-            toolName: "crypto_tls_config_audit",
-            timeout: 5000,
-          });
-
-          if (versionResult.exitCode === 0) {
-            sections.push(
-              `\n  OpenSSL version: ${versionResult.stdout.trim()}`
-            );
-          }
-        }
-
-        // Summary
-        sections.push("\n── Findings Summary ──");
-        if (findings.length === 0) {
-          sections.push("  ✅ No critical TLS configuration issues found.");
-        } else {
-          const criticals = findings.filter((f) => f.level === "CRITICAL");
-          const warnings = findings.filter((f) => f.level === "WARNING");
-
-          if (criticals.length > 0) {
-            sections.push(`\n  ⛔ Critical (${criticals.length}):`);
-            for (const f of criticals) {
-              sections.push(`    - ${f.msg}`);
-            }
-          }
-          if (warnings.length > 0) {
-            sections.push(`\n  ⚠️ Warnings (${warnings.length}):`);
-            for (const f of warnings) {
-              sections.push(`    - ${f.msg}`);
-            }
-          }
-        }
-
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
 }

@@ -238,9 +238,22 @@ function createWrappedHandler(
   ctx: WrappedToolContext,
 ): (...cbArgs: unknown[]) => Promise<unknown> {
   return async (...callbackArgs: unknown[]): Promise<unknown> => {
+    // Extract params from callback args for safeguard checks.
+    // MCP SDK tool handler signature: (params, extra) — params is always first.
+    const toolParams =
+      callbackArgs.length > 0 &&
+      callbackArgs[0] != null &&
+      typeof callbackArgs[0] === "object" &&
+      !Array.isArray(callbackArgs[0])
+        ? (callbackArgs[0] as Record<string, unknown>)
+        : undefined;
+
     // ── Run pre-flight with error safety ─────────────────────────────
     try {
-      const result = await ctx.preflightEngine.runPreflight(toolName);
+      const result = await ctx.preflightEngine.runPreflight(
+        toolName,
+        toolParams,
+      );
 
       if (!result.passed) {
         // ── Check if failure is sudo-related → return elevation prompt ──

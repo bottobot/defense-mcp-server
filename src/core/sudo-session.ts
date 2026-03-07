@@ -7,18 +7,19 @@
  * to `sudo -S` via stdin piping in the executor.
  *
  * Security features:
- *   - Password stored in a Buffer (can be zeroed, not interned by V8)
+ *   - Password stored in a Buffer and remains as Buffer through the entire
+ *     stdin pipeline (never converted to a V8 string, can be zeroed)
  *   - Auto-expires after a configurable timeout (default 15 minutes)
  *   - Explicit `drop()` zeroes the buffer immediately
  *   - Process exit handler zeroes the buffer on shutdown
  *   - Validates credentials before storing (test with `sudo -S -v`)
  *   - Never logs or exposes the password in any output
  *
- * NOTE: This module uses `spawn` directly (not the executor) to avoid
- * a circular dependency, since the executor imports SudoSession.
+ * Child process spawning goes through spawn-safe.ts which enforces the
+ * command allowlist and shell: false without creating circular dependencies.
  */
 
-import { spawn } from "node:child_process";
+import { spawnSafe } from "./spawn-safe.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ export interface SudoSessionStatus {
   remainingSeconds: number | null;
 }
 
-// ── Internal helper: run a command without the executor ──────────────────────
+// ── Internal helper: run a command via spawn-safe ────────────────────────────
 
 interface SimpleResult {
   stdout: string;
@@ -45,15 +46,15 @@ function runSimple(
 ): Promise<SimpleResult> {
   return new Promise((resolve) => {
     const controller = new AbortController();
+
     let child;
     try {
-      child = spawn(command, args, {
-        shell: false,
+      child = spawnSafe(command, args, {
         signal: controller.signal,
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch {
-      resolve({ stdout: "", stderr: "spawn failed", exitCode: 1 });
+      resolve({ stdout: "", stderr: `spawn failed for: ${command}`, exitCode: 1 });
       return;
     }
 
@@ -200,10 +201,13 @@ export class SudoSession {
   }
 
   /**
-   * Returns the password for piping to sudo -S, or null if not elevated.
-   * The returned string should be used immediately and not stored.
+   * Returns a **copy** of the password Buffer for piping to sudo -S,
+   * or null if not elevated.
+   *
+   * The caller MUST zero the returned Buffer with `.fill(0)` after use.
+   * A copy is returned so the original can be zeroed independently via `drop()`.
    */
-  getPassword(): string | null {
+  getPassword(): Buffer | null {
     if (!this.passwordBuf || this.passwordBuf.length === 0) {
       return null;
     }
@@ -211,7 +215,10 @@ export class SudoSession {
       this.drop();
       return null;
     }
-    return this.passwordBuf.toString("utf-8");
+    // Return a COPY so original can be zeroed independently
+    const copy = Buffer.alloc(this.passwordBuf.length);
+    this.passwordBuf.copy(copy);
+    return copy;
   }
 
   /** Check whether we have an active elevated session. */

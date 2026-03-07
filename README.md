@@ -4,7 +4,9 @@
 >
 > This tool is designed **exclusively** for defensive security operations, system hardening, compliance auditing, and blue team activities. It is **NOT** intended for offensive security, penetration testing, exploitation, or any unauthorized access to systems. Use responsibly and only on systems you own or have explicit authorization to audit and harden.
 
-A defensive security and system hardening [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server for Linux. Originally built to leverage the defensive tools available in Kali Linux, it has since grown into a comprehensive security toolkit that works across Debian, Ubuntu, RHEL, Arch, Alpine, and more. Provides **155 defensive security tools** across **28 modules** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+A defensive security and system hardening [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) server for Linux. Originally built to leverage the defensive tools available in Kali Linux, it has since grown into a comprehensive security toolkit that works across Debian, Ubuntu, RHEL, Arch, Alpine, and more. Provides **78 defensive security tools** across **21 modules** for blue team operations, system hardening, compliance auditing, incident response, and advanced threat detection.
+
+> **v0.5.0-beta.1**: Major consolidation — 157 fine-grained tools merged into 78 action-based tools. Each tool now accepts an `action` parameter to select sub-operations. All functionality is preserved with reduced MCP registration overhead.
 
 The idea is simple: tell your AI assistant to run a full security audit, and it orchestrates dozens of checks automatically — kernel hardening, firewall policies, CIS benchmarks, open ports, user accounts, secrets scanning, and more. You get back a prioritized report of findings. From there, you can ask it to remediate issues with dry-run previews, automatic backups, and rollback support.
 
@@ -191,7 +193,7 @@ flowchart TD
     L --> K
     M --> K
     
-    K --> N["🔧 Phase 2: Register 28 Tool Modules<br/>155 defensive security tools"]
+    K --> N["🔧 Phase 2: Register 21 Tool Modules<br/>78 defensive security tools"]
     
     N --> O["📡 Phase 3: Connect MCP Transport"]
     O --> P["🛡️ Server Running"]
@@ -220,11 +222,11 @@ graph LR
     end
     
     subgraph "Dependency System"
-        DEPS["tool-dependencies.ts<br/>🗺️ Tool→Binary map<br/>155 tools mapped"]
+        DEPS["tool-dependencies.ts<br/>🗺️ Tool→Binary map<br/>78 tools mapped"]
         VALID["dependency-validator.ts<br/>✅ Startup validation<br/>🔄 Runtime checks<br/>💾 Binary cache"]
     end
     
-    subgraph "28 Tool Modules"
+    subgraph "21 Tool Modules"
         FW["firewall.ts"]
         HARD["hardening.ts"]
         IDS["ids.ts"]
@@ -253,7 +255,7 @@ graph LR
 ## Features
 
 - **🛡️ Defensive Only** — Built exclusively for blue team operations and system hardening
-- **155 Defensive Security Tools** across 28 specialized modules
+- **78 Defensive Security Tools** across 21 specialized modules
 - **🔒 Security Model** — All commands via `spawn()` with `shell: false`; 17+ input validators blocking shell metacharacters, control characters, and path traversal (`..`)
 - **🔍 Automatic Dependency Validation** — Checks all required system binaries at startup
 - **📦 Auto-Install Missing Tools** — Installs missing security tools via the system package manager
@@ -459,316 +461,34 @@ This MCP server is a **defensive security toolkit** designed for:
 
 ---
 
-## Tool Categories
+## Tool Categories (78 tools across 21 modules)
 
-| Category | Tools |
-|----------|------:|
-| Firewall Management | 12 |
-| System Hardening | 19 |
-| Intrusion Detection | 5 |
-| Logging & Monitoring | 10 |
-| Network Defense | 8 |
-| Compliance | 7 |
-| Malware Analysis | 6 |
-| Backup & Recovery | 5 |
-| Access Control | 9 |
-| Encryption & PKI | 6 |
-| Container Security | 9 |
-| Meta & Orchestration | 5 |
-| Patch Management | 4 |
-| Secrets Management | 3 |
-| Incident Response | 3 |
-| Supply Chain Security | 4 |
-| Memory Protection | 3 |
-| Drift Detection | 3 |
-| Vulnerability Intel | 3 |
-| Security Posture | 3 |
-| Secrets Scanner | 3 |
-| Zero-Trust Network | 4 |
-| Container Advanced | 4 |
-| Compliance Extended | 1 |
-| eBPF Security | 4 |
-| Automation Workflows | 4 |
-| Sudo Management | 4 |
-| Application Hardening | 4 |
-| **Total** | **155** |
+Each tool uses an `action` parameter to select sub-operations. For example, `harden_sysctl` supports `action: "get" | "set" | "audit"`.
 
-### Firewall Management (12 tools)
-
-| Tool | Description |
-|------|-------------|
-| `firewall_iptables_list` | List iptables rules with structured output |
-| `firewall_iptables_add` | Add iptables rule with rollback support |
-| `firewall_iptables_delete` | Delete iptables rule by number |
-| `firewall_ufw_status` | Show UFW firewall status |
-| `firewall_ufw_rule` | Add/delete UFW rules |
-| `firewall_save` | Save current firewall rules to file |
-| `firewall_restore` | Restore firewall rules from file |
-| `firewall_nftables_list` | List nftables ruleset |
-| `firewall_set_policy` | Set default chain policy (INPUT/FORWARD/OUTPUT) |
-| `firewall_create_chain` | Create custom iptables chain |
-| `firewall_persistence` | Manage iptables-persistent for reboot survival |
-| `firewall_policy_audit` | Audit firewall configuration for security issues |
-
-### System Hardening (19 tools)
-
-| Tool | Description |
-|------|-------------|
-| `harden_sysctl_get` | Get sysctl kernel parameter values |
-| `harden_sysctl_set` | Set sysctl parameters with persistence |
-| `harden_sysctl_audit` | Audit sysctl against CIS recommendations |
-| `harden_service_manage` | Manage systemd services |
-| `harden_service_audit` | Audit for unnecessary services |
-| `harden_file_permissions` | Audit/fix file permissions |
-| `harden_permissions_audit` | Audit critical system file permissions |
-| `harden_systemd_audit` | Score service units with systemd-analyze security |
-| `harden_kernel_security_audit` | Audit kernel security features and mitigations |
-| `harden_bootloader_audit` | Audit GRUB security configuration |
-| `harden_module_audit` | Audit kernel module blacklisting (CIS) |
-| `harden_cron_audit` | Audit cron/at access control |
-| `harden_umask_audit` | Audit default umask configuration |
-| `harden_banner_audit` | Audit login warning banners (CIS) |
-| `harden_umask_set` | Set default umask in login.defs/profile/bashrc |
-| `harden_coredump_disable` | Disable core dumps via limits/sysctl/systemd |
-| `harden_banner_set` | Set CIS-compliant login warning banners |
-| `harden_bootloader_configure` | Configure GRUB kernel parameters |
-| `harden_systemd_apply` | Apply systemd hardening overrides to a service |
-
-### Intrusion Detection (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `ids_aide_manage` | AIDE file integrity management |
-| `ids_rkhunter_scan` | Rootkit Hunter scan |
-| `ids_chkrootkit_scan` | chkrootkit rootkit scan |
-| `ids_file_integrity_check` | SHA-256 file integrity verification |
-| `ids_rootkit_summary` | Combined rootkit detection summary |
-
-### Log Analysis and Monitoring (10 tools)
-
-| Tool | Description |
-|------|-------------|
-| `log_auditd_rules` | Manage auditd rules |
-| `log_auditd_search` | Search audit logs |
-| `log_auditd_report` | Generate audit reports |
-| `log_journalctl_query` | Query systemd journal |
-| `log_fail2ban_status` | Check fail2ban status |
-| `log_fail2ban_manage` | Manage fail2ban bans |
-| `log_syslog_analyze` | Analyze syslog for security events |
-| `log_auditd_cis_rules` | Check/deploy CIS-required auditd rules |
-| `log_rotation_audit` | Audit log rotation and journald persistence |
-| `log_fail2ban_audit` | Audit fail2ban jail configurations |
-
-### Network Defense (8 tools)
-
-| Tool | Description |
-|------|-------------|
-| `netdef_connections` | List active network connections |
-| `netdef_port_scan_detect` | Detect port scanning activity |
-| `netdef_tcpdump_capture` | Capture network traffic |
-| `netdef_dns_monitor` | Monitor DNS queries |
-| `netdef_arp_monitor` | Detect ARP poisoning |
-| `netdef_open_ports_audit` | Audit listening ports |
-| `netdef_ipv6_audit` | Audit IPv6 configuration and firewall |
-| `netdef_self_scan` | nmap self-scan to discover exposed services |
-
-### Compliance and Benchmarking (7 tools)
-
-| Tool | Description |
-|------|-------------|
-| `compliance_lynis_audit` | Run Lynis security audit |
-| `compliance_oscap_scan` | OpenSCAP compliance scan |
-| `compliance_cis_check` | CIS benchmark checks |
-| `compliance_policy_evaluate` | Evaluate custom policies |
-| `compliance_report` | Generate compliance reports |
-| `compliance_cron_restrict` | Restrict cron/at access (CIS 5.1.8/5.1.9) |
-| `compliance_tmp_hardening` | Harden /tmp mount options (CIS 1.1.4) |
-
-### Malware Analysis (6 tools)
-
-| Tool | Description |
-|------|-------------|
-| `malware_clamav_scan` | ClamAV malware scan |
-| `malware_clamav_update` | Update ClamAV definitions |
-| `malware_yara_scan` | YARA rule scanning |
-| `malware_suspicious_files` | Find suspicious files (SUID, world-writable, hidden) |
-| `malware_quarantine_manage` | Manage quarantined files |
-| `malware_webshell_detect` | Detect web shells in web directories |
-
-### Backup and Recovery (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `backup_config_files` | Backup critical configs |
-| `backup_system_state` | System state snapshot |
-| `backup_restore` | Restore from backup by ID |
-| `backup_verify` | Verify backup integrity |
-| `backup_list` | List all backups |
-
-### Access Control (9 tools)
-
-| Tool | Description |
-|------|-------------|
-| `access_ssh_audit` | Audit SSH configuration |
-| `access_ssh_harden` | Apply SSH hardening |
-| `access_sudo_audit` | Audit sudo configuration |
-| `access_user_audit` | Audit user accounts |
-| `access_password_policy` | Audit/set password policy |
-| `access_pam_audit` | Audit PAM configuration |
-| `access_ssh_cipher_audit` | Audit SSH cryptographic algorithms |
-| `access_pam_configure` | Configure PAM (pwquality/faillock) |
-| `access_restrict_shell` | Restrict user login shells |
-
-### Encryption and PKI (6 tools)
-
-| Tool | Description |
-|------|-------------|
-| `crypto_tls_audit` | Audit SSL/TLS configuration |
-| `crypto_cert_expiry` | Check certificate expiry |
-| `crypto_gpg_keys` | Manage GPG keys |
-| `crypto_luks_manage` | Manage LUKS volumes |
-| `crypto_file_hash` | Calculate file hashes |
-| `crypto_tls_config_audit` | Audit TLS configs |
-
-### Container Security (9 tools)
-
-| Tool | Description |
-|------|-------------|
-| `container_docker_audit` | Docker security audit |
-| `container_docker_bench` | Docker Bench for Security |
-| `container_apparmor_manage` | AppArmor profile management |
-| `container_selinux_manage` | SELinux management |
-| `container_namespace_check` | Namespace isolation check |
-| `container_image_scan` | Scan container images for vulnerabilities |
-| `container_seccomp_audit` | Audit Docker seccomp profiles |
-| `container_daemon_configure` | Audit/apply Docker daemon security settings |
-| `container_apparmor_install` | Install and list AppArmor profiles |
-
-### Meta and Orchestration (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `defense_check_tools` | Check tool availability |
-| `defense_suggest_workflow` | Suggest defensive workflows |
-| `defense_security_posture` | Security posture assessment |
-| `defense_change_history` | View change audit trail |
-| `defense_run_workflow` | Execute defensive workflows |
-
-### Patch Management (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `patch_update_audit` | Audit pending security updates |
-| `patch_unattended_audit` | Audit unattended-upgrades configuration |
-| `patch_integrity_check` | Verify installed package integrity |
-| `patch_kernel_audit` | Audit kernel version and update status |
-
-### Secrets Management (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `secrets_scan` | Scan filesystem for hardcoded secrets |
-| `secrets_env_audit` | Audit environment variables for secrets |
-| `secrets_ssh_key_sprawl` | Detect SSH key sprawl |
-
-### Incident Response (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `ir_volatile_collect` | Collect volatile data per RFC 3227 |
-| `ir_ioc_scan` | Scan for Indicators of Compromise |
-| `ir_timeline_generate` | Generate filesystem modification timeline |
-
-### Supply Chain Security (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `generate_sbom` | Generate Software Bill of Materials |
-| `verify_package_integrity` | Verify installed package checksums |
-| `setup_cosign_signing` | Sign container images with cosign |
-| `check_slsa_attestation` | Verify SLSA provenance attestation |
-
-### Memory Protection (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `audit_memory_protections` | Audit ASLR, PIE, RELRO, NX, stack canary |
-| `enforce_aslr` | Enable full ASLR (randomize_va_space=2) |
-| `report_exploit_mitigations` | Report SMEP, SMAP, PTI, KASLR status |
-
-### Drift Detection (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `create_baseline` | Create system configuration baseline |
-| `compare_to_baseline` | Compare current state against baseline |
-| `list_drift_alerts` | List baselines and recent changes |
-
-### Vulnerability Intelligence (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `lookup_cve` | Look up CVE details from NVD API |
-| `scan_packages_cves` | Scan installed packages for CVEs |
-| `get_patch_urgency` | Get patch urgency for a package |
-
-### Security Posture (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `calculate_security_score` | Weighted security score (0-100) |
-| `get_posture_trend` | Compare score against historical data |
-| `generate_posture_dashboard` | Structured posture dashboard |
-
-### Secrets Scanner (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `scan_for_secrets` | Directory secrets scan (truffleHog/gitleaks/grep) |
-| `audit_env_vars` | Audit environment variables for secrets |
-| `scan_git_history` | Scan git history for leaked secrets |
-
-### Zero-Trust Network (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `setup_wireguard` | Set up WireGuard VPN interface |
-| `manage_wg_peers` | Add/remove/list WireGuard peers |
-| `setup_mtls` | Generate mTLS CA and certificates |
-| `configure_microsegmentation` | Configure iptables/nftables microsegmentation |
-
-### Container Advanced (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `generate_seccomp_profile` | Generate custom seccomp profile JSON |
-| `apply_apparmor_container` | Generate/load container AppArmor profile |
-| `setup_rootless_containers` | Configure rootless container support |
-| `scan_image_trivy` | Scan container image with Trivy |
-
-### Compliance Extended (1 tool)
-
-| Tool | Description |
-|------|-------------|
-| `run_compliance_check` | Run framework checks (PCI-DSS v4/HIPAA/SOC2/ISO27001/GDPR) |
-
-### eBPF Security (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `list_ebpf_programs` | List loaded eBPF programs and maps |
-| `check_falco` | Check Falco runtime security status |
-| `deploy_falco_rules` | Deploy custom Falco rules |
-| `get_ebpf_events` | Read recent Falco events |
-
-### Automation Workflows (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `setup_scheduled_audit` | Create scheduled security audit (systemd/cron) |
-| `list_scheduled_audits` | List all scheduled audits |
-| `remove_scheduled_audit` | Remove a scheduled audit |
-| `get_audit_history` | Read historical audit job output |
+| Module | Tool Count | Tools |
+|--------|:---------:|-------|
+| Firewall (`firewall.ts`) | 5 | `firewall_iptables`, `firewall_ufw`, `firewall_persist`, `firewall_nftables_list`, `firewall_policy_audit` |
+| Hardening (`hardening.ts`) | 8 | `harden_sysctl`, `harden_service`, `harden_permissions`, `harden_systemd`, `harden_kernel`, `harden_bootloader`, `harden_misc`, `memory_protection` |
+| IDS (`ids.ts`) | 3 | `ids_aide_manage`, `ids_rootkit_scan`, `ids_file_integrity_check` |
+| Logging (`logging.ts`) | 4 | `log_auditd`, `log_journalctl_query`, `log_fail2ban`, `log_system` |
+| Network Defense (`network-defense.ts`) | 3 | `netdef_connections`, `netdef_capture`, `netdef_security_audit` |
+| Compliance (`compliance.ts`) | 7 | `compliance_lynis_audit`, `compliance_oscap_scan`, `compliance_check`, `compliance_policy_evaluate`, `compliance_report`, `compliance_cron_restrict`, `compliance_tmp_hardening` |
+| Malware (`malware.ts`) | 4 | `malware_clamav`, `malware_yara_scan`, `malware_file_scan`, `malware_quarantine_manage` |
+| Backup (`backup.ts`) | 1 | `backup` |
+| Access Control (`access-control.ts`) | 6 | `access_ssh`, `access_sudo_audit`, `access_user_audit`, `access_password_policy`, `access_pam`, `access_restrict_shell` |
+| Encryption (`encryption.ts`) | 4 | `crypto_tls`, `crypto_gpg_keys`, `crypto_luks_manage`, `crypto_file_hash` |
+| Container Security (`container-security.ts`) | 6 | `container_docker`, `container_apparmor`, `container_selinux_manage`, `container_namespace_check`, `container_image_scan`, `container_security_config` |
+| Patch Management (`patch-management.ts`) | 5 | `patch_update_audit`, `patch_unattended_audit`, `patch_integrity_check`, `patch_kernel_audit`, `vulnerability_intel` |
+| Secrets (`secrets.ts`) | 4 | `secrets_scan`, `secrets_env_audit`, `secrets_ssh_key_sprawl`, `scan_git_history` |
+| Incident Response (`incident-response.ts`) | 1 | `incident_response` |
+| Meta (`meta.ts`) | 5 | `defense_check_tools`, `defense_workflow`, `defense_change_history`, `security_posture`, `scheduled_audit` |
+| Sudo Management (`sudo-management.ts`) | 6 | `sudo_elevate`, `sudo_elevate_gui`, `sudo_status`, `sudo_drop`, `sudo_extend`, `preflight_batch_check` |
+| Supply Chain (`supply-chain-security.ts`) | 1 | `supply_chain` |
+| Drift Detection (`drift-detection.ts`) | 1 | `drift_baseline` |
+| Zero-Trust (`zero-trust-network.ts`) | 1 | `zero_trust` |
+| eBPF Security (`ebpf-security.ts`) | 2 | `list_ebpf_programs`, `falco` |
+| App Hardening (`app-hardening.ts`) | 1 | `app_harden` |
+| **Total** | **78** | |
 
 ### Sudo Management (6 tools)
 
@@ -781,15 +501,6 @@ This MCP server is a **defensive security toolkit** designed for:
 | `sudo_extend` | Extend an active sudo session timeout (default: 15 min, max: 480 min) |
 | `preflight_batch_check` | Pre-check multiple tools for sudo/dependency requirements before execution |
 
-### Application Hardening (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `app_harden_audit` | Detect and audit running applications for security risks |
-| `app_harden_recommend` | Generate hardening recommendations for a specific application |
-| `app_harden_firewall` | Generate/apply firewall rules to restrict an app's network exposure |
-| `app_harden_systemd` | Apply systemd sandboxing to an application's service unit |
-
 ---
 
 ## Dependency Auto-Installation
@@ -800,7 +511,7 @@ The server includes a built-in dependency validation system that ensures all req
 
 ```mermaid
 flowchart LR
-    A["Server Startup"] --> B["tool-dependencies.ts<br/>155 tool→binary mappings"]
+    A["Server Startup"] --> B["tool-dependencies.ts<br/>78 tool→binary mappings"]
     B --> C["dependency-validator.ts<br/>Check each binary via 'which'"]
     C --> D{"Missing<br/>binaries?"}
     D -->|No| E["✅ Ready"]
@@ -948,7 +659,7 @@ For live changes (disable dry-run):
 | Document | Purpose |
 |----------|---------|
 | [SAFEGUARDS.md](SAFEGUARDS.md) | SafeguardRegistry detection, dry-run usage, backup storage, rollback guide |
-| [TOOLS-REFERENCE.md](TOOLS-REFERENCE.md) | Alphabetical table of all 155 tools with parameters, dryRun support, OS compatibility |
+| [TOOLS-REFERENCE.md](TOOLS-REFERENCE.md) | Alphabetical table of all 78 tools with parameters, dryRun support, OS compatibility |
 | [STANDARDS.md](STANDARDS.md) | CIS, NIST SP 800-53, PCI-DSS, HIPAA, SOC 2, ISO 27001, GDPR control mapping |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture and module structure |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
@@ -957,32 +668,15 @@ For live changes (disable dry-run):
 
 ## Changelog
 
-### v0.4.0-beta.1 (2026-03-03)
+### v0.5.0-beta.1 (2026-03-06)
 
-**New Features:**
-- 🔐 `sudo_elevate_gui` — Secure two-phase GUI password elevation (password never visible to AI)
-- 📋 Getting Started guide with MCP client setup instructions
-- 🔐 Comprehensive sudo security documentation
-- 🔢 Synced all version references to beta versioning
+Major security remediation release — see [CHANGELOG.md](CHANGELOG.md) for full details.
 
-### v0.3.0 (2026-03-03)
-
-**Bug Fixes (13):**
-- 🔴 **CRITICAL**: Fixed path traversal vulnerability — `..` segments now blocked in all file path inputs
-- 🟠 **HIGH**: Fixed `ss` output parser column misalignment — network connections now show correct ports/addresses
-- 🟠 **HIGH**: Fixed `netdef_port_scan_detect` — grep pattern pipes no longer rejected by sanitizer
-- 🟠 **HIGH**: Fixed `access_pam_audit` — now reports `FILE_UNREADABLE` warnings instead of misleading "0 findings"
-- 🟡 **MEDIUM**: Fixed inconsistent security scores between `calculate_security_score` and `generate_posture_dashboard`
-- 🟡 **MEDIUM**: Fixed `log_syslog_analyze` — now uses distro-adapter paths with fallback chain
-- 🟡 **MEDIUM**: Registered `sudo_extend` tool (was documented but missing)
-- 🟡 **MEDIUM**: Fixed `ids_file_integrity_check` — `paths` parameter now accepts arrays
-- 🟡 **MEDIUM**: Fixed PIE detection in `audit_memory_protections` for modern Debian/Ubuntu
-- 🟡 **MEDIUM**: Fixed `create_baseline` — now captures 1000+ files and 17 sysctl keys via `/proc/sys/` fallback
-- 🟡 **MEDIUM**: Fixed `backup_verify` — now performs actual SHA256 integrity checking
-- 🟢 **LOW**: Fixed `firewall_nftables_list` — returns `isError: true` on failures (consistent with other firewall tools)
-- 🟢 **LOW**: Fixed `netdef_port_scan_detect` — standardized `threshold` and `timeframe` to both use `number` type
-
-**Testing:** 74 comprehensive tests across all 155 tools with 0 failures.
+**Highlights:**
+- 🔒 Security hardening: password buffer pipeline, command allowlist, auto-install hardening, secure file permissions
+- 🧪 221 tests across 6 test modules with 0 failures
+- 🔧 Tool consolidation: 157 → 78 action-based tools across 21 modules
+- 📄 Complete documentation synchronization
 
 ---
 

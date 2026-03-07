@@ -4,6 +4,12 @@
  * Maps each registered MCP tool name to the system binaries it requires.
  * Used by the dependency validator to ensure all required tools are
  * installed before execution — either at server startup or on-demand.
+ *
+ * After the v0.5.0 tool consolidation (157 → 78 tools), each entry here
+ * represents a consolidated tool whose dependencies are the UNION of all
+ * the individual tools it absorbed.  Action-specific binaries are listed
+ * as `optionalBinaries` because the tool handles missing ones gracefully
+ * based on which `action` the caller selects.
  */
 
 import { DEFENSIVE_TOOLS, type ToolRequirement } from "./installer.js";
@@ -14,7 +20,7 @@ import { DEFENSIVE_TOOLS, type ToolRequirement } from "./installer.js";
  * Dependency specification for an MCP tool.
  */
 export interface ToolDependency {
-  /** The MCP tool name (e.g. "ids_rkhunter_scan") */
+  /** The MCP tool name (e.g. "ids_rootkit_scan") */
   toolName: string;
   /** System binaries required for this tool to function */
   requiredBinaries: string[];
@@ -49,194 +55,102 @@ export function getToolRequirementForBinary(
 /**
  * Complete mapping of MCP tool names to their system binary dependencies.
  *
- * Organized by tool module for maintainability. Each entry specifies:
+ * 78 consolidated tools across 21 modules.  Each entry specifies:
  * - requiredBinaries: must be present for the tool to work at all
  * - optionalBinaries: enhance functionality but aren't strictly needed
  * - critical: if true, missing deps trigger a startup warning
  */
 export const TOOL_DEPENDENCIES: ToolDependency[] = [
-  // ── Firewall Tools ───────────────────────────────────────────────────────
+  // ── Firewall Tools (5) ────────────────────────────────────────────────────
   {
-    toolName: "firewall_iptables_list",
+    toolName: "firewall_iptables",
     requiredBinaries: ["iptables"],
+    optionalBinaries: ["ip6tables"],
     critical: true,
   },
   {
-    toolName: "firewall_iptables_add",
-    requiredBinaries: ["iptables"],
-    critical: true,
-  },
-  {
-    toolName: "firewall_iptables_delete",
-    requiredBinaries: ["iptables"],
-    critical: true,
-  },
-  {
-    toolName: "firewall_ufw_status",
+    toolName: "firewall_ufw",
     requiredBinaries: ["ufw"],
   },
   {
-    toolName: "firewall_ufw_rule",
-    requiredBinaries: ["ufw"],
-  },
-  {
-    toolName: "firewall_save",
-    requiredBinaries: ["iptables-save"],
-    optionalBinaries: ["ip6tables-save"],
-  },
-  {
-    toolName: "firewall_restore",
-    requiredBinaries: ["iptables-restore"],
-    optionalBinaries: ["ip6tables-restore"],
+    toolName: "firewall_persist",
+    requiredBinaries: [],
+    optionalBinaries: ["iptables-save", "iptables-restore", "ip6tables-save", "ip6tables-restore", "netfilter-persistent"],
   },
   {
     toolName: "firewall_nftables_list",
     requiredBinaries: ["nft"],
   },
   {
-    toolName: "firewall_set_policy",
-    requiredBinaries: ["iptables"],
-    optionalBinaries: ["ip6tables"],
-  },
-  {
-    toolName: "firewall_create_chain",
-    requiredBinaries: ["iptables"],
-    optionalBinaries: ["ip6tables"],
-  },
-  {
-    toolName: "firewall_persistence",
-    requiredBinaries: ["iptables"],
-    optionalBinaries: ["netfilter-persistent"],
-  },
-  {
     toolName: "firewall_policy_audit",
     requiredBinaries: ["iptables"],
   },
 
-  // ── Hardening Tools ──────────────────────────────────────────────────────
+  // ── Hardening Tools (8) ───────────────────────────────────────────────────
   {
-    toolName: "harden_sysctl_get",
+    toolName: "harden_sysctl",
     requiredBinaries: ["sysctl"],
     critical: true,
   },
   {
-    toolName: "harden_sysctl_set",
-    requiredBinaries: ["sysctl"],
-    critical: true,
-  },
-  {
-    toolName: "harden_sysctl_audit",
-    requiredBinaries: ["sysctl"],
-    critical: true,
-  },
-  {
-    toolName: "harden_service_manage",
+    toolName: "harden_service",
     requiredBinaries: ["systemctl"],
     critical: true,
   },
   {
-    toolName: "harden_service_audit",
-    requiredBinaries: ["systemctl"],
-    critical: true,
-  },
-  {
-    toolName: "harden_file_permissions",
+    toolName: "harden_permissions",
     requiredBinaries: ["stat"],
     optionalBinaries: ["chmod", "chown", "chgrp"],
   },
   {
-    toolName: "harden_permissions_audit",
-    requiredBinaries: ["stat"],
+    toolName: "harden_systemd",
+    requiredBinaries: [],
+    optionalBinaries: ["systemd-analyze", "systemctl"],
   },
   {
-    toolName: "harden_systemd_audit",
-    requiredBinaries: ["systemd-analyze"],
-  },
-  {
-    toolName: "harden_systemd_apply",
-    requiredBinaries: ["systemctl"],
-  },
-  {
-    toolName: "harden_kernel_security_audit",
+    toolName: "harden_kernel",
     requiredBinaries: ["cat"],
+    optionalBinaries: ["lsmod", "modprobe", "sysctl"],
   },
   {
-    toolName: "harden_bootloader_audit",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "harden_bootloader_configure",
+    toolName: "harden_bootloader",
     requiredBinaries: ["cat"],
     optionalBinaries: ["update-grub"],
   },
   {
-    toolName: "harden_module_audit",
-    requiredBinaries: ["lsmod"],
-    optionalBinaries: ["modprobe"],
-  },
-  {
-    toolName: "harden_cron_audit",
+    toolName: "harden_misc",
     requiredBinaries: ["cat"],
+    optionalBinaries: ["tee"],
   },
   {
-    toolName: "harden_umask_audit",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "harden_umask_set",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "harden_banner_audit",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "harden_banner_set",
-    requiredBinaries: ["tee"],
-  },
-  {
-    toolName: "harden_coredump_disable",
-    requiredBinaries: ["sysctl"],
+    toolName: "memory_protection",
+    requiredBinaries: [],
+    optionalBinaries: ["readelf", "checksec", "sysctl"],
   },
 
-  // ── IDS Tools ────────────────────────────────────────────────────────────
+  // ── IDS Tools (3) ─────────────────────────────────────────────────────────
   {
     toolName: "ids_aide_manage",
     requiredBinaries: ["aide"],
     critical: true,
   },
   {
-    toolName: "ids_rkhunter_scan",
-    requiredBinaries: ["rkhunter"],
+    toolName: "ids_rootkit_scan",
+    requiredBinaries: [],
+    optionalBinaries: ["rkhunter", "chkrootkit"],
     critical: true,
-  },
-  {
-    toolName: "ids_chkrootkit_scan",
-    requiredBinaries: ["chkrootkit"],
   },
   {
     toolName: "ids_file_integrity_check",
     requiredBinaries: ["sha256sum"],
   },
-  {
-    toolName: "ids_rootkit_summary",
-    requiredBinaries: [],
-    optionalBinaries: ["rkhunter", "chkrootkit"],
-  },
 
-  // ── Logging Tools ────────────────────────────────────────────────────────
+  // ── Logging Tools (4) ─────────────────────────────────────────────────────
   {
-    toolName: "log_auditd_rules",
-    requiredBinaries: ["auditctl"],
+    toolName: "log_auditd",
+    requiredBinaries: [],
+    optionalBinaries: ["auditctl", "ausearch", "aureport"],
     critical: true,
-  },
-  {
-    toolName: "log_auditd_search",
-    requiredBinaries: ["ausearch"],
-  },
-  {
-    toolName: "log_auditd_report",
-    requiredBinaries: ["aureport"],
   },
   {
     toolName: "log_journalctl_query",
@@ -244,68 +158,32 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     critical: true,
   },
   {
-    toolName: "log_fail2ban_status",
+    toolName: "log_fail2ban",
     requiredBinaries: ["fail2ban-client"],
   },
   {
-    toolName: "log_fail2ban_manage",
-    requiredBinaries: ["fail2ban-client"],
-  },
-  {
-    toolName: "log_syslog_analyze",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "log_auditd_cis_rules",
-    requiredBinaries: ["auditctl"],
-  },
-  {
-    toolName: "log_rotation_audit",
+    toolName: "log_system",
     requiredBinaries: ["cat"],
     optionalBinaries: ["logrotate"],
   },
-  {
-    toolName: "log_fail2ban_audit",
-    requiredBinaries: ["fail2ban-client"],
-  },
 
-  // ── Network Defense Tools ────────────────────────────────────────────────
+  // ── Network Defense Tools (3) ─────────────────────────────────────────────
   {
     toolName: "netdef_connections",
     requiredBinaries: ["ss"],
     critical: true,
   },
   {
-    toolName: "netdef_port_scan_detect",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "netdef_tcpdump_capture",
+    toolName: "netdef_capture",
     requiredBinaries: ["tcpdump"],
   },
   {
-    toolName: "netdef_dns_monitor",
-    requiredBinaries: ["tcpdump"],
-  },
-  {
-    toolName: "netdef_arp_monitor",
-    requiredBinaries: ["tcpdump"],
-  },
-  {
-    toolName: "netdef_open_ports_audit",
-    requiredBinaries: ["ss"],
-  },
-  {
-    toolName: "netdef_ipv6_audit",
-    requiredBinaries: ["sysctl"],
-    optionalBinaries: ["ip6tables"],
-  },
-  {
-    toolName: "netdef_self_scan",
-    requiredBinaries: ["nmap"],
+    toolName: "netdef_security_audit",
+    requiredBinaries: [],
+    optionalBinaries: ["cat", "nmap", "sysctl", "ip6tables"],
   },
 
-  // ── Compliance Tools ─────────────────────────────────────────────────────
+  // ── Compliance Tools (7) ──────────────────────────────────────────────────
   {
     toolName: "compliance_lynis_audit",
     requiredBinaries: ["lynis"],
@@ -316,8 +194,9 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     requiredBinaries: ["oscap"],
   },
   {
-    toolName: "compliance_cis_check",
+    toolName: "compliance_check",
     requiredBinaries: ["cat"],
+    optionalBinaries: ["lynis", "oscap"],
   },
   {
     toolName: "compliance_policy_evaluate",
@@ -337,66 +216,40 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     requiredBinaries: ["mount"],
   },
 
-  // ── Malware Tools ────────────────────────────────────────────────────────
+  // ── Malware Tools (4) ─────────────────────────────────────────────────────
   {
-    toolName: "malware_clamav_scan",
-    requiredBinaries: ["clamscan"],
+    toolName: "malware_clamav",
+    requiredBinaries: [],
+    optionalBinaries: ["clamscan", "freshclam"],
     critical: true,
-  },
-  {
-    toolName: "malware_clamav_update",
-    requiredBinaries: ["freshclam"],
   },
   {
     toolName: "malware_yara_scan",
     requiredBinaries: ["yara"],
   },
   {
-    toolName: "malware_suspicious_files",
-    requiredBinaries: ["find"],
+    toolName: "malware_file_scan",
+    requiredBinaries: [],
+    optionalBinaries: ["find", "grep"],
   },
   {
     toolName: "malware_quarantine_manage",
     requiredBinaries: ["cat"],
   },
+
+  // ── Backup Tools (1) ──────────────────────────────────────────────────────
   {
-    toolName: "malware_webshell_detect",
-    requiredBinaries: ["grep"],
+    toolName: "backup",
+    requiredBinaries: [],
+    optionalBinaries: ["cp", "cat", "sha256sum", "ls", "dpkg", "systemctl", "iptables-save", "ss"],
   },
 
-  // ── Backup Tools ─────────────────────────────────────────────────────────
+  // ── Access Control Tools (6) ──────────────────────────────────────────────
   {
-    toolName: "backup_config_files",
-    requiredBinaries: ["cp"],
-  },
-  {
-    toolName: "backup_system_state",
+    toolName: "access_ssh",
     requiredBinaries: ["cat"],
-    optionalBinaries: ["dpkg", "systemctl", "iptables-save", "ss"],
-  },
-  {
-    toolName: "backup_restore",
-    requiredBinaries: ["cp"],
-  },
-  {
-    toolName: "backup_verify",
-    requiredBinaries: ["sha256sum"],
-  },
-  {
-    toolName: "backup_list",
-    requiredBinaries: ["ls"],
-  },
-
-  // ── Access Control Tools ─────────────────────────────────────────────────
-  {
-    toolName: "access_ssh_audit",
-    requiredBinaries: ["cat"],
+    optionalBinaries: ["systemctl", "sshd"],
     critical: true,
-  },
-  {
-    toolName: "access_ssh_harden",
-    requiredBinaries: ["cat"],
-    optionalBinaries: ["systemctl"],
   },
   {
     toolName: "access_sudo_audit",
@@ -412,16 +265,7 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     requiredBinaries: ["cat"],
   },
   {
-    toolName: "access_pam_audit",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "access_ssh_cipher_audit",
-    requiredBinaries: ["cat"],
-    optionalBinaries: ["sshd"],
-  },
-  {
-    toolName: "access_pam_configure",
+    toolName: "access_pam",
     requiredBinaries: ["cat"],
     optionalBinaries: ["pam_pwquality"],
   },
@@ -430,15 +274,11 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     requiredBinaries: ["usermod"],
   },
 
-  // ── Encryption Tools ─────────────────────────────────────────────────────
+  // ── Encryption Tools (4) ──────────────────────────────────────────────────
   {
-    toolName: "crypto_tls_audit",
+    toolName: "crypto_tls",
     requiredBinaries: ["openssl"],
     critical: true,
-  },
-  {
-    toolName: "crypto_cert_expiry",
-    requiredBinaries: ["openssl"],
   },
   {
     toolName: "crypto_gpg_keys",
@@ -452,24 +292,17 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     toolName: "crypto_file_hash",
     requiredBinaries: ["sha256sum"],
   },
-  {
-    toolName: "crypto_tls_config_audit",
-    requiredBinaries: ["cat"],
-    optionalBinaries: ["openssl"],
-  },
 
-  // ── Container Security Tools ─────────────────────────────────────────────
+  // ── Container Security Tools (6) ──────────────────────────────────────────
   {
-    toolName: "container_docker_audit",
-    requiredBinaries: ["docker"],
+    toolName: "container_docker",
+    requiredBinaries: [],
+    optionalBinaries: ["docker"],
   },
   {
-    toolName: "container_docker_bench",
-    requiredBinaries: ["docker"],
-  },
-  {
-    toolName: "container_apparmor_manage",
-    requiredBinaries: ["apparmor_status"],
+    toolName: "container_apparmor",
+    requiredBinaries: [],
+    optionalBinaries: ["apparmor_status", "apparmor_parser"],
   },
   {
     toolName: "container_selinux_manage",
@@ -486,21 +319,12 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     optionalBinaries: ["trivy", "grype"],
   },
   {
-    toolName: "container_seccomp_audit",
-    requiredBinaries: ["docker"],
-  },
-  {
-    toolName: "container_daemon_configure",
-    requiredBinaries: ["cat"],
-    optionalBinaries: ["docker"],
-  },
-  {
-    toolName: "container_apparmor_install",
+    toolName: "container_security_config",
     requiredBinaries: [],
-    optionalBinaries: ["apparmor_status"],
+    optionalBinaries: ["newuidmap", "newgidmap"],
   },
 
-  // ── Patch Management Tools ───────────────────────────────────────────────
+  // ── Patch Management Tools (5) ────────────────────────────────────────────
   {
     toolName: "patch_update_audit",
     requiredBinaries: ["apt"],
@@ -518,152 +342,25 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     toolName: "patch_kernel_audit",
     requiredBinaries: ["uname"],
   },
+  {
+    toolName: "vulnerability_intel",
+    requiredBinaries: [],
+    optionalBinaries: ["curl", "apt", "dpkg"],
+  },
 
-  // ── Secrets Management Tools ─────────────────────────────────────────────
+  // ── Secrets Management Tools (4) ──────────────────────────────────────────
   {
     toolName: "secrets_scan",
-    requiredBinaries: ["grep"],
-  },
-  {
-    toolName: "secrets_env_audit",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "secrets_ssh_key_sprawl",
-    requiredBinaries: ["find"],
-  },
-
-  // ── Incident Response Tools ──────────────────────────────────────────────
-  {
-    toolName: "ir_volatile_collect",
-    requiredBinaries: ["cat"],
-    optionalBinaries: ["ps", "ss", "lsof", "ip", "iptables-save"],
-  },
-  {
-    toolName: "ir_ioc_scan",
-    requiredBinaries: ["ps"],
-    optionalBinaries: ["ss", "find", "crontab"],
-  },
-  {
-    toolName: "ir_timeline_generate",
-    requiredBinaries: ["find"],
-  },
-
-  // ── Meta Tools ───────────────────────────────────────────────────────────
-  {
-    toolName: "defense_check_tools",
-    requiredBinaries: [],
-  },
-  {
-    toolName: "defense_suggest_workflow",
-    requiredBinaries: [],
-  },
-  {
-    toolName: "defense_security_posture",
-    requiredBinaries: [],
-    optionalBinaries: ["iptables", "ss", "journalctl", "apt"],
-  },
-  {
-    toolName: "defense_change_history",
-    requiredBinaries: [],
-  },
-  {
-    toolName: "defense_run_workflow",
-    requiredBinaries: [],
-  },
-
-  // ── Supply Chain Security Tools ──────────────────────────────────────────
-  {
-    toolName: "generate_sbom",
-    requiredBinaries: [],
-    optionalBinaries: ["syft", "cdxgen", "dpkg"],
-  },
-  {
-    toolName: "verify_package_integrity",
-    requiredBinaries: [],
-    optionalBinaries: ["debsums"],
-  },
-  {
-    toolName: "setup_cosign_signing",
-    requiredBinaries: [],
-    optionalBinaries: ["cosign"],
-  },
-  {
-    toolName: "check_slsa_attestation",
-    requiredBinaries: [],
-    optionalBinaries: ["slsa-verifier", "cosign"],
-  },
-
-  // ── Memory Protection Tools ──────────────────────────────────────────────
-  {
-    toolName: "audit_memory_protections",
-    requiredBinaries: [],
-    optionalBinaries: ["readelf", "checksec"],
-  },
-  {
-    toolName: "enforce_aslr",
-    requiredBinaries: ["sysctl"],
-  },
-  {
-    toolName: "report_exploit_mitigations",
-    requiredBinaries: ["cat"],
-  },
-
-  // ── Drift Detection Tools ────────────────────────────────────────────────
-  {
-    toolName: "create_baseline",
-    requiredBinaries: ["sha256sum"],
-    optionalBinaries: ["sysctl", "systemctl"],
-  },
-  {
-    toolName: "compare_to_baseline",
-    requiredBinaries: ["sha256sum"],
-  },
-  {
-    toolName: "list_drift_alerts",
-    requiredBinaries: ["cat"],
-  },
-
-  // ── Vulnerability Intel Tools ────────────────────────────────────────────
-  {
-    toolName: "lookup_cve",
-    requiredBinaries: ["curl"],
-  },
-  {
-    toolName: "scan_packages_cves",
-    requiredBinaries: [],
-    optionalBinaries: ["apt", "dpkg"],
-  },
-  {
-    toolName: "get_patch_urgency",
-    requiredBinaries: [],
-    optionalBinaries: ["apt"],
-  },
-
-  // ── Security Posture Tools ───────────────────────────────────────────────
-  {
-    toolName: "calculate_security_score",
-    requiredBinaries: [],
-    optionalBinaries: ["sysctl", "iptables", "ss", "systemctl"],
-  },
-  {
-    toolName: "get_posture_trend",
-    requiredBinaries: ["cat"],
-  },
-  {
-    toolName: "generate_posture_dashboard",
-    requiredBinaries: [],
-  },
-
-  // ── Secrets Scanner Tools ────────────────────────────────────────────────
-  {
-    toolName: "scan_for_secrets",
     requiredBinaries: ["grep"],
     optionalBinaries: ["trufflehog", "gitleaks"],
   },
   {
-    toolName: "audit_env_vars",
+    toolName: "secrets_env_audit",
     requiredBinaries: [],
+  },
+  {
+    toolName: "secrets_ssh_key_sprawl",
+    requiredBinaries: ["find"],
   },
   {
     toolName: "scan_git_history",
@@ -671,115 +368,101 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     optionalBinaries: ["trufflehog", "gitleaks", "git"],
   },
 
-  // ── Zero Trust Network Tools ─────────────────────────────────────────────
+  // ── Incident Response Tools (1) ───────────────────────────────────────────
   {
-    toolName: "setup_wireguard",
+    toolName: "incident_response",
     requiredBinaries: [],
-    optionalBinaries: ["wg"],
-  },
-  {
-    toolName: "manage_wg_peers",
-    requiredBinaries: [],
-    optionalBinaries: ["wg"],
-  },
-  {
-    toolName: "setup_mtls",
-    requiredBinaries: ["openssl"],
-  },
-  {
-    toolName: "configure_microsegmentation",
-    requiredBinaries: ["iptables"],
+    optionalBinaries: ["cat", "ps", "ss", "lsof", "ip", "iptables-save", "find", "crontab"],
   },
 
-  // ── Container Advanced Tools ─────────────────────────────────────────────
+  // ── Meta Tools (5) ────────────────────────────────────────────────────────
   {
-    toolName: "generate_seccomp_profile",
+    toolName: "defense_check_tools",
     requiredBinaries: [],
   },
   {
-    toolName: "apply_apparmor_container",
+    toolName: "defense_workflow",
     requiredBinaries: [],
-    optionalBinaries: ["apparmor_parser"],
   },
   {
-    toolName: "setup_rootless_containers",
+    toolName: "defense_change_history",
     requiredBinaries: [],
-    optionalBinaries: ["newuidmap", "newgidmap"],
   },
   {
-    toolName: "scan_image_trivy",
+    toolName: "security_posture",
     requiredBinaries: [],
-    optionalBinaries: ["trivy"],
+    optionalBinaries: ["iptables", "ss", "journalctl", "apt", "sysctl", "systemctl"],
   },
-
-  // ── Compliance Extended Tools ────────────────────────────────────────────
   {
-    toolName: "run_compliance_check",
+    toolName: "scheduled_audit",
     requiredBinaries: [],
-    optionalBinaries: ["lynis", "oscap"],
+    optionalBinaries: ["systemctl", "crontab", "cat"],
   },
 
-  // ── eBPF Security Tools ──────────────────────────────────────────────────
+  // ── Sudo Management Tools (6) ─────────────────────────────────────────────
+  {
+    toolName: "sudo_elevate",
+    requiredBinaries: [],
+  },
+  {
+    toolName: "sudo_elevate_gui",
+    requiredBinaries: [],
+  },
+  {
+    toolName: "sudo_status",
+    requiredBinaries: [],
+  },
+  {
+    toolName: "sudo_drop",
+    requiredBinaries: [],
+  },
+  {
+    toolName: "sudo_extend",
+    requiredBinaries: [],
+  },
+  {
+    toolName: "preflight_batch_check",
+    requiredBinaries: [],
+  },
+
+  // ── Supply Chain Security Tools (1) ───────────────────────────────────────
+  {
+    toolName: "supply_chain",
+    requiredBinaries: [],
+    optionalBinaries: ["syft", "cdxgen", "dpkg", "debsums", "cosign", "slsa-verifier"],
+  },
+
+  // ── Drift Detection Tools (1) ─────────────────────────────────────────────
+  {
+    toolName: "drift_baseline",
+    requiredBinaries: [],
+    optionalBinaries: ["sha256sum", "sysctl", "systemctl", "cat"],
+  },
+
+  // ── Zero Trust Network Tools (1) ──────────────────────────────────────────
+  {
+    toolName: "zero_trust",
+    requiredBinaries: [],
+    optionalBinaries: ["wg", "openssl", "iptables"],
+  },
+
+  // ── eBPF Security Tools (2) ───────────────────────────────────────────────
   {
     toolName: "list_ebpf_programs",
     requiredBinaries: [],
     optionalBinaries: ["bpftool"],
   },
   {
-    toolName: "check_falco",
+    toolName: "falco",
     requiredBinaries: [],
-    optionalBinaries: ["falco"],
-  },
-  {
-    toolName: "deploy_falco_rules",
-    requiredBinaries: [],
-    optionalBinaries: ["falco"],
-  },
-  {
-    toolName: "get_ebpf_events",
-    requiredBinaries: ["cat"],
+    optionalBinaries: ["falco", "cat"],
   },
 
-  // ── Automation Workflow Tools ────────────────────────────────────────────
+  // ── Application Hardening Tools (1) ───────────────────────────────────────
   {
-    toolName: "setup_scheduled_audit",
+    toolName: "app_harden",
     requiredBinaries: [],
-    optionalBinaries: ["systemctl", "crontab"],
-  },
-  {
-    toolName: "list_scheduled_audits",
-    requiredBinaries: [],
-    optionalBinaries: ["systemctl", "crontab"],
-  },
-  {
-    toolName: "remove_scheduled_audit",
-    requiredBinaries: [],
-    optionalBinaries: ["systemctl", "crontab"],
-  },
-  {
-    toolName: "get_audit_history",
-    requiredBinaries: ["cat"],
-  },
-
-  // ── Application Hardening Tools ──────────────────────────────────────────
-  {
-    toolName: "app_harden_audit",
-    requiredBinaries: ["ps"],
-    optionalBinaries: ["ss", "systemctl"],
-  },
-  {
-    toolName: "app_harden_recommend",
-    requiredBinaries: [],
-  },
-  {
-    toolName: "app_harden_firewall",
-    requiredBinaries: [],
-    optionalBinaries: ["iptables"],
-  },
-  {
-    toolName: "app_harden_systemd",
-    requiredBinaries: [],
-    optionalBinaries: ["systemctl"],
+    optionalBinaries: ["ps", "ss", "systemctl", "iptables"],
   },
 ];
 

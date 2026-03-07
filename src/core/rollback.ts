@@ -3,9 +3,10 @@
  * rollback capability for file, sysctl, service, and firewall modifications.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { secureWriteFileSync, secureMkdirSync, secureCopyFileSync } from "./secure-fs.js";
 import { randomUUID } from "node:crypto";
 import { executeCommand } from "./executor.js";
 
@@ -22,6 +23,17 @@ export interface ChangeRecord {
   originalValue: string;
   timestamp: string;
   rolledBack: boolean;
+  /** Optional reference to a changelog entry ID for cross-referencing */
+  changelogRef?: string;
+}
+
+/**
+ * Versioned rollback state file format.
+ * Old files stored a bare array; new files use this envelope.
+ */
+export interface RollbackState {
+  version: 1;
+  changes: ChangeRecord[];
 }
 
 // ── RollbackManager ──────────────────────────────────────────────────────────
@@ -37,13 +49,18 @@ export class RollbackManager {
     const storeDir = join(homedir(), ".kali-defense");
     this.storePath = join(storeDir, "rollback-state.json");
 
-    // Load existing state
+    // Load existing state (with migration from old bare-array format)
     try {
       if (existsSync(this.storePath)) {
         const raw = readFileSync(this.storePath, "utf-8");
         const parsed = JSON.parse(raw);
+        // Handle old format (bare array)
         if (Array.isArray(parsed)) {
           this.changes = parsed;
+        }
+        // Handle versioned format
+        else if (parsed && typeof parsed === "object" && Array.isArray(parsed.changes)) {
+          this.changes = parsed.changes;
         }
       }
     } catch {
@@ -59,14 +76,14 @@ export class RollbackManager {
     return RollbackManager.instance;
   }
 
-  /** Persist state to disk. */
+  /** Persist state to disk in versioned format. */
   private save(): void {
     try {
-      const dir = dirname(this.storePath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-      writeFileSync(this.storePath, JSON.stringify(this.changes, null, 2), "utf-8");
+      const state: RollbackState = {
+        version: 1,
+        changes: this.changes,
+      };
+      secureWriteFileSync(this.storePath, JSON.stringify(state, null, 2), "utf-8");
     } catch (err) {
       console.error(`[rollback] Failed to save state: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -74,12 +91,14 @@ export class RollbackManager {
 
   /**
    * Track a change for later rollback.
+   * @param changelogRef Optional reference to a changelog entry ID
    */
   trackChange(
     operationId: string,
     type: ChangeType,
     target: string,
-    originalValue: string
+    originalValue: string,
+    changelogRef?: string
   ): void {
     const record: ChangeRecord = {
       id: randomUUID(),
@@ -90,6 +109,7 @@ export class RollbackManager {
       originalValue,
       timestamp: new Date().toISOString(),
       rolledBack: false,
+      ...(changelogRef !== undefined ? { changelogRef } : {}),
     };
 
     this.changes.push(record);
@@ -157,11 +177,8 @@ export class RollbackManager {
         case "file": {
           // originalValue is the backup path
           if (existsSync(record.originalValue)) {
-            const targetDir = dirname(record.target);
-            if (!existsSync(targetDir)) {
-              mkdirSync(targetDir, { recursive: true });
-            }
-            copyFileSync(record.originalValue, record.target);
+            secureMkdirSync(dirname(record.target));
+            secureCopyFileSync(record.originalValue, record.target);
           } else {
             console.error(`[rollback] Backup file missing: ${record.originalValue}`);
           }

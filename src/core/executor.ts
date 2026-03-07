@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { getConfig, getToolTimeout } from "./config.js";
 import { SudoSession } from "./sudo-session.js";
 import { SudoGuard } from "./sudo-guard.js";
+import { resolveCommand, resolveSudoCommand } from "./command-allowlist.js";
 
 // ── Askpass helper detection ─────────────────────────────────────────────────
 
@@ -69,8 +70,8 @@ export interface ExecuteOptions {
   cwd?: string;
   /** Additional environment variables */
   env?: Record<string, string>;
-  /** Data to pipe to stdin */
-  stdin?: string;
+  /** Data to pipe to stdin (Buffer preferred for sensitive data like passwords) */
+  stdin?: string | Buffer;
   /** Maximum output buffer size in bytes */
   maxBuffer?: number;
   /** Tool name for timeout lookup */
@@ -129,14 +130,21 @@ function prepareSudoOptions(options: ExecuteOptions): ExecuteOptions {
   if (options.args.includes("-S") || options.args.includes("-A")) return options;
 
   const session = SudoSession.getInstance();
-  const password = session.getPassword();
+  const passwordBuf = session.getPassword(); // Returns Buffer | null (a copy)
 
-  if (password) {
+  if (passwordBuf) {
     // ── Strategy 1: SudoSession has a cached password → pipe via stdin ──
     const newArgs = ["-S", "-p", "", ...options.args];
+    const newline = Buffer.from("\n");
     const stdinPayload = options.stdin
-      ? password + "\n" + options.stdin
-      : password + "\n";
+      ? Buffer.concat([
+          passwordBuf,
+          newline,
+          Buffer.isBuffer(options.stdin) ? options.stdin : Buffer.from(options.stdin),
+        ])
+      : Buffer.concat([passwordBuf, newline]);
+    // Zero the password copy immediately after concatenation
+    passwordBuf.fill(0);
 
     return {
       ...options,
@@ -190,8 +198,43 @@ export async function executeCommand(
     options.timeout ??
     (options.toolName
       ? getToolTimeout(options.toolName, config)
-      : config.defaultTimeout);
+      : config.commandTimeout);
   const maxBuffer = options.maxBuffer ?? config.maxBuffer;
+
+  // ── Command allowlist validation ─────────────────────────────────────
+  // Resolve bare command names to absolute paths and reject anything
+  // not in the allowlist. For sudo, also validate the target binary.
+  try {
+    if (options.command === "sudo") {
+      const { sudoPath, targetIndex, targetPath } = resolveSudoCommand(options.args);
+      options = {
+        ...options,
+        command: sudoPath,
+        args: targetIndex >= 0
+          ? [
+              ...options.args.slice(0, targetIndex),
+              targetPath,
+              ...options.args.slice(targetIndex + 1),
+            ]
+          : options.args,
+      };
+    } else {
+      options = {
+        ...options,
+        command: resolveCommand(options.command),
+      };
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      stdout: "",
+      stderr: `Allowlist validation failed: ${message}`,
+      exitCode: 1,
+      timedOut: false,
+      duration: 0,
+      permissionDenied: false,
+    };
+  }
 
   // ── Transparent sudo credential injection ────────────────────────────
   const effectiveOptions = prepareSudoOptions(options);
@@ -241,7 +284,12 @@ export async function executeCommand(
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
-      controller.abort();
+      // Graceful SIGTERM first
+      try { child.kill("SIGTERM"); } catch { /* ignore */ }
+      // Escalate to SIGKILL after 5 seconds if still running
+      setTimeout(() => {
+        try { if (!child.killed) child.kill("SIGKILL"); } catch { /* ignore */ }
+      }, 5000);
     }, timeout);
 
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -273,8 +321,13 @@ export async function executeCommand(
     });
 
     if (effectiveOptions.stdin && child.stdin) {
-      child.stdin.write(effectiveOptions.stdin);
+      const stdinBuf = Buffer.isBuffer(effectiveOptions.stdin)
+        ? effectiveOptions.stdin
+        : Buffer.from(effectiveOptions.stdin);
+      child.stdin.write(stdinBuf);
       child.stdin.end();
+      // Zero the buffer after writing (may contain sudo password)
+      stdinBuf.fill(0);
     }
 
     child.on("close", (code: number | null) => {
@@ -290,6 +343,13 @@ export async function executeCommand(
       }
       if (stderrCapped) {
         stderr += "\n[STDERR TRUNCATED - exceeded max buffer]";
+      }
+
+      if (timedOut) {
+        const timeoutSec = Math.round(timeout / 1000);
+        stderr += `\nCommand timed out after ${timeoutSec} seconds. ` +
+          `The target may be unreachable or the operation is taking too long. ` +
+          `Consider increasing KALI_DEFENSE_COMMAND_TIMEOUT (current: ${timeoutSec}s).`;
       }
 
       // Detect permission errors from combined output
@@ -315,9 +375,13 @@ export async function executeCommand(
 
       // If it was an abort error from our timeout, handle as timeout
       if (timedOut) {
+        const timeoutSec = Math.round(timeout / 1000);
+        const timeoutMsg = `\nCommand timed out after ${timeoutSec} seconds. ` +
+          `The target may be unreachable or the operation is taking too long. ` +
+          `Consider increasing KALI_DEFENSE_COMMAND_TIMEOUT (current: ${timeoutSec}s).`;
         resolve({
           stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
-          stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+          stderr: Buffer.concat(stderrChunks).toString("utf-8") + timeoutMsg,
           exitCode: 124,
           timedOut: true,
           duration,

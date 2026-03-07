@@ -1,8 +1,8 @@
 /**
  * Intrusion Detection System (IDS) tools for Kali Defense MCP Server.
  *
- * Registers 5 tools: ids_aide_manage, ids_rkhunter_scan,
- * ids_chkrootkit_scan, ids_file_integrity_check, ids_rootkit_summary.
+ * Registers 3 tools: ids_aide_manage, ids_rootkit_scan (actions: rkhunter, chkrootkit, all),
+ * ids_file_integrity_check.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -180,204 +180,310 @@ export function registerIdsTools(server: McpServer): void {
     }
   );
 
-  // ── 2. ids_rkhunter_scan ───────────────────────────────────────────────
+  // ── 2. ids_rootkit_scan (merged: rkhunter, chkrootkit, all) ────────────
 
   server.tool(
-    "ids_rkhunter_scan",
-    "Run rkhunter rootkit detection scan",
+    "ids_rootkit_scan",
+    "Rootkit detection: run rkhunter, chkrootkit, or combined scan using all available tools.",
     {
-      update_first: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Update rkhunter database before scanning (default: true)"),
-      skip_keypress: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Skip keypress prompts during scan (default: true)"),
-      report_warnings_only: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Only report warnings, not OK results"),
+      action: z.enum(["rkhunter", "chkrootkit", "all"]).describe("Action: rkhunter=rkhunter scan, chkrootkit=chkrootkit scan, all=combined summary"),
+      // rkhunter params
+      update_first: z.boolean().optional().default(true).describe("Update rkhunter database before scanning (rkhunter/all action)"),
+      skip_keypress: z.boolean().optional().default(true).describe("Skip keypress prompts during scan (rkhunter action)"),
+      report_warnings_only: z.boolean().optional().default(false).describe("Only report warnings, not OK results (rkhunter action)"),
+      // chkrootkit params
+      quiet: z.boolean().optional().default(false).describe("Quiet mode - only show infected findings (chkrootkit action)"),
+      expert: z.boolean().optional().default(false).describe("Expert mode - show additional diagnostic info (chkrootkit action)"),
+      // all params
+      quick: z.boolean().optional().default(true).describe("Quick scan mode - skip database updates (all action)"),
     },
-    async ({ update_first, skip_keypress, report_warnings_only }) => {
-      try {
-        // Optionally update database first
-        let updateOutput = "";
-        if (update_first) {
-          const updateResult = await executeCommand({
-            command: "sudo",
-            args: ["rkhunter", "--update"],
-            toolName: "ids_rkhunter_scan",
-            timeout: getToolTimeout("rkhunter"),
-          });
-          updateOutput = `Database update (exit ${updateResult.exitCode}):\n${updateResult.stdout}\n\n`;
-        }
+    async (params) => {
+      const { action } = params;
 
-        // Run the scan
-        const args = ["rkhunter", "--check"];
+      switch (action) {
+        // ── rkhunter ────────────────────────────────────────────────
+        case "rkhunter": {
+          const { update_first, skip_keypress, report_warnings_only } = params;
+          try {
+            let updateOutput = "";
+            if (update_first) {
+              const updateResult = await executeCommand({
+                command: "sudo",
+                args: ["rkhunter", "--update"],
+                toolName: "ids_rootkit_scan",
+                timeout: getToolTimeout("rkhunter"),
+              });
+              updateOutput = `Database update (exit ${updateResult.exitCode}):\n${updateResult.stdout}\n\n`;
+            }
 
-        if (skip_keypress) {
-          args.push("--sk");
-        }
+            const args = ["rkhunter", "--check"];
+            if (skip_keypress) args.push("--sk");
+            if (report_warnings_only) args.push("--rwo");
 
-        if (report_warnings_only) {
-          args.push("--rwo");
-        }
+            const result = await executeCommand({
+              command: "sudo",
+              args,
+              toolName: "ids_rootkit_scan",
+              timeout: getToolTimeout("rkhunter"),
+            });
 
-        const result = await executeCommand({
-          command: "sudo",
-          args,
-          toolName: "ids_rkhunter_scan",
-          timeout: getToolTimeout("rkhunter"),
-        });
+            const warnings: string[] = [];
+            const infected: string[] = [];
 
-        // rkhunter exit codes: 0 = clean, 1 = warnings found
-        // Parse warnings from output
-        const warnings: string[] = [];
-        const infected: string[] = [];
+            for (const line of result.stdout.split("\n")) {
+              const trimmed = line.trim();
+              if (trimmed.includes("[ Warning ]") || trimmed.includes("WARNING")) {
+                warnings.push(trimmed);
+              }
+              if (trimmed.includes("[ Infected ]") || trimmed.includes("INFECTED")) {
+                infected.push(trimmed);
+              }
+            }
 
-        for (const line of result.stdout.split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed.includes("[ Warning ]") || trimmed.includes("WARNING")) {
-            warnings.push(trimmed);
+            const output = {
+              exitCode: result.exitCode,
+              updateOutput: update_first ? updateOutput : undefined,
+              warningsCount: warnings.length,
+              infectedCount: infected.length,
+              warnings,
+              infected,
+              riskLevel: infected.length > 0 ? "CRITICAL" : warnings.length > 0 ? "WARNING" : "CLEAN",
+              raw: result.stdout,
+            };
+
+            logChange(createChangeEntry({
+              tool: "ids_rootkit_scan",
+              action: "Rootkit scan (rkhunter)",
+              target: "system",
+              after: `Warnings: ${warnings.length}, Infected: ${infected.length}`,
+              dryRun: false,
+              success: true,
+            }));
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
-          if (
-            trimmed.includes("[ Infected ]") ||
-            trimmed.includes("INFECTED")
-          ) {
-            infected.push(trimmed);
+        }
+
+        // ── chkrootkit ──────────────────────────────────────────────
+        case "chkrootkit": {
+          const { quiet, expert } = params;
+          try {
+            const args = ["chkrootkit"];
+            if (quiet) args.push("-q");
+            if (expert) args.push("-x");
+
+            const result = await executeCommand({
+              command: "sudo",
+              args,
+              toolName: "ids_rootkit_scan",
+              timeout: getToolTimeout("chkrootkit"),
+            });
+
+            const infected: string[] = [];
+            const suspicious: string[] = [];
+            const notInfected: string[] = [];
+
+            for (const line of result.stdout.split("\n")) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              if (trimmed.includes("INFECTED")) {
+                infected.push(trimmed);
+              } else if (trimmed.includes("Suspicious") || trimmed.includes("suspicious")) {
+                suspicious.push(trimmed);
+              } else if (trimmed.includes("not infected") || trimmed.includes("not found") || trimmed.includes("nothing found")) {
+                notInfected.push(trimmed);
+              }
+            }
+
+            const output = {
+              exitCode: result.exitCode,
+              infectedCount: infected.length,
+              suspiciousCount: suspicious.length,
+              cleanCount: notInfected.length,
+              infected,
+              suspicious,
+              riskLevel: infected.length > 0 ? "CRITICAL" : suspicious.length > 0 ? "WARNING" : "CLEAN",
+              raw: result.stdout,
+            };
+
+            logChange(createChangeEntry({
+              tool: "ids_rootkit_scan",
+              action: "Rootkit scan (chkrootkit)",
+              target: "system",
+              after: `Infected: ${infected.length}, Suspicious: ${suspicious.length}`,
+              dryRun: false,
+              success: true,
+            }));
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        const output = {
-          exitCode: result.exitCode,
-          updateOutput: update_first ? updateOutput : undefined,
-          warningsCount: warnings.length,
-          infectedCount: infected.length,
-          warnings,
-          infected,
-          riskLevel:
-            infected.length > 0
-              ? "CRITICAL"
-              : warnings.length > 0
-                ? "WARNING"
-                : "CLEAN",
-          raw: result.stdout,
-        };
+        // ── all (combined summary) ──────────────────────────────────
+        case "all": {
+          const { quick } = params;
+          try {
+            const findings: Array<{
+              tool: string;
+              available: boolean;
+              exitCode: number;
+              warnings: string[];
+              infected: string[];
+              riskLevel: string;
+              error?: string;
+            }> = [];
 
-        const entry = createChangeEntry({
-          tool: "ids_rkhunter_scan",
-          action: "Rootkit scan (rkhunter)",
-          target: "system",
-          after: `Warnings: ${warnings.length}, Infected: ${infected.length}`,
-          dryRun: false,
-          success: true,
-        });
-        logChange(entry);
+            // Check if rkhunter is available
+            const rkhunterCheck = await executeCommand({
+              command: "which",
+              args: ["rkhunter"],
+              toolName: "ids_rootkit_scan",
+            });
 
-        return { content: [formatToolOutput(output)] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
+            if (rkhunterCheck.exitCode === 0) {
+              const rkhunterArgs = ["rkhunter", "--check", "--sk"];
+              if (!quick) {
+                await executeCommand({
+                  command: "sudo",
+                  args: ["rkhunter", "--update"],
+                  toolName: "ids_rootkit_scan",
+                  timeout: getToolTimeout("rkhunter"),
+                });
+              }
+
+              const rkhunterResult = await executeCommand({
+                command: "sudo",
+                args: rkhunterArgs,
+                toolName: "ids_rootkit_scan",
+                timeout: getToolTimeout("rkhunter"),
+              });
+
+              const warnings: string[] = [];
+              const infected: string[] = [];
+
+              for (const line of rkhunterResult.stdout.split("\n")) {
+                const trimmed = line.trim();
+                if (trimmed.includes("[ Warning ]") || trimmed.includes("WARNING")) warnings.push(trimmed);
+                if (trimmed.includes("[ Infected ]") || trimmed.includes("INFECTED")) infected.push(trimmed);
+              }
+
+              findings.push({
+                tool: "rkhunter",
+                available: true,
+                exitCode: rkhunterResult.exitCode,
+                warnings,
+                infected,
+                riskLevel: infected.length > 0 ? "CRITICAL" : warnings.length > 0 ? "WARNING" : "CLEAN",
+              });
+            } else {
+              findings.push({
+                tool: "rkhunter",
+                available: false,
+                exitCode: -1,
+                warnings: [],
+                infected: [],
+                riskLevel: "UNKNOWN",
+                error: "rkhunter not installed. Install with: sudo apt install rkhunter",
+              });
+            }
+
+            // Check if chkrootkit is available
+            const chkrootkitCheck = await executeCommand({
+              command: "which",
+              args: ["chkrootkit"],
+              toolName: "ids_rootkit_scan",
+            });
+
+            if (chkrootkitCheck.exitCode === 0) {
+              const chkrootkitResult = await executeCommand({
+                command: "sudo",
+                args: ["chkrootkit", "-q"],
+                toolName: "ids_rootkit_scan",
+                timeout: getToolTimeout("chkrootkit"),
+              });
+
+              const warnings: string[] = [];
+              const infected: string[] = [];
+
+              for (const line of chkrootkitResult.stdout.split("\n")) {
+                const trimmed = line.trim();
+                if (!trimmed) continue;
+                if (trimmed.includes("INFECTED")) infected.push(trimmed);
+                else if (trimmed.includes("Suspicious") || trimmed.includes("suspicious")) warnings.push(trimmed);
+              }
+
+              findings.push({
+                tool: "chkrootkit",
+                available: true,
+                exitCode: chkrootkitResult.exitCode,
+                warnings,
+                infected,
+                riskLevel: infected.length > 0 ? "CRITICAL" : warnings.length > 0 ? "WARNING" : "CLEAN",
+              });
+            } else {
+              findings.push({
+                tool: "chkrootkit",
+                available: false,
+                exitCode: -1,
+                warnings: [],
+                infected: [],
+                riskLevel: "UNKNOWN",
+                error: "chkrootkit not installed. Install with: sudo apt install chkrootkit",
+              });
+            }
+
+            const totalInfected = findings.reduce((sum, f) => sum + f.infected.length, 0);
+            const totalWarnings = findings.reduce((sum, f) => sum + f.warnings.length, 0);
+            const availableTools = findings.filter((f) => f.available).length;
+
+            let overallRisk = "CLEAN";
+            if (totalInfected > 0) overallRisk = "CRITICAL";
+            else if (totalWarnings > 0) overallRisk = "WARNING";
+            else if (availableTools === 0) overallRisk = "UNKNOWN - No scanning tools available";
+
+            const output = {
+              overallRisk,
+              summary: { toolsAvailable: availableTools, toolsTotal: findings.length, totalInfected, totalWarnings },
+              findings,
+              recommendations:
+                totalInfected > 0
+                  ? ["CRITICAL: Potential rootkit detected. Investigate immediately.", "Boot from clean media and verify system integrity.", "Compare findings against known false positives.", "Consider reimaging the system if infection confirmed."]
+                  : totalWarnings > 0
+                    ? ["Review warnings and determine if they are false positives.", "Cross-reference with system changes and package updates.", "Run a full scan with verbose output for more details."]
+                    : availableTools > 0
+                      ? ["System appears clean. Schedule regular scans."]
+                      : ["Install rkhunter: sudo apt install rkhunter", "Install chkrootkit: sudo apt install chkrootkit"],
+            };
+
+            logChange(createChangeEntry({
+              tool: "ids_rootkit_scan",
+              action: "Combined rootkit scan",
+              target: "system",
+              after: `Risk: ${overallRisk}, Infected: ${totalInfected}, Warnings: ${totalWarnings}`,
+              dryRun: false,
+              success: true,
+            }));
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
   );
 
-  // ── 3. ids_chkrootkit_scan ─────────────────────────────────────────────
-
-  server.tool(
-    "ids_chkrootkit_scan",
-    "Run chkrootkit rootkit detection scan",
-    {
-      quiet: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Quiet mode - only show infected findings"),
-      expert: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Expert mode - show additional diagnostic info"),
-    },
-    async ({ quiet, expert }) => {
-      try {
-        const args = ["chkrootkit"];
-
-        if (quiet) {
-          args.push("-q");
-        }
-
-        if (expert) {
-          args.push("-x");
-        }
-
-        const result = await executeCommand({
-          command: "sudo",
-          args,
-          toolName: "ids_chkrootkit_scan",
-          timeout: getToolTimeout("chkrootkit"),
-        });
-
-        // Parse for INFECTED findings
-        const infected: string[] = [];
-        const suspicious: string[] = [];
-        const notInfected: string[] = [];
-
-        for (const line of result.stdout.split("\n")) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          if (trimmed.includes("INFECTED")) {
-            infected.push(trimmed);
-          } else if (
-            trimmed.includes("Suspicious") ||
-            trimmed.includes("suspicious")
-          ) {
-            suspicious.push(trimmed);
-          } else if (trimmed.includes("not infected") || trimmed.includes("not found") || trimmed.includes("nothing found")) {
-            notInfected.push(trimmed);
-          }
-        }
-
-        const output = {
-          exitCode: result.exitCode,
-          infectedCount: infected.length,
-          suspiciousCount: suspicious.length,
-          cleanCount: notInfected.length,
-          infected,
-          suspicious,
-          riskLevel:
-            infected.length > 0
-              ? "CRITICAL"
-              : suspicious.length > 0
-                ? "WARNING"
-                : "CLEAN",
-          raw: result.stdout,
-        };
-
-        const entry = createChangeEntry({
-          tool: "ids_chkrootkit_scan",
-          action: "Rootkit scan (chkrootkit)",
-          target: "system",
-          after: `Infected: ${infected.length}, Suspicious: ${suspicious.length}`,
-          dryRun: false,
-          success: true,
-        });
-        logChange(entry);
-
-        return { content: [formatToolOutput(output)] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
-
-  // ── 4. ids_file_integrity_check ────────────────────────────────────────
+  // ── 3. ids_file_integrity_check (kept as-is) ──────────────────────────
 
   server.tool(
     "ids_file_integrity_check",
@@ -606,222 +712,4 @@ export function registerIdsTools(server: McpServer): void {
     }
   );
 
-  // ── 5. ids_rootkit_summary ─────────────────────────────────────────────
-
-  server.tool(
-    "ids_rootkit_summary",
-    "Combined rootkit detection summary using available tools (rkhunter and/or chkrootkit)",
-    {
-      quick: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Quick scan mode - skip database updates (default: true)"),
-    },
-    async ({ quick }) => {
-      try {
-        const findings: Array<{
-          tool: string;
-          available: boolean;
-          exitCode: number;
-          warnings: string[];
-          infected: string[];
-          riskLevel: string;
-          error?: string;
-        }> = [];
-
-        // Check if rkhunter is available
-        const rkhunterCheck = await executeCommand({
-          command: "which",
-          args: ["rkhunter"],
-          toolName: "ids_rootkit_summary",
-        });
-
-        if (rkhunterCheck.exitCode === 0) {
-          const rkhunterArgs = ["rkhunter", "--check", "--sk"];
-          if (quick) {
-            // Skip update in quick mode
-          } else {
-            // Update first
-            await executeCommand({
-              command: "sudo",
-              args: ["rkhunter", "--update"],
-              toolName: "ids_rootkit_summary",
-              timeout: getToolTimeout("rkhunter"),
-            });
-          }
-
-          const rkhunterResult = await executeCommand({
-            command: "sudo",
-            args: rkhunterArgs,
-            toolName: "ids_rootkit_summary",
-            timeout: getToolTimeout("rkhunter"),
-          });
-
-          const warnings: string[] = [];
-          const infected: string[] = [];
-
-          for (const line of rkhunterResult.stdout.split("\n")) {
-            const trimmed = line.trim();
-            if (trimmed.includes("[ Warning ]") || trimmed.includes("WARNING")) {
-              warnings.push(trimmed);
-            }
-            if (
-              trimmed.includes("[ Infected ]") ||
-              trimmed.includes("INFECTED")
-            ) {
-              infected.push(trimmed);
-            }
-          }
-
-          findings.push({
-            tool: "rkhunter",
-            available: true,
-            exitCode: rkhunterResult.exitCode,
-            warnings,
-            infected,
-            riskLevel:
-              infected.length > 0
-                ? "CRITICAL"
-                : warnings.length > 0
-                  ? "WARNING"
-                  : "CLEAN",
-          });
-        } else {
-          findings.push({
-            tool: "rkhunter",
-            available: false,
-            exitCode: -1,
-            warnings: [],
-            infected: [],
-            riskLevel: "UNKNOWN",
-            error: "rkhunter not installed. Install with: sudo apt install rkhunter",
-          });
-        }
-
-        // Check if chkrootkit is available
-        const chkrootkitCheck = await executeCommand({
-          command: "which",
-          args: ["chkrootkit"],
-          toolName: "ids_rootkit_summary",
-        });
-
-        if (chkrootkitCheck.exitCode === 0) {
-          const chkrootkitResult = await executeCommand({
-            command: "sudo",
-            args: ["chkrootkit", "-q"],
-            toolName: "ids_rootkit_summary",
-            timeout: getToolTimeout("chkrootkit"),
-          });
-
-          const warnings: string[] = [];
-          const infected: string[] = [];
-
-          for (const line of chkrootkitResult.stdout.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            if (trimmed.includes("INFECTED")) {
-              infected.push(trimmed);
-            } else if (
-              trimmed.includes("Suspicious") ||
-              trimmed.includes("suspicious")
-            ) {
-              warnings.push(trimmed);
-            }
-          }
-
-          findings.push({
-            tool: "chkrootkit",
-            available: true,
-            exitCode: chkrootkitResult.exitCode,
-            warnings,
-            infected,
-            riskLevel:
-              infected.length > 0
-                ? "CRITICAL"
-                : warnings.length > 0
-                  ? "WARNING"
-                  : "CLEAN",
-          });
-        } else {
-          findings.push({
-            tool: "chkrootkit",
-            available: false,
-            exitCode: -1,
-            warnings: [],
-            infected: [],
-            riskLevel: "UNKNOWN",
-            error:
-              "chkrootkit not installed. Install with: sudo apt install chkrootkit",
-          });
-        }
-
-        // Compute overall risk
-        const totalInfected = findings.reduce(
-          (sum, f) => sum + f.infected.length,
-          0
-        );
-        const totalWarnings = findings.reduce(
-          (sum, f) => sum + f.warnings.length,
-          0
-        );
-        const availableTools = findings.filter((f) => f.available).length;
-
-        let overallRisk = "CLEAN";
-        if (totalInfected > 0) {
-          overallRisk = "CRITICAL";
-        } else if (totalWarnings > 0) {
-          overallRisk = "WARNING";
-        } else if (availableTools === 0) {
-          overallRisk = "UNKNOWN - No scanning tools available";
-        }
-
-        const output = {
-          overallRisk,
-          summary: {
-            toolsAvailable: availableTools,
-            toolsTotal: findings.length,
-            totalInfected,
-            totalWarnings,
-          },
-          findings,
-          recommendations:
-            totalInfected > 0
-              ? [
-                  "CRITICAL: Potential rootkit detected. Investigate immediately.",
-                  "Boot from clean media and verify system integrity.",
-                  "Compare findings against known false positives.",
-                  "Consider reimaging the system if infection confirmed.",
-                ]
-              : totalWarnings > 0
-                ? [
-                    "Review warnings and determine if they are false positives.",
-                    "Cross-reference with system changes and package updates.",
-                    "Run a full scan with verbose output for more details.",
-                  ]
-                : availableTools > 0
-                  ? ["System appears clean. Schedule regular scans."]
-                  : [
-                      "Install rkhunter: sudo apt install rkhunter",
-                      "Install chkrootkit: sudo apt install chkrootkit",
-                    ],
-        };
-
-        const entry = createChangeEntry({
-          tool: "ids_rootkit_summary",
-          action: "Combined rootkit scan",
-          target: "system",
-          after: `Risk: ${overallRisk}, Infected: ${totalInfected}, Warnings: ${totalWarnings}`,
-          dryRun: false,
-          success: true,
-        });
-        logChange(entry);
-
-        return { content: [formatToolOutput(output)] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
 }
