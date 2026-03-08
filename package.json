@@ -11,10 +11,9 @@
     "build/",
     "README.md",
     "CHANGELOG.md",
-    "TOOLS-REFERENCE.md",
-    "STANDARDS.md",
-    "SAFEGUARDS.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/TOOLS-REFERENCE.md",
+    "docs/SAFEGUARDS.md"
   ],
   "scripts": {
     "build": "tsc",
