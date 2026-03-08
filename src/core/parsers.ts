@@ -7,6 +7,7 @@
 export interface McpTextContent {
   type: "text";
   text: string;
+  [key: string]: unknown;
 }
 
 // ─── Generic Parsers ─────────────────────────────────────────────
