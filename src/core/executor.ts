@@ -33,8 +33,13 @@ function findAskpassHelper(): string | undefined {
   // Check environment variable first — user may have set it explicitly
   const envAskpass = process.env.SUDO_ASKPASS;
   if (envAskpass && existsSync(envAskpass)) {
-    cachedAskpass = envAskpass;
-    return cachedAskpass;
+    // SECURITY (CORE-016): Validate the env-specified askpass helper
+    const envValidation = SudoGuard.validateAskpassPath(envAskpass);
+    if (envValidation.valid) {
+      cachedAskpass = envAskpass;
+      return cachedAskpass;
+    }
+    console.error(`[executor] Rejecting SUDO_ASKPASS: ${envValidation.reason}`);
   }
 
   // Must have a display server to show a GUI dialog
@@ -46,12 +51,18 @@ function findAskpassHelper(): string | undefined {
 
   for (const candidate of ASKPASS_CANDIDATES) {
     if (existsSync(candidate)) {
-      cachedAskpass = candidate;
-      console.error(`[executor] Found askpass helper: ${candidate}`);
-      return cachedAskpass;
+      // SECURITY (CORE-016): Validate each candidate's ownership, permissions, and integrity
+      const validation = SudoGuard.validateAskpassPath(candidate);
+      if (validation.valid) {
+        cachedAskpass = candidate;
+        console.error(`[executor] Found verified askpass helper: ${candidate}`);
+        return cachedAskpass;
+      }
+      console.error(`[executor] Skipping askpass candidate ${candidate}: ${validation.reason}`);
     }
   }
 
+  console.error(`[executor] No verified askpass helper found`);
   cachedAskpass = undefined;
   return undefined;
 }

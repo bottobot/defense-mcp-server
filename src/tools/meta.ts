@@ -9,6 +9,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
+import { resolveCommand, isAllowlisted } from "../core/command-allowlist.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
 import {
   createTextContent,
@@ -61,6 +62,67 @@ function ensureAuditLogDir(): void {
   if (!existsSync(AUDIT_LOG_DIR)) {
     mkdirSync(AUDIT_LOG_DIR, { recursive: true });
   }
+}
+
+// ── Scheduled Audit Command Allowlist (TOOL-004 remediation) ───────────────
+
+/**
+ * Strict allowlist of audit commands permitted for scheduled execution.
+ * Maps human-readable command strings to their executable binary and arguments.
+ * Commands are validated against the command allowlist via resolveCommand().
+ * NO arbitrary commands are permitted — only these pre-approved security audits.
+ */
+const ALLOWED_AUDIT_COMMANDS: Record<string, { command: string; args: string[] }> = {
+  "lynis audit system": { command: "lynis", args: ["audit", "system"] },
+  "rkhunter --check --skip-keypress": { command: "rkhunter", args: ["--check", "--skip-keypress"] },
+  "aide --check": { command: "aide", args: ["--check"] },
+  "clamscan -r /home": { command: "clamscan", args: ["-r", "/home"] },
+  "chkrootkit": { command: "chkrootkit", args: [] },
+  "freshclam": { command: "freshclam", args: [] },
+  "tiger": { command: "tiger", args: [] },
+};
+
+/** Valid characters for audit job names (used in file paths and systemd unit names) */
+const AUDIT_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * TOOL-004 remediation: Validate schedule format to prevent injection.
+ * Allows:
+ *   - Cron format: 5 fields of [0-9*,/-] (e.g., "0 2 * * *")
+ *   - Systemd calendar format: alphanumeric with *:-/, space, and common calendar specifiers
+ */
+const CRON_FIELD_RE = /^[0-9*,\/-]+$/;
+const SYSTEMD_CALENDAR_RE = /^[a-zA-Z0-9*:,\-\/. ]+$/;
+function validateSchedule(schedule: string, isSystemd: boolean): string {
+  if (!schedule || typeof schedule !== "string") {
+    throw new Error("Schedule must be a non-empty string");
+  }
+  const trimmed = schedule.trim();
+  if (trimmed.length > 256) {
+    throw new Error("Schedule string too long (max 256 characters)");
+  }
+  // Reject shell metacharacters
+  if (/[;|&$`(){}<>\n\r\\]/.test(trimmed)) {
+    throw new Error(`Schedule contains forbidden characters: ${trimmed}`);
+  }
+
+  if (isSystemd) {
+    if (!SYSTEMD_CALENDAR_RE.test(trimmed)) {
+      throw new Error(`Invalid systemd calendar format: '${trimmed}'. Only alphanumeric, spaces, and *:-/., allowed.`);
+    }
+  } else {
+    // Validate cron: should be 5 space-separated fields
+    const fields = trimmed.split(/\s+/);
+    if (fields.length !== 5) {
+      throw new Error(`Invalid cron schedule: '${trimmed}'. Expected 5 fields (minute hour day month weekday).`);
+    }
+    for (const field of fields) {
+      if (!CRON_FIELD_RE.test(field)) {
+        throw new Error(`Invalid cron field: '${field}' in schedule '${trimmed}'.`);
+      }
+    }
+  }
+  return trimmed;
 }
 
 // ── Workflow definitions ───────────────────────────────────────────────────
@@ -961,7 +1023,7 @@ export function registerMetaTools(server: McpServer): void {
       // run params
       workflow: z.enum(["quick_harden", "full_audit", "incident_prep", "backup_all", "network_lockdown"]).optional().describe("Workflow to execute (run action)"),
       // shared
-      dry_run: z.boolean().optional().describe("Preview without executing (run action)"),
+      dry_run: z.boolean().optional().default(true).describe("Preview without executing (run action, defaults to true for safety)"),
     },
     async (params) => {
       const { action } = params;
@@ -1015,10 +1077,31 @@ export function registerMetaTools(server: McpServer): void {
             const steps = WORKFLOWS[workflow];
             if (!steps || steps.length === 0) return { content: [createErrorContent(`Unknown workflow: ${workflow}`)], isError: true };
 
+            // Pre-validate all workflow commands against the command allowlist
+            // before executing any steps (fail-fast)
+            const invalidSteps: string[] = [];
+            for (const step of steps) {
+              const cmdToCheck = step.command;
+              if (!isAllowlisted(cmdToCheck)) {
+                invalidSteps.push(`${step.description}: '${cmdToCheck}' not in command allowlist`);
+              }
+              // For sudo commands, also validate the target binary
+              if (cmdToCheck === "sudo" && step.args.length > 0) {
+                const targetCmd = step.args.find(a => !a.startsWith("-"));
+                if (targetCmd && !isAllowlisted(targetCmd)) {
+                  invalidSteps.push(`${step.description}: sudo target '${targetCmd}' not in command allowlist`);
+                }
+              }
+            }
+            if (invalidSteps.length > 0) {
+              return { content: [createErrorContent(`Workflow contains commands not in the allowlist:\n${invalidSteps.join("\n")}`)], isError: true };
+            }
+
             const totalEstimate = steps.reduce((sum, s) => sum + s.estimatedSeconds, 0);
             sections.push(`Steps: ${steps.length} | Estimated time: ~${Math.ceil(totalEstimate / 60)} min`);
 
-            if (dry_run ?? getConfig().dryRun) {
+            const effectiveDryRun = dry_run ?? getConfig().dryRun;
+            if (effectiveDryRun) {
               sections.push("\n[DRY RUN] Workflow steps that would be executed:\n");
               for (let i = 0; i < steps.length; i++) {
                 const step = steps[i];
@@ -1029,6 +1112,8 @@ export function registerMetaTools(server: McpServer): void {
                 sections.push("");
               }
               sections.push("To execute, set dry_run: false");
+
+              logChange(createChangeEntry({ tool: "defense_workflow", action: `${workflow}_dry_run`, target: workflow, after: `Previewed ${steps.length} workflow steps`, dryRun: true, success: true }));
             } else {
               sections.push("\nExecuting workflow...\n");
               let successCount = 0, failCount = 0;
@@ -1036,6 +1121,24 @@ export function registerMetaTools(server: McpServer): void {
               for (let i = 0; i < steps.length; i++) {
                 const step = steps[i];
                 sections.push(`── Step ${i + 1}/${steps.length}: ${step.description} ──`);
+
+                // TOOL-005 remediation: check safeguards before EVERY workflow step
+                const stepSafety = await SafeguardRegistry.getInstance().checkSafety(
+                  `defense_workflow_${workflow}_step_${i + 1}`,
+                  { command: step.command, args: step.args, description: step.description }
+                );
+                if (stepSafety.warnings.length > 0) {
+                  sections.push(`  ⚠️ Safety warnings: ${stepSafety.warnings.join("; ")}`);
+                }
+                if (!stepSafety.safe) {
+                  sections.push(`  🛑 Step blocked by safeguards: ${stepSafety.blockers.join("; ")}`);
+                  sections.push(`  Impacted: ${stepSafety.impactedApps.join(", ")}`);
+                  failCount++;
+                  logChange(createChangeEntry({ tool: "defense_workflow", action: `${workflow}_step_${i + 1}`, target: step.description, after: `blocked by safeguards: ${stepSafety.blockers.join("; ")}`, dryRun: false, success: false, error: "Blocked by safeguard checks" }));
+                  sections.push("");
+                  continue;
+                }
+
                 const startTime = Date.now();
                 const result = await executeCommand({ command: step.command, args: step.args, toolName: `defense_workflow_${workflow}`, timeout: Math.max(step.estimatedSeconds * 3 * 1000, 30000) });
                 const duration = Math.round((Date.now() - startTime) / 1000);
@@ -1183,14 +1286,14 @@ export function registerMetaTools(server: McpServer): void {
   // ── 4. security_posture (merged: score + trend + dashboard) ─────────────
 
   server.tool(
-    "security_posture",
+    "defense_security_posture",
     "Security posture: calculate security score, view historical trends, or generate a posture dashboard.",
     {
       action: z.enum(["score", "trend", "dashboard"]).describe("Action: score=calculate score, trend=view history, dashboard=generate dashboard"),
       // trend params
       limit: z.number().optional().default(10).describe("Number of historical entries (trend action)"),
       // shared
-      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;
@@ -1455,12 +1558,12 @@ export function registerMetaTools(server: McpServer): void {
   // ── 5. scheduled_audit (merged: setup + list + remove + history) ────────
 
   server.tool(
-    "scheduled_audit",
+    "defense_scheduled_audit",
     "Scheduled security audits: create, list, remove, or read audit history.",
     {
       action: z.enum(["create", "list", "remove", "history"]).describe("Action: create, list, remove, history"),
-      name: z.string().optional().describe("Audit job name (create/remove/history)"),
-      command: z.string().optional().describe("Command to run (create action)"),
+      name: z.string().optional().describe("Audit job name (create/remove/history). Only [a-zA-Z0-9_-] allowed."),
+      command: z.enum(["lynis audit system", "rkhunter --check --skip-keypress", "aide --check", "clamscan -r /home", "chkrootkit", "freshclam", "tiger"]).optional().describe("Audit command to schedule (create action). Must be from the approved allowlist."),
       schedule: z.string().optional().describe("Schedule cron format or systemd calendar (create action)"),
       useSystemd: z.boolean().optional().default(true).describe("Use systemd timer vs cron (create action)"),
       lines: z.number().optional().default(100).describe("Number of recent lines (history action)"),
@@ -1476,13 +1579,39 @@ export function registerMetaTools(server: McpServer): void {
           if (!auditCommand) return { content: [createErrorContent("command is required for create action")], isError: true };
           if (!schedule) return { content: [createErrorContent("schedule is required for create action")], isError: true };
           try {
+            // Validate audit job name — used in file paths and systemd unit names
+            if (!AUDIT_NAME_RE.test(name)) {
+              return { content: [createErrorContent(`Invalid audit name: '${name}'. Only [a-zA-Z0-9_-] allowed.`)], isError: true };
+            }
+
+            // TOOL-004 remediation: validate schedule format to prevent injection
+            const validatedSchedule = validateSchedule(schedule, useSystemd);
+
+            // Validate command against the strict audit command allowlist
+            const allowedEntry = ALLOWED_AUDIT_COMMANDS[auditCommand];
+            if (!allowedEntry) {
+              return { content: [createErrorContent(`Command not in scheduled audit allowlist: '${auditCommand}'. Allowed: ${Object.keys(ALLOWED_AUDIT_COMMANDS).join(", ")}`)], isError: true };
+            }
+
+            // Resolve the command binary to its absolute path via the command allowlist
+            let resolvedBinaryPath: string;
+            try {
+              resolvedBinaryPath = resolveCommand(allowedEntry.command);
+            } catch {
+              return { content: [createErrorContent(`Audit command binary '${allowedEntry.command}' not found on this system. Install it first.`)], isError: true };
+            }
+
+            // Build the resolved command line with absolute path (no bash -c)
+            const resolvedCommandLine = [resolvedBinaryPath, ...allowedEntry.args].join(" ");
+
             const safety = await SafeguardRegistry.getInstance().checkSafety("setup_scheduled_audit", { name });
             ensureAuditLogDir();
             const logFile = join(AUDIT_LOG_DIR, `${name}.log`);
 
             if (useSystemd) {
-              const serviceContent = `[Unit]\nDescription=Kali Defense Scheduled Audit: ${name}\n\n[Service]\nType=oneshot\nExecStart=/bin/bash -c '${auditCommand} >> ${logFile} 2>&1'\n`;
-              const timerContent = `[Unit]\nDescription=Timer for ${name} audit\n\n[Timer]\nOnCalendar=${schedule}\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`;
+              // Use direct ExecStart with StandardOutput/StandardError — no bash -c shell wrapper
+              const serviceContent = `[Unit]\nDescription=Kali Defense Scheduled Audit: ${name}\n\n[Service]\nType=oneshot\nExecStart=${resolvedCommandLine}\nStandardOutput=append:${logFile}\nStandardError=append:${logFile}\n`;
+              const timerContent = `[Unit]\nDescription=Timer for ${name} audit\n\n[Timer]\nOnCalendar=${validatedSchedule}\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`;
               const servicePath = `/etc/systemd/system/kali-audit-${name}.service`;
               const timerPath = `/etc/systemd/system/kali-audit-${name}.timer`;
 
@@ -1495,12 +1624,12 @@ export function registerMetaTools(server: McpServer): void {
               await executeCommand({ command: "systemctl", args: ["daemon-reload"], timeout: 10000 });
               const enable = await executeCommand({ command: "systemctl", args: ["enable", "--now", `kali-audit-${name}.timer`], timeout: 10000 });
 
-              logChange(createChangeEntry({ tool: "scheduled_audit", action: `Create systemd timer for ${name}`, target: timerPath, dryRun: false, success: enable.exitCode === 0, rollbackCommand: `systemctl disable --now kali-audit-${name}.timer && rm ${servicePath} ${timerPath}` }));
+              logChange(createChangeEntry({ tool: "defense_scheduled_audit", action: `Create systemd timer for ${name}`, target: timerPath, dryRun: false, success: enable.exitCode === 0, rollbackCommand: `systemctl disable --now kali-audit-${name}.timer && rm ${servicePath} ${timerPath}` }));
               return { content: [formatToolOutput({ success: enable.exitCode === 0, type: "systemd", name, servicePath, timerPath, enabled: enable.exitCode === 0 })] };
             }
 
-            // Cron approach
-            const cronLine = `${schedule} ${auditCommand} >> ${logFile} 2>&1 # kali-audit-${name}`;
+            // Cron approach — uses resolved absolute path and validated schedule, not raw user input
+            const cronLine = `${validatedSchedule} ${resolvedCommandLine} >> ${logFile} 2>&1 # kali-audit-${name}`;
             if (dryRun) {
               return { content: [formatToolOutput({ dryRun: true, type: "cron", cronLine, warnings: safety.warnings })] };
             }
@@ -1513,7 +1642,7 @@ export function registerMetaTools(server: McpServer): void {
 
             const newCron = existing.trimEnd() + "\n" + cronLine + "\n";
             const install = await executeCommand({ command: "crontab", args: ["-"], stdin: newCron, timeout: 5000 });
-            logChange(createChangeEntry({ tool: "scheduled_audit", action: `Create cron job for ${name}`, target: "crontab", dryRun: false, success: install.exitCode === 0 }));
+            logChange(createChangeEntry({ tool: "defense_scheduled_audit", action: `Create cron job for ${name}`, target: "crontab", dryRun: false, success: install.exitCode === 0 }));
             return { content: [formatToolOutput({ success: install.exitCode === 0, type: "cron", name, cronLine })] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -1586,7 +1715,7 @@ export function registerMetaTools(server: McpServer): void {
               actions.push({ action: "Removed cron job", success: true });
             }
 
-            logChange(createChangeEntry({ tool: "scheduled_audit", action: `Remove scheduled audit ${name}`, target: name, dryRun: false, success: true }));
+            logChange(createChangeEntry({ tool: "defense_scheduled_audit", action: `Remove scheduled audit ${name}`, target: name, dryRun: false, success: true }));
             return { content: [formatToolOutput({ name, actions })] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);

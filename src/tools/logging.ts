@@ -14,9 +14,12 @@ import { executeCommand } from "../core/executor.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
 import { createTextContent, createErrorContent, parseAuditdOutput, parseFail2banOutput, formatToolOutput } from "../core/parsers.js";
 import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
-import { sanitizeArgs, validateFilePath, validateAuditdKey, validateTarget } from "../core/sanitizer.js";
+import { sanitizeArgs, validateFilePath, validateAuditdKey, validateTarget, validateToolPath } from "../core/sanitizer.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
 import { existsSync } from "node:fs";
+
+// ── TOOL-015 remediation: allowed directories for log file paths ────────────
+const ALLOWED_LOG_DIRS = ["/var/log", "/var/spool", "/tmp", "/var/lib", "/run/log"];
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -30,13 +33,13 @@ export function registerLoggingTools(server: McpServer): void {
       action: z.enum(["rules", "search", "report", "cis_rules"]).describe("Action: rules=manage auditd rules, search=search audit logs, report=generate audit report, cis_rules=check/generate CIS rules"),
       // rules params
       rules_action: z.enum(["list", "add", "delete"]).optional().describe("Rule action (rules action)"),
-      rule: z.string().optional().describe("Audit rule string (rules add/delete)"),
+      rule: z.string().min(1).optional().describe("Audit rule string (rules add/delete)"),
       // search params
-      key: z.string().optional().describe("Audit key to search for (search action)"),
-      syscall: z.string().optional().describe("System call name to filter (search action)"),
-      uid: z.string().optional().describe("User ID to filter (search action)"),
-      start: z.string().optional().describe("Start time e.g. 'today', '1 hour ago' (search/report action)"),
-      end: z.string().optional().describe("End time (search action)"),
+      key: z.string().min(1).regex(/^[a-zA-Z0-9._-]+$/).optional().describe("Audit key to search for (search action)"),
+      syscall: z.string().min(1).regex(/^[a-zA-Z0-9_]+$/).optional().describe("System call name to filter (search action)"),
+      uid: z.string().min(1).regex(/^[0-9]+$/).optional().describe("User ID to filter (search action)"),
+      start: z.string().min(1).optional().describe("Start time e.g. 'today', '1 hour ago' (search/report action)"),
+      end: z.string().min(1).optional().describe("End time (search action)"),
       success: z.enum(["yes", "no"]).optional().describe("Filter by success/failure (search action)"),
       limit: z.number().optional().default(50).describe("Maximum number of lines to return (search action)"),
       // report params
@@ -251,8 +254,8 @@ export function registerLoggingTools(server: McpServer): void {
     {
       action: z.enum(["status", "ban", "unban", "reload", "audit"]).describe("Action: status, ban, unban, reload, audit"),
       // status/ban/unban params
-      jail: z.string().optional().describe("Jail name (status: optional, ban/unban: required)"),
-      ip: z.string().optional().describe("IP address to ban or unban (ban/unban action)"),
+      jail: z.string().min(1).regex(/^[a-zA-Z0-9._-]+$/).optional().describe("Jail name (status: optional, ban/unban: required)"),
+      ip: z.string().min(1).optional().describe("IP address to ban or unban (ban/unban action)"),
       // shared
       dry_run: z.boolean().optional().describe("Preview without executing"),
     },
@@ -393,7 +396,8 @@ export function registerLoggingTools(server: McpServer): void {
           try {
             let effectiveLogFile: string;
             if (log_file) {
-              effectiveLogFile = log_file;
+              // TOOL-015: Validate user-supplied log file path against traversal
+              effectiveLogFile = validateToolPath(log_file, ALLOWED_LOG_DIRS, "Log file path");
             } else {
               const adapterPath = (await getDistroAdapter()).paths.syslog;
               const candidates = [adapterPath];

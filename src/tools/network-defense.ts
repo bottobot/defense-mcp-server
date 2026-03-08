@@ -18,7 +18,68 @@ import {
   formatToolOutput,
 } from "../core/parsers.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
-import { validateInterface, sanitizeArgs } from "../core/sanitizer.js";
+import { validateInterface, sanitizeArgs, validateTarget as sanitizerValidateTarget, validateToolPath } from "../core/sanitizer.js";
+import { validateBpfFilter } from "./ebpf-security.js";
+import * as net from "node:net";
+
+// ── TOOL-022 remediation: strict network parameter validation helpers ───────
+
+/** Allowed protocol names for network operations */
+const ALLOWED_PROTOCOLS = new Set(["tcp", "udp", "icmp", "sctp"]);
+
+/** Validate an IP address strictly using net.isIP() */
+function validateIPAddress(ip: string, label = "IP address"): string {
+  const trimmed = ip.trim();
+  // Could be CIDR
+  if (trimmed.includes("/")) {
+    return validateCIDR(trimmed, label);
+  }
+  if (net.isIP(trimmed) === 0) {
+    throw new Error(`${label} is not a valid IP address: '${trimmed}'`);
+  }
+  return trimmed;
+}
+
+/** Validate a CIDR range (e.g., 192.168.1.0/24) */
+function validateCIDR(cidr: string, label = "CIDR range"): string {
+  const trimmed = cidr.trim();
+  const cidrRe = /^([0-9a-fA-F.:]+)\/(\d{1,3})$/;
+  const match = cidrRe.exec(trimmed);
+  if (!match) {
+    throw new Error(`${label} is not a valid CIDR notation: '${trimmed}'`);
+  }
+  const ip = match[1];
+  const prefix = parseInt(match[2], 10);
+  const ipVersion = net.isIP(ip);
+  if (ipVersion === 0) {
+    throw new Error(`${label} contains invalid IP address: '${ip}'`);
+  }
+  const maxPrefix = ipVersion === 4 ? 32 : 128;
+  if (prefix < 0 || prefix > maxPrefix) {
+    throw new Error(`${label} has invalid prefix length: /${prefix} (must be 0-${maxPrefix})`);
+  }
+  return trimmed;
+}
+
+/** Validate port number is in range 1-65535 */
+function validatePortNumber(port: number, label = "Port"): number {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${label} must be an integer between 1 and 65535, got: ${port}`);
+  }
+  return port;
+}
+
+/** Validate protocol name against whitelist */
+function validateProtocol(proto: string, label = "Protocol"): string {
+  const lower = proto.trim().toLowerCase();
+  if (!ALLOWED_PROTOCOLS.has(lower)) {
+    throw new Error(`${label} '${proto}' is not allowed. Allowed: ${[...ALLOWED_PROTOCOLS].join(", ")}`);
+  }
+  return lower;
+}
+
+// ── TOOL-022: Allowed directories for log/output paths ─────────────────────
+const ALLOWED_CAPTURE_DIRS = ["/tmp", "/var/log", "/home", "/root", "/opt"];
 
 // ── Known safe ports for audit reference ───────────────────────────────────
 
@@ -146,7 +207,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
     "Network capture: custom tcpdump capture, DNS query monitoring, or ARP traffic monitoring.",
     {
       action: z.enum(["custom", "dns", "arp"]).describe("Action: custom=tcpdump capture, dns=DNS monitoring, arp=ARP monitoring"),
-      interface: z.string().optional().default("any").describe("Network interface to capture on"),
+      interface: z.string().min(1).optional().default("any").describe("Network interface to capture on"),
       count: z.number().optional().default(100).describe("Number of packets to capture"),
       duration: z.number().optional().default(30).describe("Capture duration in seconds"),
       // custom params
@@ -164,8 +225,16 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             if (iface !== "any") validateInterface(iface);
 
             const args: string[] = ["-i", iface, "-c", String(count), "-n"];
-            if (output_file) { sanitizeArgs([output_file]); args.push("-w", output_file); }
-            if (filter) { sanitizeArgs([filter]); args.push(...filter.split(/\s+/)); }
+            if (output_file) {
+              // TOOL-022: Validate output file path for traversal
+              validateToolPath(output_file, ALLOWED_CAPTURE_DIRS, "Capture output file path");
+              args.push("-w", output_file);
+            }
+            if (filter) {
+              // TOOL-018/022: Validate BPF filter expression
+              const validatedFilter = validateBpfFilter(filter);
+              args.push(...validatedFilter.split(/\s+/));
+            }
 
             const fullCmd = `sudo tcpdump ${args.join(" ")}`;
 

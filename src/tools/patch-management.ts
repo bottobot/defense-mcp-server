@@ -618,7 +618,7 @@ export function registerPatchManagementTools(server: McpServer): void {
 
   // Tool 5: vulnerability_intel (merged: lookup_cve, scan_packages_cves, get_patch_urgency)
   server.tool(
-    "vulnerability_intel",
+    "patch_vulnerability_intel",
     "Vulnerability intelligence: look up CVEs, scan packages for known CVEs, or check patch urgency for a package.",
     {
       action: z.enum(["lookup", "scan", "urgency"]).describe("Action: lookup=CVE lookup, scan=scan packages for CVEs, urgency=check patch urgency"),
@@ -629,7 +629,7 @@ export function registerPatchManagementTools(server: McpServer): void {
       // urgency params
       packageName: z.string().optional().describe("Package name to check (urgency action)"),
       // shared
-      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;

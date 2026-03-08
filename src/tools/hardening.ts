@@ -8,6 +8,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import * as nodePath from "node:path";
 import { executeCommand } from "../core/executor.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
 import {
@@ -30,6 +31,70 @@ import {
 } from "../core/sanitizer.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
 import { readFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
+
+// ── TOOL-019 remediation: privilege check helper ───────────────────────────
+
+/**
+ * Check whether the current process has sufficient privileges for
+ * operations that modify system files (e.g., files in /etc/).
+ * Returns { ok: true } if privileged, or { ok: false, message: string } if not.
+ */
+function checkPrivileges(): { ok: boolean; message?: string } {
+  // Check if running as root
+  if (typeof process.getuid === "function" && process.getuid() === 0) {
+    return { ok: true };
+  }
+
+  // Check if sudo is available and the user has passwordless sudo
+  try {
+    execSync("sudo -n true 2>/dev/null", { timeout: 3000, stdio: "ignore" });
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      message:
+        "Insufficient privileges. This operation requires root access or sudo. " +
+        "Run this tool as root or ensure sudo is available without a password prompt.",
+    };
+  }
+}
+
+// ── TOOL-007 remediation: path validation for harden_permissions ───────────
+
+/** Allowed root directories for harden_permissions fix/check actions */
+const ALLOWED_PERMISSION_DIRS = [
+  "/etc",
+  "/boot",
+  "/var",
+  "/usr",
+  "/home",
+  "/root",
+  "/tmp",
+  "/opt",
+  "/srv",
+];
+
+/**
+ * Validate that a path is within allowed directories and doesn't use traversal.
+ * Defense-in-depth: reject `..` before resolution, then verify resolved path.
+ */
+function validatePathWithinAllowed(inputPath: string): string {
+  // Defense-in-depth: reject any path containing `..` sequences
+  if (inputPath.includes("..")) {
+    throw new Error(`Path traversal detected: '..' sequences are not allowed in path '${inputPath}'`);
+  }
+  const resolved = nodePath.resolve(inputPath);
+  const isAllowed = ALLOWED_PERMISSION_DIRS.some(
+    (dir) => resolved === dir || resolved.startsWith(dir + "/")
+  );
+  if (!isAllowed) {
+    throw new Error(
+      `Path '${resolved}' is outside allowed directories. Allowed roots: ${ALLOWED_PERMISSION_DIRS.join(", ")}`
+    );
+  }
+  return resolved;
+}
 
 // ── Hardening recommendation database ──────────────────────────────────────
 
@@ -265,6 +330,12 @@ export function registerHardeningTools(server: McpServer): void {
               return { content: [createErrorContent("Error: 'value' is required for set action")], isError: true };
             }
 
+            // TOOL-019: Pre-execution privilege check for sysctl set
+            const privCheck = checkPrivileges();
+            if (!privCheck.ok) {
+              return { content: [createErrorContent(`Cannot set sysctl value: ${privCheck.message}`)], isError: true };
+            }
+
             const validatedKey = validateSysctlKey(params.key);
             sanitizeArgs([params.value]);
 
@@ -334,11 +405,9 @@ export function registerHardeningTools(server: McpServer): void {
               });
 
               const appendResult = await executeCommand({
-                command: "bash",
-                args: [
-                  "-c",
-                  `printf '%s\\n' '${validatedKey} = ${params.value}' | sudo tee -a ${persistPath} > /dev/null`,
-                ],
+                command: "sudo",
+                args: ["tee", "-a", persistPath],
+                stdin: `${validatedKey} = ${params.value}\n`,
                 toolName: "harden_sysctl",
               });
 
@@ -760,9 +829,12 @@ export function registerHardeningTools(server: McpServer): void {
               return { content: [createErrorContent("Error: 'path' is required for check action")], isError: true };
             }
 
+            // TOOL-007: Validate path is within allowed directories
+            const validatedCheckPath = validatePathWithinAllowed(params.path);
+
             const statResult = await executeCommand({
               command: "stat",
-              args: ["-c", "%a %U %G %n", params.path],
+              args: ["-c", "%a %U %G %n", validatedCheckPath],
               toolName: "harden_permissions",
             });
 
@@ -770,14 +842,14 @@ export function registerHardeningTools(server: McpServer): void {
 
             const lsResult = await executeCommand({
               command: "ls",
-              args: ["-la", params.path],
+              args: ["-la", validatedCheckPath],
               toolName: "harden_permissions",
             });
 
             return {
               content: [
                 createTextContent(
-                  `File permissions audit for: ${params.path}\n\nstat: ${beforeState}\n\n${lsResult.stdout}`
+                  `File permissions audit for: ${validatedCheckPath}\n\nstat: ${beforeState}\n\n${lsResult.stdout}`
                 ),
               ],
             };
@@ -793,14 +865,25 @@ export function registerHardeningTools(server: McpServer): void {
             if (!params.path) {
               return { content: [createErrorContent("Error: 'path' is required for fix action")], isError: true };
             }
+
+            // TOOL-007: Validate path is within allowed directories (before privilege check)
+            const validatedFixPath = validatePathWithinAllowed(params.path);
             if (!params.mode && !params.owner && !params.group) {
               return { content: [createErrorContent("Error: at least one of 'mode', 'owner', or 'group' is required for fix action")], isError: true };
+            }
+
+            // TOOL-019: Pre-execution privilege check for chmod/chown on system files
+            if (!(params.dry_run ?? getConfig().dryRun)) {
+              const privCheckFix = checkPrivileges();
+              if (!privCheckFix.ok) {
+                return { content: [createErrorContent(`Cannot change permissions: ${privCheckFix.message}`)], isError: true };
+              }
             }
 
             // Get current permissions
             const statResult = await executeCommand({
               command: "stat",
-              args: ["-c", "%a %U %G %n", params.path],
+              args: ["-c", "%a %U %G %n", validatedFixPath],
               toolName: "harden_permissions",
             });
 
@@ -809,7 +892,7 @@ export function registerHardeningTools(server: McpServer): void {
 
             if (params.mode) {
               sanitizeArgs([params.mode]);
-              const chmodArgs = params.recursive ? ["-R", params.mode, params.path] : [params.mode, params.path];
+              const chmodArgs = params.recursive ? ["-R", params.mode, validatedFixPath] : [params.mode, validatedFixPath];
               commands.push(`sudo chmod ${chmodArgs.join(" ")}`);
             }
 
@@ -817,8 +900,8 @@ export function registerHardeningTools(server: McpServer): void {
               const ownerGroup = `${params.owner ?? ""}${params.group ? `:${params.group}` : ""}`;
               sanitizeArgs([ownerGroup]);
               const chownArgs = params.recursive
-                ? ["-R", ownerGroup, params.path]
-                : [ownerGroup, params.path];
+                ? ["-R", ownerGroup, validatedFixPath]
+                : [ownerGroup, validatedFixPath];
               commands.push(`sudo chown ${chownArgs.join(" ")}`);
             }
 
@@ -826,7 +909,7 @@ export function registerHardeningTools(server: McpServer): void {
               const entry = createChangeEntry({
                 tool: "harden_permissions",
                 action: `[DRY-RUN] Change permissions`,
-                target: params.path,
+                target: validatedFixPath,
                 before: beforeState,
                 dryRun: true,
                 success: true,
@@ -845,8 +928,8 @@ export function registerHardeningTools(server: McpServer): void {
             // Execute chmod if needed
             if (params.mode) {
               const chmodArgs = params.recursive
-                ? ["chmod", "-R", params.mode, params.path]
-                : ["chmod", params.mode, params.path];
+                ? ["chmod", "-R", params.mode, validatedFixPath]
+                : ["chmod", params.mode, validatedFixPath];
               const chmodResult = await executeCommand({
                 command: "sudo",
                 args: chmodArgs,
@@ -869,8 +952,8 @@ export function registerHardeningTools(server: McpServer): void {
             if (params.owner || params.group) {
               const ownerGroup = `${params.owner ?? ""}${params.group ? `:${params.group}` : ""}`;
               const chownArgs = params.recursive
-                ? ["chown", "-R", ownerGroup, params.path]
-                : ["chown", ownerGroup, params.path];
+                ? ["chown", "-R", ownerGroup, validatedFixPath]
+                : ["chown", ownerGroup, validatedFixPath];
               const chownResult = await executeCommand({
                 command: "sudo",
                 args: chownArgs,
@@ -892,7 +975,7 @@ export function registerHardeningTools(server: McpServer): void {
             // Get after state
             const afterStatResult = await executeCommand({
               command: "stat",
-              args: ["-c", "%a %U %G %n", params.path],
+              args: ["-c", "%a %U %G %n", validatedFixPath],
               toolName: "harden_permissions",
             });
             const afterState = afterStatResult.stdout.trim();
@@ -900,7 +983,7 @@ export function registerHardeningTools(server: McpServer): void {
             const entry = createChangeEntry({
               tool: "harden_permissions",
               action: `Change permissions`,
-              target: params.path,
+              target: validatedFixPath,
               before: beforeState,
               after: afterState,
               dryRun: false,
@@ -911,7 +994,7 @@ export function registerHardeningTools(server: McpServer): void {
             return {
               content: [
                 createTextContent(
-                  `Permissions updated for ${params.path}\nBefore: ${beforeState}\nAfter: ${afterState}\nCommands: ${commands.join("; ")}`
+                  `Permissions updated for ${validatedFixPath}\nBefore: ${beforeState}\nAfter: ${afterState}\nCommands: ${commands.join("; ")}`
                 ),
               ],
             };
@@ -1207,11 +1290,11 @@ export function registerHardeningTools(server: McpServer): void {
             // Backup existing override if present
             try { backupFile(overrideFile); } catch { /* may not exist */ }
 
-            // Write security.conf using printf piped to sudo tee
-            const formattedContent = `[Service]\\n${directives.join("\\n")}`;
+            // Write security.conf using sudo tee with stdin
             const writeResult = await executeCommand({
-              command: "bash",
-              args: ["-c", `printf '${formattedContent}\\n' | sudo tee ${overrideFile} > /dev/null`],
+              command: "sudo",
+              args: ["tee", overrideFile],
+              stdin: overrideContent + "\n",
               toolName: "harden_systemd",
             });
 
@@ -1488,8 +1571,9 @@ export function registerHardeningTools(server: McpServer): void {
             } else if (!limitsHasEntry) {
               try { backupFile(limitsPath); } catch { /* may not exist */ }
               await executeCommand({
-                command: "bash",
-                args: ["-c", `printf '%s\\n' '* hard core 0' | sudo tee -a ${limitsPath} > /dev/null`],
+                command: "sudo",
+                args: ["tee", "-a", limitsPath],
+                stdin: `* hard core 0\n`,
                 toolName: "harden_kernel",
               });
               actions.push({ target: limitsPath, action: "Added '* hard core 0'", status: "applied" });
@@ -1509,8 +1593,9 @@ export function registerHardeningTools(server: McpServer): void {
             } else {
               try { backupFile(coredumpPath); } catch { /* may not exist */ }
               await executeCommand({
-                command: "bash",
-                args: ["-c", `printf '[Coredump]\\nStorage=none\\nProcessSizeMax=0\\n' | sudo tee ${coredumpPath} > /dev/null`],
+                command: "sudo",
+                args: ["tee", coredumpPath],
+                stdin: `[Coredump]\nStorage=none\nProcessSizeMax=0\n`,
                 toolName: "harden_kernel",
               });
               actions.push({ target: coredumpPath, action: "Written with Storage=none, ProcessSizeMax=0", status: "applied" });
@@ -2010,8 +2095,9 @@ export function registerHardeningTools(server: McpServer): void {
                   results.push({ target: filePath, action: `Updated UMASK to ${umask_value}`, status: "updated" });
                 } else {
                   await executeCommand({
-                    command: "bash",
-                    args: ["-c", `printf '%s\\n' 'UMASK\t\t${umask_value}' | sudo tee -a ${filePath} > /dev/null`],
+                    command: "sudo",
+                    args: ["tee", "-a", filePath],
+                    stdin: `UMASK\t\t${umask_value}\n`,
                     toolName: "harden_misc",
                   });
                   results.push({ target: filePath, action: `Appended UMASK ${umask_value}`, status: "appended" });
@@ -2031,8 +2117,9 @@ export function registerHardeningTools(server: McpServer): void {
                   results.push({ target: filePath, action: `Updated umask to ${umask_value}`, status: "updated" });
                 } else {
                   await executeCommand({
-                    command: "bash",
-                    args: ["-c", `printf '%s\\n' 'umask ${umask_value}' | sudo tee -a ${filePath} > /dev/null`],
+                    command: "sudo",
+                    args: ["tee", "-a", filePath],
+                    stdin: `umask ${umask_value}\n`,
                     toolName: "harden_misc",
                   });
                   results.push({ target: filePath, action: `Appended umask ${umask_value}`, status: "appended" });
@@ -2126,11 +2213,10 @@ export function registerHardeningTools(server: McpServer): void {
 
               try { backupFile(filePath); } catch { /* may not exist */ }
 
-              const escapedText = text.replace(/'/g, "'\\''");
-
               const writeResult = await executeCommand({
-                command: "bash",
-                args: ["-c", `printf '%s\\n' '${escapedText}' | sudo tee ${filePath} > /dev/null`],
+                command: "sudo",
+                args: ["tee", filePath],
+                stdin: text + "\n",
                 toolName: "harden_misc",
               });
 
@@ -2177,7 +2263,7 @@ export function registerHardeningTools(server: McpServer): void {
   // ── 8. memory_protection (merged: audit_memory_protections, enforce_aslr, report_exploit_mitigations) ──
 
   server.tool(
-    "memory_protection",
+    "harden_memory",
     "Memory and exploit mitigations. Actions: audit=check ASLR/PIE/RELRO/NX/canary on binaries, enforce_aslr=enable full ASLR, report=system-wide mitigation status",
     {
       action: z
@@ -2287,7 +2373,7 @@ export function registerHardeningTools(server: McpServer): void {
         // ── enforce_aslr ─────────────────────────────────────────────
         case "enforce_aslr": {
           try {
-            const safety = await SafeguardRegistry.getInstance().checkSafety("memory_protection", {});
+            const safety = await SafeguardRegistry.getInstance().checkSafety("harden_memory", {});
 
             let currentValue = "unknown";
             try {
@@ -2316,7 +2402,7 @@ export function registerHardeningTools(server: McpServer): void {
             });
 
             const entry = createChangeEntry({
-              tool: "memory_protection",
+              tool: "harden_memory",
               action: "Set ASLR to full (2)",
               target: "kernel.randomize_va_space",
               before: currentValue,

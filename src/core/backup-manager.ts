@@ -11,8 +11,9 @@ import {
   unlinkSync,
   readdirSync,
   statSync,
+  lstatSync,
 } from "node:fs";
-import { join, basename, dirname } from "node:path";
+import { join, basename, dirname, resolve as pathResolve } from "node:path";
 import { secureWriteFileSync, secureMkdirSync, secureCopyFileSync } from "./secure-fs.js";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -38,6 +39,56 @@ export interface BackupManifest {
 const FilePathSchema = z.string().min(1).max(4096);
 const BackupIdSchema = z.string().uuid();
 const DaysOldSchema = z.number().int().min(1).max(3650);
+
+// ── SECURITY (CORE-015): Path validation helper ──────────────────────────────
+
+/**
+ * Validate that a backup path is safe:
+ * 1. No `..` traversal sequences
+ * 2. Normalized via path.resolve()
+ * 3. Resolved path is within the backup base directory
+ * 4. Not a symlink (prevent symlink attacks)
+ *
+ * @param filePath The path to validate
+ * @param baseDir The backup base directory that paths must stay within
+ * @throws {Error} If the path fails validation
+ */
+export function validateBackupPath(filePath: string, baseDir: string): void {
+  // 1. Reject paths containing '..' traversal sequences
+  if (filePath.includes("..")) {
+    throw new Error(
+      `SECURITY: Backup path contains '..' traversal sequence: ${filePath}`
+    );
+  }
+
+  // 2. Normalize with path.resolve()
+  const resolved = pathResolve(filePath);
+  const resolvedBase = pathResolve(baseDir);
+
+  // 3. Verify the resolved path is within the backup base directory
+  if (!resolved.startsWith(resolvedBase + "/") && resolved !== resolvedBase) {
+    throw new Error(
+      `SECURITY: Backup path '${resolved}' escapes base directory '${resolvedBase}'`
+    );
+  }
+
+  // 4. Reject symlinks (if the path exists)
+  if (existsSync(filePath)) {
+    try {
+      const lstats = lstatSync(filePath);
+      if (lstats.isSymbolicLink()) {
+        throw new Error(
+          `SECURITY: Backup path '${filePath}' is a symlink. Refusing to use.`
+        );
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.startsWith("SECURITY:")) {
+        throw err;
+      }
+      // lstat failure on existing path is suspicious but non-fatal for validation
+    }
+  }
+}
 
 // ── BackupManager ────────────────────────────────────────────────────────────
 
@@ -97,6 +148,9 @@ export class BackupManager {
     const backupName = `${ts}_${name}`;
     const backupPath = join(this.backupDir, backupName);
 
+    // SECURITY (CORE-015): Validate the backup destination path
+    validateBackupPath(backupPath, this.backupDir);
+
     secureCopyFileSync(validated, backupPath);
 
     const stat = statSync(backupPath);
@@ -140,6 +194,9 @@ export class BackupManager {
     if (!existsSync(entry.backupPath)) {
       throw new Error(`Backup file missing on disk: ${entry.backupPath}`);
     }
+
+    // SECURITY (CORE-015): Validate the backup source path before restore
+    validateBackupPath(entry.backupPath, this.backupDir);
 
     secureMkdirSync(dirname(entry.originalPath));
     secureCopyFileSync(entry.backupPath, entry.originalPath);

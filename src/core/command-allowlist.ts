@@ -18,7 +18,7 @@
  * @module command-allowlist
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, type Stats } from "node:fs";
 // INTENTIONAL EXCEPTION: This module uses execFileSync/execFile directly from node:child_process
 // because the command allowlist must be initialized before spawn-safe.ts can function.
 // spawn-safe.ts depends on this module for allowlist resolution, so routing through
@@ -40,6 +40,8 @@ export interface AllowlistEntry {
   resolvedPath?: string;
   /** Which distro package should own this binary (for integrity verification) */
   expectedPackage?: string;
+  /** Inode number recorded at startup for TOCTOU detection (CORE-007) */
+  resolvedInode?: number;
 }
 
 /** Result of a binary ownership verification check */
@@ -145,6 +147,7 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   // ── Compliance / audit frameworks ──────────────────────────────────────
   { binary: "lynis",  candidates: ["/usr/bin/lynis", "/usr/sbin/lynis", "/usr/local/bin/lynis"] },
   { binary: "oscap",  candidates: ["/usr/bin/oscap", "/usr/local/bin/oscap"] },
+  { binary: "tiger",  candidates: ["/usr/bin/tiger", "/usr/sbin/tiger", "/usr/local/bin/tiger"] },
 
   // ── Container / sandboxing ─────────────────────────────────────────────
   { binary: "docker",               candidates: ["/usr/bin/docker", "/usr/local/bin/docker"] },
@@ -245,10 +248,6 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   { binary: "pgrep",  candidates: ["/usr/bin/pgrep", "/bin/pgrep"] },
   { binary: "lsof",   candidates: ["/usr/bin/lsof", "/usr/sbin/lsof"] },
 
-  // ── Shell interpreters (for sh -c, bash -c) ────────────────────────────
-  { binary: "sh",   candidates: ["/usr/bin/sh", "/bin/sh"] },
-  { binary: "bash", candidates: ["/usr/bin/bash", "/bin/bash"] },
-
   // ── Boot / secure boot ─────────────────────────────────────────────────
   { binary: "mokutil",     candidates: ["/usr/bin/mokutil"] },
   { binary: "update-grub", candidates: ["/usr/sbin/update-grub", "/sbin/update-grub"] },
@@ -332,6 +331,18 @@ const reversePathMap = new Map<string, AllowlistEntry>();
 /** Whether `initializeAllowlist()` has been called. */
 let initialized = false;
 
+/**
+ * SECURITY (CORE-007): Whether to re-verify binary paths at execution time.
+ * When enabled, resolveCommand() confirms that the binary at the resolved path
+ * still exists as a regular file with the same inode as recorded at startup,
+ * mitigating TOCTOU (time-of-check-time-of-use) attacks where a binary is
+ * replaced between startup resolution and runtime execution.
+ *
+ * Configurable via KALI_DEFENSE_RUNTIME_PATH_VERIFY env var.
+ * Default: true (verify at runtime). Set to "false" to disable for performance.
+ */
+let runtimePathVerification = process.env.KALI_DEFENSE_RUNTIME_PATH_VERIFY !== "false";
+
 // Populate the map immediately so `isAllowlisted()` works before init
 for (const entry of ALLOWLIST_DEFINITIONS) {
   allowlistMap.set(entry.binary, entry);
@@ -356,12 +367,23 @@ export function initializeAllowlist(): void {
   // Clear reverse map for re-initialization
   reversePathMap.clear();
 
+  // Re-read runtime path verification setting on re-init
+  runtimePathVerification = process.env.KALI_DEFENSE_RUNTIME_PATH_VERIFY !== "false";
+
   for (const entry of ALLOWLIST_DEFINITIONS) {
     entry.resolvedPath = undefined;
+    entry.resolvedInode = undefined;
 
     for (const candidate of entry.candidates) {
       if (existsSync(candidate)) {
         entry.resolvedPath = candidate;
+        // SECURITY (CORE-007): Record inode at startup for TOCTOU detection
+        try {
+          const stats = lstatSync(candidate);
+          entry.resolvedInode = stats.ino;
+        } catch {
+          // Best effort — inode recording is not critical
+        }
         resolved++;
         break;
       }
@@ -385,7 +407,8 @@ export function initializeAllowlist(): void {
   initialized = true;
   console.error(
     `[command-allowlist] Initialized: ${resolved} binaries resolved, ` +
-    `${unresolved} not found on this system (${ALLOWLIST_DEFINITIONS.length} total allowlisted)`
+    `${unresolved} not found on this system (${ALLOWLIST_DEFINITIONS.length} total allowlisted)` +
+    (runtimePathVerification ? " [runtime path verification ON]" : " [runtime path verification OFF]")
   );
 }
 
@@ -400,6 +423,10 @@ export function resolveCommand(command: string): string {
   // If the command is already an absolute path, use O(1) reverse lookup
   if (command.startsWith("/")) {
     if (reversePathMap.has(command)) {
+      // SECURITY (CORE-007): Re-verify at runtime if enabled
+      if (runtimePathVerification) {
+        verifyBinaryPathAtRuntime(command, reversePathMap.get(command)!);
+      }
       return command;
     }
     // Fallback: linear scan for paths not yet in the reverse map
@@ -426,6 +453,10 @@ export function resolveCommand(command: string): string {
 
   // If already resolved (from initializeAllowlist), return cached path
   if (entry.resolvedPath) {
+    // SECURITY (CORE-007): Re-verify at runtime if enabled
+    if (runtimePathVerification) {
+      verifyBinaryPathAtRuntime(entry.resolvedPath, entry);
+    }
     return entry.resolvedPath;
   }
 
@@ -543,6 +574,65 @@ export function getAllowlistEntries(): ReadonlyArray<Readonly<AllowlistEntry>> {
  */
 export function isInitialized(): boolean {
   return initialized;
+}
+
+/**
+ * Returns whether runtime path verification is currently enabled.
+ */
+export function isRuntimePathVerificationEnabled(): boolean {
+  return runtimePathVerification;
+}
+
+/**
+ * Enable or disable runtime path verification.
+ * Useful for testing or performance-sensitive environments.
+ */
+export function setRuntimePathVerification(enabled: boolean): void {
+  runtimePathVerification = enabled;
+}
+
+/**
+ * SECURITY (CORE-007): Re-verify a binary path at execution time.
+ *
+ * Mitigates TOCTOU attacks where a binary resolved at startup could be
+ * replaced before runtime execution. Checks:
+ * 1. File still exists at the resolved path
+ * 2. File is a regular file (not a symlink to something else)
+ * 3. Inode matches what was recorded at startup (if available)
+ *
+ * @param binaryPath The absolute path to verify
+ * @param entry The allowlist entry with startup inode data
+ * @throws {Error} If the binary fails verification
+ */
+function verifyBinaryPathAtRuntime(binaryPath: string, entry: AllowlistEntry): void {
+  try {
+    const stats = lstatSync(binaryPath);
+
+    // Must still be a regular file (not replaced with a symlink)
+    if (!stats.isFile()) {
+      throw new Error(
+        `SECURITY: Binary '${binaryPath}' is no longer a regular file ` +
+        `(may have been replaced with a symlink). Refusing to execute.`
+      );
+    }
+
+    // If we recorded an inode at startup, verify it hasn't changed
+    if (entry.resolvedInode !== undefined && stats.ino !== entry.resolvedInode) {
+      throw new Error(
+        `SECURITY: Binary '${binaryPath}' inode changed since startup ` +
+        `(was ${entry.resolvedInode}, now ${stats.ino}). Binary may have been replaced. Refusing to execute.`
+      );
+    }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith("SECURITY:")) {
+      throw err; // Re-throw our own security errors
+    }
+    // File doesn't exist or can't be stat'd
+    throw new Error(
+      `SECURITY: Binary '${binaryPath}' could not be verified at runtime: ` +
+      `${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
 
 /**

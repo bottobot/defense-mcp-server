@@ -1,4 +1,16 @@
 #!/usr/bin/env node
+/**
+ * ⚠️  SECURITY WARNING: This is a DEVELOPMENT/ASSESSMENT helper script.
+ *
+ * DO NOT include this file in production distributions or npm packages.
+ * This script spawns child processes without the safety controls of spawn-safe.
+ * It is intended for local development and assessment purposes ONLY.
+ *
+ * The package.json "files" field already excludes this file from npm packages.
+ * If publishing, verify this file is NOT included in the tarball.
+ *
+ * @see CICD-021 in SECURITY-AUDIT-REPORT.md
+ */
 // MCP Assessment Runner - Calls defense tools via JSON-RPC stdio protocol
 import { spawn } from 'node:child_process';
 import { resolve, dirname } from 'node:path';

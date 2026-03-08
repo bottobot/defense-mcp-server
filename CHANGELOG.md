@@ -6,6 +6,75 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.5.0-beta.5] — 2026-03-08
+
+### GA Readiness — Phase 10
+- **Tool naming consistency:** 7 tools renamed to follow `prefix_subject` convention
+- **Specification rewrite:** Complete rewrite of kali-defense-mcp-server-spec.md (12 sections)
+- **Dependency pinning:** Runtime deps pinned to exact versions, dev deps to tilde ranges
+- **Encrypted state storage:** New `src/core/encrypted-state.ts` — AES-256-GCM with PBKDF2 key derivation
+- **Atomic file writes:** New `atomicWriteFileSync()` in `src/core/secure-fs.ts` with write-to-temp-then-rename
+- **Test coverage:** 1054 tests across 49 files (up from 421/12 at audit baseline)
+- **Pen test requirements:** Documented in docs/PENTEST-REQUIREMENTS.md
+- **Documentation sync:** All 7 documentation files updated to v0.5.0 with accurate module/tool counts
+
+### Summary Since Audit (v0.5.0-beta.2 → v0.5.0-beta.5)
+- **78/78 security findings** resolved (12 Critical, 22 High, 29 Medium, 15 Low)
+- **Security score:** 36/100 → target 80+ (pending re-assessment)
+- **Tests:** 421 → 1054 (+150%)
+- **New security infrastructure:** Rate limiter, structured logger, encrypted state, atomic writes, CodeQL SAST, ESLint security, husky pre-commit
+
+---
+
+## [0.5.0-rc.1] — 2026-03-07
+
+### Security — Complete Audit Remediation (Phases 7-9)
+
+#### Phase 7: Medium-Severity Fixes (29/29) ✅
+- **Core hardening (7):** stdin buffer zeroing on error (CORE-011), config rejects `/` in allowedDirs (CORE-012), policy savePolicy uses secure-fs (CORE-013), resolveCommandSafe fails hard instead of bare fallback (CORE-014), backup manager path traversal protection (CORE-015), askpass candidate verification (CORE-016), safe Python module detection via pip show (CORE-017)
+- **Tool validation (12):** Path traversal protection in logging/IDS/firewall/drift-detection/backup tools (TOOL-015/016/017/024/026), BPF filter injection prevention (TOOL-018), privilege pre-checks in hardening (TOOL-019), secure-fs enforcement (TOOL-020), error message sanitization in secrets (TOOL-021), network parameter validation (TOOL-022), encryption algorithm allowlist (TOOL-023), supply chain package name & URL validation (TOOL-025)
+- **CI/CD hardening (10):** Multi-OS matrix (CICD-002), dependency caching (CICD-003), ESLint security plugin (CICD-009), build verification script (CICD-010), secure defaults (CICD-014), signed commits note (CICD-015), architecture doc sync (CICD-017), tilde version ranges for runtime deps (CICD-022), rate limiter (CICD-024), structured JSON logger (CICD-027)
+
+#### Phase 8: Low-Severity Fixes (15/15) ✅
+- **Core robustness (4):** Argument redaction in spawn-safe logs (CORE-018), shell metachar regex backslash fix (CORE-019), sync-only uncaughtException handler (CORE-020), singleton protection via module-scoped instances (CORE-021)
+- **Tool consistency (6):** All dry_run defaults standardized to true (TOOL-027), dry-run parameter additions (TOOL-028), error sanitization helper (TOOL-029), strict identifier regex (TOOL-030), eliminated empty catch blocks (TOOL-031), Zod .min(1) constraints (TOOL-032)
+- **CI/CD & DX (5):** Changelog check script (CICD-004), license compliance checker (CICD-011), test naming convention docs (CICD-016), husky pre-commit hooks (CICD-018), sudo session user tracking (CICD-028)
+
+#### Phase 9: Test Coverage Push
+- 6 new core test files: installer, dependency-validator, distro-adapter, tool-dependencies, rate-limiter, logger
+- 13 new tool test files: all remaining tool modules now have test coverage
+- **Total: 873 tests across 47 test files** (up from 421/12 at audit time)
+- Every source module (26 core + 21 tools) now has a corresponding test file
+
+### New Modules
+- `src/core/rate-limiter.ts` — Per-tool and global invocation rate limiting
+- `src/core/logger.ts` — Structured JSON logging with security event level
+- `eslint.config.mjs` — ESLint security plugin configuration
+- `.husky/pre-commit` — Type-check pre-commit hook
+- `.github/workflows/codeql.yml` — CodeQL SAST workflow
+
+---
+
+## [0.5.0-beta.3] — 2026-03-07
+
+### Security — Audit Remediation Phase 6
+- **CRITICAL fixes (12 findings):** Hardened rollback command validation (CORE-003), eliminated shell invocations across 5 tool modules (TOOL-001–005), fixed printf format string injection in mcp-call.sh (CICD-020), added npm audit script (CICD-006), synchronized lockfile (CICD-023)
+- **HIGH fixes (22 findings):** Password Buffer handling (CORE-005), SUDO_ASKPASS integrity checks (CORE-006), TOCTOU binary path verification (CORE-007), auto-installer package allowlists (CORE-008), ReDoS regex limits (CORE-009), removed hardcoded paths (CORE-010), path traversal protection in malware/hardening tools (TOOL-006/007), nftables table validation (TOOL-008), secure-fs enforcement for AppArmor/Falco/seccomp writes (TOOL-009/010/011), SSH config input validation (TOOL-012), safe dry_run defaults in compliance tools (TOOL-013/014), disabled source maps (CICD-001), pinned Actions to SHA (CICD-005), added CodeQL SAST (CICD-007), CI coverage enforcement (CICD-008), removed /etc from default allowedDirs (CICD-013), secured run-assessment.mjs distribution (CICD-021)
+
+### Testing
+- 242 new tests across 16 new test files (8 core + 8 tool modules)
+- Total: 663 tests across 28 test files (up from 421/12)
+- All security remediation code paths covered
+
+### CI/CD
+- GitHub Actions pinned to immutable commit SHAs
+- CodeQL SAST workflow added (.github/workflows/codeql.yml)
+- Coverage enforcement step in CI pipeline
+- npm audit security check script added
+- .npmignore created to exclude dev-only files from distribution
+
+---
+
 ## [0.5.0-beta.2] — 2026-03-07
 
 ### Phase 5: Hardening & Robustness

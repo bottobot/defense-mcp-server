@@ -14,6 +14,66 @@ import { validateFilePath } from "../core/sanitizer.js";
 import { detectDistro } from "../core/distro.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
 
+// ── TOOL-025 remediation: supply chain input validation ────────────────────
+
+/** npm package name validation regex (scoped and unscoped) */
+const NPM_PACKAGE_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+
+/** Maximum npm package name length */
+const NPM_PACKAGE_NAME_MAX_LENGTH = 214;
+
+/**
+ * Validate a package name against npm naming rules.
+ */
+function validatePackageNameNpm(name: string): string {
+  if (!name || typeof name !== "string") {
+    throw new Error("Package name must be a non-empty string");
+  }
+
+  const trimmed = name.trim();
+
+  if (trimmed.length > NPM_PACKAGE_NAME_MAX_LENGTH) {
+    throw new Error(
+      `Package name too long (${trimmed.length} chars). Maximum is ${NPM_PACKAGE_NAME_MAX_LENGTH} characters.`
+    );
+  }
+
+  if (!NPM_PACKAGE_NAME_RE.test(trimmed)) {
+    throw new Error(
+      `Invalid package name: '${trimmed}'. Must match npm naming rules: lowercase, alphanumeric, hyphens, dots, underscores, tildes. Scoped packages must start with @.`
+    );
+  }
+
+  return trimmed;
+}
+
+/**
+ * Validate a registry URL.
+ * Must be a valid URL and must use HTTPS.
+ */
+function validateRegistryUrl(url: string): string {
+  if (!url || typeof url !== "string") {
+    throw new Error("Registry URL must be a non-empty string");
+  }
+
+  const trimmed = url.trim();
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`Invalid registry URL: '${trimmed}'. Must be a valid URL.`);
+  }
+
+  if (parsed.protocol !== "https:") {
+    throw new Error(
+      `Registry URL must use HTTPS. Got: '${parsed.protocol}'. Reject insecure HTTP connections.`
+    );
+  }
+
+  return trimmed;
+}
+
 export function registerSupplyChainSecurityTools(server: McpServer): void {
 
   server.tool(
@@ -30,7 +90,7 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
       // verify_slsa params
       source: z.string().optional().describe("Expected source repository URI (verify_slsa action)"),
       // shared
-      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;
@@ -123,6 +183,13 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
               return { content: [createErrorContent("artifact is required for sign action")], isError: true };
             }
 
+            // TOOL-025: Validate key path if provided
+            if (keyPath) {
+              if (keyPath.includes("..")) {
+                return { content: [createErrorContent("Key path contains forbidden traversal sequence (..).")], isError: true };
+              }
+            }
+
             const safety = await SafeguardRegistry.getInstance().checkSafety("cosign_signing", { artifact });
             if (!safety.safe) {
               return { content: [formatToolOutput({ blocked: true, ...safety })], isError: true };
@@ -174,6 +241,11 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
           try {
             if (!artifact) {
               return { content: [createErrorContent("artifact is required for verify_slsa action")], isError: true };
+            }
+
+            // TOOL-025: Validate source URL if provided (must be HTTPS)
+            if (source) {
+              validateRegistryUrl(source);
             }
 
             // Check for slsa-verifier

@@ -21,18 +21,67 @@ import {
   type ExecFileSyncOptions,
   type ChildProcess,
 } from "node:child_process";
-import { resolveCommand, isAllowlisted } from "./command-allowlist.js";
+import { resolveCommand } from "./command-allowlist.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface SpawnSafeOptions extends SpawnOptions {
-  /** If true, skip allowlist check (use with extreme caution) */
-  bypassAllowlist?: boolean;
-}
+export interface SpawnSafeOptions extends SpawnOptions {}
 
-export interface ExecFileSafeOptions extends ExecFileSyncOptions {
-  /** If true, skip allowlist check */
-  bypassAllowlist?: boolean;
+export interface ExecFileSafeOptions extends ExecFileSyncOptions {}
+
+// ── Argument Redaction ───────────────────────────────────────────────────────
+
+/**
+ * SECURITY (CORE-018): Patterns whose NEXT argument should be redacted in logs.
+ * Matches flags like --password, --token, --key, --secret (with = or space-separated values).
+ */
+const SENSITIVE_FLAG_RE = /^--?(password|token|key|secret|passphrase|credential|auth)$/i;
+
+/**
+ * Redact sensitive arguments from a command's argument array for safe logging.
+ *
+ * Rules:
+ * 1. If the command is "sudo", redact any argument immediately after `-S` (stdin password flag)
+ * 2. If any argument matches sensitive flag patterns (--password, --token, --key, --secret),
+ *    the NEXT argument is replaced with `[REDACTED]`
+ * 3. If a sensitive flag uses `=` syntax (e.g. `--password=foo`), the value portion is redacted
+ *
+ * @param command - The command being executed
+ * @param args - The original arguments array
+ * @returns A new array safe for logging (original is not mutated)
+ */
+export function redactArgs(command: string, args: readonly string[]): string[] {
+  const redacted = [...args];
+  const isSudo = command === "sudo" || command.endsWith("/sudo");
+
+  for (let i = 0; i < redacted.length; i++) {
+    const arg = redacted[i];
+
+    // Rule 1: For sudo, redact the argument after -S (stdin password)
+    if (isSudo && arg === "-S" && i + 1 < redacted.length) {
+      // Don't redact known sudo flags that follow -S
+      const next = redacted[i + 1];
+      if (next && !next.startsWith("-")) {
+        redacted[i + 1] = "[REDACTED]";
+      }
+    }
+
+    // Rule 2: Redact argument after sensitive flags
+    if (SENSITIVE_FLAG_RE.test(arg) && i + 1 < redacted.length) {
+      redacted[i + 1] = "[REDACTED]";
+    }
+
+    // Rule 3: Redact value in --flag=value style for sensitive flags
+    const eqIdx = arg.indexOf("=");
+    if (eqIdx > 0) {
+      const flagPart = arg.substring(0, eqIdx);
+      if (SENSITIVE_FLAG_RE.test(flagPart)) {
+        redacted[i] = `${flagPart}=[REDACTED]`;
+      }
+    }
+  }
+
+  return redacted;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -43,7 +92,7 @@ export interface ExecFileSafeOptions extends ExecFileSyncOptions {
  *
  * @param command - Bare binary name (e.g. "sudo") or absolute path
  * @param args - Arguments to pass to the command
- * @param options - SpawnOptions plus optional `bypassAllowlist`
+ * @param options - SpawnOptions (shell is always forced to false)
  * @throws {Error} If the command is not in the allowlist
  */
 export function spawnSafe(
@@ -51,17 +100,14 @@ export function spawnSafe(
   args: string[],
   options?: SpawnSafeOptions,
 ): ChildProcess {
-  const resolvedCommand = resolveCommandSafe(command, options?.bypassAllowlist);
+  const resolvedCommand = resolveCommandSafe(command);
 
   const safeOptions: SpawnOptions = {
     ...options,
     shell: false, // ALWAYS false — non-negotiable
   };
 
-  // Remove our custom property before passing to Node
-  delete (safeOptions as Record<string, unknown>).bypassAllowlist;
-
-  console.error(`[spawn-safe] ${resolvedCommand} ${args.join(" ")}`);
+  console.error(`[spawn-safe] ${resolvedCommand} ${redactArgs(command, args).join(" ")}`);
   return nodeSpawn(resolvedCommand, args, safeOptions);
 }
 
@@ -70,7 +116,7 @@ export function spawnSafe(
  *
  * @param command - Bare binary name (e.g. "iptables") or absolute path
  * @param args - Arguments to pass to the command
- * @param options - ExecFileSyncOptions plus optional `bypassAllowlist`
+ * @param options - ExecFileSyncOptions (shell is always forced to false)
  * @returns stdout as Buffer (no encoding) or string (with encoding option)
  * @throws {Error} If the command is not in the allowlist or the process exits non-zero
  */
@@ -79,7 +125,10 @@ export function execFileSafe(
   args: string[],
   options?: ExecFileSafeOptions,
 ): Buffer | string {
-  const resolvedCommand = resolveCommandSafe(command, options?.bypassAllowlist);
+  const resolvedCommand = resolveCommandSafe(command);
+
+  // SECURITY (CORE-011): Capture reference to any stdin input buffer for cleanup
+  const inputBuffer = options?.input && Buffer.isBuffer(options.input) ? options.input : null;
 
   const safeOptions: ExecFileSyncOptions = {
     ...options,
@@ -87,9 +136,7 @@ export function execFileSafe(
     timeout: options?.timeout ?? 120_000, // 120 second default for sync operations
   };
 
-  delete (safeOptions as Record<string, unknown>).bypassAllowlist;
-
-  console.error(`[spawn-safe] ${resolvedCommand} ${args.join(" ")}`);
+  console.error(`[spawn-safe] ${resolvedCommand} ${redactArgs(command, args).join(" ")}`);
   try {
     return nodeExecFileSync(resolvedCommand, args, safeOptions);
   } catch (err: unknown) {
@@ -103,6 +150,12 @@ export function execFileSafe(
       );
     }
     throw err;
+  } finally {
+    // SECURITY (CORE-011): Zero any stdin buffer that may contain sensitive data
+    // (e.g., passwords piped to commands). Guaranteed cleanup on all paths.
+    if (inputBuffer) {
+      inputBuffer.fill(0);
+    }
   }
 }
 
@@ -111,25 +164,21 @@ export function execFileSafe(
 /**
  * Resolve a command through the allowlist, or throw.
  *
+ * Every command MUST pass through the allowlist — there is no bypass mechanism.
+ *
  * If `resolveCommand()` throws (e.g. allowlist not yet initialized at startup),
  * falls back to checking `isAllowlisted()` which works even before
  * `initializeAllowlist()` has been called.
  */
-function resolveCommandSafe(
-  command: string,
-  bypassAllowlist?: boolean,
-): string {
-  if (bypassAllowlist) {
-    return command;
-  }
-
+function resolveCommandSafe(command: string): string {
   try {
     return resolveCommand(command);
   } catch {
-    // If allowlist not initialized yet (early startup), check if it's a known binary
-    if (isAllowlisted(command)) {
-      return command; // Use bare name — allowlist knows it but hasn't resolved paths yet
-    }
-    throw new Error(`[spawn-safe] Command not in allowlist: "${command}"`);
+    // SECURITY (CORE-014): Do NOT fall back to bare command name when resolution fails.
+    // Using bare names allows PATH manipulation attacks. If resolveCommand() failed,
+    // the binary either isn't on the system or the allowlist isn't initialized.
+    // In either case, refuse to proceed.
+    console.error(`[spawn-safe] Command resolution failed for "${command}" — refusing bare-name fallback`);
+    throw new Error(`[spawn-safe] Command not in allowlist or not found on system: "${command}"`);
   }
 }

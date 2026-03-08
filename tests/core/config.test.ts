@@ -12,6 +12,7 @@ describe("config", () => {
         "KALI_DEFENSE_DRY_RUN",
         "KALI_DEFENSE_CHANGELOG_PATH",
         "KALI_DEFENSE_BACKUP_DIR",
+        "KALI_DEFENSE_BACKUP_ENABLED",
         "KALI_DEFENSE_AUTO_INSTALL",
         "KALI_DEFENSE_PROTECTED_PATHS",
         "KALI_DEFENSE_REQUIRE_CONFIRMATION",
@@ -56,12 +57,15 @@ describe("config", () => {
             expect(config.maxBuffer).toBe(10 * 1024 * 1024);
         });
 
-        it("should include /tmp, /home, /var/log, /etc in allowedDirs", () => {
+        // SECURITY (CICD-013): /etc is intentionally excluded from default allowedDirs
+        // because it contains sensitive system configuration files. Tools needing
+        // /etc access must explicitly set KALI_DEFENSE_ALLOWED_DIRS.
+        it("should include /tmp, /home, /var/log in allowedDirs (not /etc)", () => {
             const config = getConfig();
             expect(config.allowedDirs).toContain("/tmp");
             expect(config.allowedDirs).toContain("/home");
             expect(config.allowedDirs).toContain("/var/log");
-            expect(config.allowedDirs).toContain("/etc");
+            expect(config.allowedDirs).not.toContain("/etc");
         });
 
         it("should have default logLevel of 'info'", () => {
@@ -69,9 +73,16 @@ describe("config", () => {
             expect(config.logLevel).toBe("info");
         });
 
-        it("should have dryRun disabled by default", () => {
+        // CICD-014: dryRun defaults to true for security (safe preview mode)
+        it("should have dryRun enabled by default", () => {
             const config = getConfig();
-            expect(config.dryRun).toBe(false);
+            expect(config.dryRun).toBe(true);
+        });
+
+        // CICD-014: backupEnabled defaults to true
+        it("should have backupEnabled enabled by default", () => {
+            const config = getConfig();
+            expect(config.backupEnabled).toBe(true);
         });
 
         it("should have autoInstall disabled by default", () => {
@@ -127,16 +138,22 @@ describe("config", () => {
     // ── Environment variable overrides ────────────────────────────────────
 
     describe("environment variable overrides", () => {
-        it("should override dryRun with KALI_DEFENSE_DRY_RUN=true", () => {
+        it("should disable dryRun with KALI_DEFENSE_DRY_RUN=false", () => {
+            process.env.KALI_DEFENSE_DRY_RUN = "false";
+            const config = getConfig();
+            expect(config.dryRun).toBe(false);
+        });
+
+        it("should keep dryRun true when KALI_DEFENSE_DRY_RUN is not 'false'", () => {
             process.env.KALI_DEFENSE_DRY_RUN = "true";
             const config = getConfig();
             expect(config.dryRun).toBe(true);
         });
 
-        it("should keep dryRun false when KALI_DEFENSE_DRY_RUN is not 'true'", () => {
-            process.env.KALI_DEFENSE_DRY_RUN = "false";
+        it("should disable backupEnabled with KALI_DEFENSE_BACKUP_ENABLED=false", () => {
+            process.env.KALI_DEFENSE_BACKUP_ENABLED = "false";
             const config = getConfig();
-            expect(config.dryRun).toBe(false);
+            expect(config.backupEnabled).toBe(false);
         });
 
         it("should override autoInstall with KALI_DEFENSE_AUTO_INSTALL=true", () => {
@@ -320,6 +337,128 @@ describe("config", () => {
             expect(tools).toContain("clamav");
             expect(tools).toContain("nmap");
             expect(tools).toContain("rkhunter");
+        });
+    });
+
+    // ── Config cache behavior ─────────────────────────────────────────────
+
+    describe("config cache", () => {
+        it("should return cached config on repeated calls within TTL", () => {
+            const config1 = getConfig();
+            const config2 = getConfig();
+            expect(config1).toBe(config2); // Same object reference (cached)
+        });
+
+        it("should return fresh config after cache invalidation", () => {
+            const config1 = getConfig();
+            invalidateConfigCache();
+            const config2 = getConfig();
+            expect(config1).not.toBe(config2);
+        });
+
+        it("should reflect env changes after invalidation", () => {
+            const config1 = getConfig();
+            expect(config1.logLevel).toBe("info");
+
+            process.env.KALI_DEFENSE_LOG_LEVEL = "error";
+            invalidateConfigCache();
+            const config2 = getConfig();
+            expect(config2.logLevel).toBe("error");
+        });
+    });
+
+    // ── CORE-012: Broad directory rejection ───────────────────────────────
+
+    describe("CORE-012 broad directory rejection", () => {
+        it("should reject root directory '/' in allowedDirs", () => {
+            process.env.KALI_DEFENSE_ALLOWED_DIRS = "/,/tmp";
+            const config = getConfig();
+            expect(config.allowedDirs).not.toContain("/");
+            expect(config.allowedDirs).toContain("/tmp");
+        });
+
+        it("should warn about broad directories like /etc", () => {
+            process.env.KALI_DEFENSE_ALLOWED_DIRS = "/etc,/tmp";
+            const config = getConfig();
+            expect(config.allowedDirs).toContain("/etc");
+            expect(config.allowedDirs).toContain("/tmp");
+        });
+    });
+
+    // ── Edge cases in env var parsing ─────────────────────────────────────
+
+    describe("env var edge cases", () => {
+        it("should handle empty KALI_DEFENSE_ALLOWED_DIRS", () => {
+            process.env.KALI_DEFENSE_ALLOWED_DIRS = "";
+            const config = getConfig();
+            expect(Array.isArray(config.allowedDirs)).toBe(true);
+        });
+
+        it("should handle zero timeout values gracefully", () => {
+            process.env.KALI_DEFENSE_TIMEOUT_DEFAULT = "0";
+            const config = getConfig();
+            expect(config.defaultTimeout).toBe(120_000);
+        });
+
+        it("should handle negative timeout values gracefully", () => {
+            process.env.KALI_DEFENSE_TIMEOUT_DEFAULT = "-10";
+            const config = getConfig();
+            expect(config.defaultTimeout).toBe(120_000);
+        });
+
+        it("should handle negative maxBuffer gracefully", () => {
+            process.env.KALI_DEFENSE_MAX_OUTPUT_SIZE = "-1";
+            const config = getConfig();
+            expect(config.maxBuffer).toBe(10 * 1024 * 1024);
+        });
+
+        it("should handle invalid sudo timeout gracefully", () => {
+            process.env.KALI_DEFENSE_SUDO_TIMEOUT = "abc";
+            const config = getConfig();
+            expect(config.sudoSessionTimeout).toBe(15 * 60 * 1000);
+        });
+
+        it("should handle zero sudo timeout gracefully", () => {
+            process.env.KALI_DEFENSE_SUDO_TIMEOUT = "0";
+            const config = getConfig();
+            expect(config.sudoSessionTimeout).toBe(15 * 60 * 1000);
+        });
+
+        it("should ignore invalid per-tool timeout values", () => {
+            process.env.KALI_DEFENSE_TIMEOUT_LYNIS = "abc";
+            const config = getConfig();
+            expect(config.toolTimeouts["lynis"]).toBeUndefined();
+        });
+
+        it("should ignore negative per-tool timeout values", () => {
+            process.env.KALI_DEFENSE_TIMEOUT_NMAP = "-5";
+            const config = getConfig();
+            expect(config.toolTimeouts["nmap"]).toBeUndefined();
+        });
+
+        it("should handle tilde expansion in paths", () => {
+            process.env.KALI_DEFENSE_BACKUP_DIR = "~/my-backups";
+            const config = getConfig();
+            expect(config.backupDir).not.toContain("~");
+            expect(config.backupDir).toContain("my-backups");
+        });
+    });
+
+    // ── getToolTimeout edge cases ─────────────────────────────────────────
+
+    describe("getToolTimeout edge cases", () => {
+        it("should work without passing config explicitly", () => {
+            const timeout = getToolTimeout("unknown-tool");
+            expect(typeof timeout).toBe("number");
+            expect(timeout).toBe(120_000);
+        });
+
+        it("should handle case-insensitive tool name lookup", () => {
+            process.env.KALI_DEFENSE_TIMEOUT_LYNIS = "200";
+            const config = getConfig();
+            // getToolTimeout lowercases the name
+            const timeout = getToolTimeout("lynis", config);
+            expect(timeout).toBe(200_000);
         });
     });
 });

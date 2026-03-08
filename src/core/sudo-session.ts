@@ -94,14 +94,27 @@ function runSimple(
 
 // ── SudoSession singleton ────────────────────────────────────────────────────
 
-export class SudoSession {
-  private static instance: SudoSession | null = null;
+// SECURITY (CORE-021): Module-scoped singleton variable prevents external
+// mutation via (SudoSession as any).instance — inaccessible outside module.
+let _sudoSessionInstance: SudoSession | null = null;
 
+export class SudoSession {
   /** Password stored in a Buffer so we can zero it (not interned by V8). */
   private passwordBuf: Buffer | null = null;
 
   /** Username that authenticated. */
   private username: string | null = null;
+
+  /**
+   * SECURITY (CICD-028): OS-level user ID that created this session.
+   * Used for session isolation tracking. Defaults to process.getuid().
+   *
+   * NOTE: Concurrent multi-user sessions are NOT currently supported.
+   * This server should not be used in multi-tenant environments where
+   * multiple users share the same process. Each user should run their
+   * own server instance.
+   */
+  private sessionUserId: number | null = null;
 
   /** Timestamp (epoch ms) when the session expires. */
   private expiresAt: number | null = null;
@@ -123,10 +136,18 @@ export class SudoSession {
 
   /** Get the singleton instance. */
   static getInstance(): SudoSession {
-    if (!SudoSession.instance) {
-      SudoSession.instance = new SudoSession();
+    if (!_sudoSessionInstance) {
+      _sudoSessionInstance = new SudoSession();
     }
-    return SudoSession.instance;
+    return _sudoSessionInstance;
+  }
+
+  /**
+   * Reset the singleton instance (for testing only).
+   * @internal
+   */
+  static resetInstance(): void {
+    _sudoSessionInstance = null;
   }
 
   /**
@@ -151,6 +172,14 @@ export class SudoSession {
    * @returns result indicating success or failure with error message.
    */
   async elevate(password: string | Buffer, timeoutMs?: number): Promise<{ success: boolean; error?: string }> {
+    // SECURITY (CORE-005): JavaScript strings are immutable and interned by V8,
+    // making them impossible to reliably zero from memory. Convert password to
+    // Buffer immediately to minimize credential lifetime as a V8 string.
+    // Buffer contents can be explicitly zeroed with .fill(0) after use.
+    const passwordBuf = Buffer.isBuffer(password)
+      ? Buffer.from(password)  // defensive copy so caller's buffer isn't affected
+      : Buffer.from(password, "utf-8");
+
     // Determine who we are first
     const whoami = await runSimple("whoami", []);
     const currentUser = whoami.stdout.trim() || "unknown";
@@ -161,24 +190,36 @@ export class SudoSession {
       this.expiresAt = null;
       // Store an empty buffer — the executor will skip stdin piping for root
       this.passwordBuf = Buffer.alloc(0);
+      // Zero the local buffer — not needed for root
+      passwordBuf.fill(0);
       return { success: true };
     }
 
     // Validate the password with sudo -S -k -v
+    const validationBuf = Buffer.concat([passwordBuf, Buffer.from("\n")]);
     const result = await runSimple(
       "sudo",
       ["-S", "-k", "-v", "-p", ""],
-      Buffer.concat([Buffer.isBuffer(password) ? password : Buffer.from(password, "utf-8"), Buffer.from("\n")]),
+      validationBuf,
       10000
     );
+    // Zero the validation buffer immediately after use
+    validationBuf.fill(0);
 
     if (result.exitCode === 0) {
-      // Password is valid — store it
-      this.storePassword(password, timeoutMs);
+      // Password is valid — store it (storePassword makes its own defensive copy)
+      this.storePassword(passwordBuf, timeoutMs);
+      // Zero our local copy since storePassword made its own
+      passwordBuf.fill(0);
       this.username = currentUser;
-      console.error(`[sudo-session] Elevated privileges for user '${currentUser}'`);
+      // SECURITY (CICD-028): Track the OS-level user ID for session isolation
+      this.sessionUserId = process.getuid?.() ?? null;
+      console.error(`[sudo-session] Elevated privileges for user '${currentUser}' (uid=${this.sessionUserId ?? "unknown"})`);
       return { success: true };
     }
+
+    // Zero password buffer on all failure paths
+    passwordBuf.fill(0);
 
     // Check for common failure reasons
     const stderr = result.stderr.toLowerCase();

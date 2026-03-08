@@ -37,17 +37,35 @@ export interface DefenseConfig {
   allowedDirs: string[];
   /** Logging level */
   logLevel: "debug" | "info" | "warn" | "error";
-  /** Whether to run in dry-run mode (no changes applied) */
+  /**
+   * SECURITY (CICD-014): Dry-run mode — when true, modifying operations preview
+   * commands without executing them. Defaults to `true` so the server operates
+   * in a safe, read-only mode until explicitly opted out via
+   * KALI_DEFENSE_DRY_RUN=false. This prevents accidental system modifications.
+   */
   dryRun: boolean;
   /** Path to the changelog JSON file */
   changelogPath: string;
   /** Directory for file backups */
   backupDir: string;
+  /**
+   * SECURITY (CICD-014): Whether to create backups before modifying files.
+   * Defaults to `true` — every file modification is backed up first so that
+   * changes can be rolled back if needed. Disable only in CI/test environments
+   * via KALI_DEFENSE_BACKUP_ENABLED=false.
+   */
+  backupEnabled: boolean;
   /** Whether to auto-install missing tools */
   autoInstall: boolean;
   /** Paths protected from modification */
   protectedPaths: string[];
-  /** Whether to require confirmation for destructive actions */
+  /**
+   * SECURITY (CICD-014): Whether to require confirmation for destructive
+   * actions. Defaults to `true` — the server will request explicit confirmation
+   * before executing operations that modify system state. Disable only when
+   * running automated/unattended workflows via
+   * KALI_DEFENSE_REQUIRE_CONFIRMATION=false.
+   */
   requireConfirmation: boolean;
   /** Directory for quarantined files */
   quarantineDir: string;
@@ -76,13 +94,50 @@ function expandHome(p: string): string {
 /**
  * Parses a comma-separated list of paths from an environment variable.
  */
+/**
+ * SECURITY (CORE-012): Directories that are too broad to be allowed.
+ * These grant access to the entire filesystem or critical root-level trees.
+ */
+const REJECTED_DIRS = new Set(["/"]);
+
+/** Directories that are very broad and deserve a warning. */
+const BROAD_DIRS = new Set(["/usr", "/var", "/etc", "/opt", "/lib", "/lib64", "/sbin", "/bin"]);
+
 function parsePaths(value: string | undefined, defaultValue: string): string[] {
   const raw = value ?? defaultValue;
-  return raw
+  const paths = raw
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
     .map(expandHome);
+
+  // SECURITY (CORE-012): Validate allowedDirs to reject overly broad paths
+  return paths.filter((p) => {
+    // Reject root directory and single-character root-level paths (e.g. "/")
+    if (REJECTED_DIRS.has(p) || (p.startsWith("/") && p.length <= 2 && p !== "/" + p.slice(1).replace(/\//g, ""))) {
+      console.error(
+        `[KALI-DEFENSE] SECURITY: Rejecting overly broad allowedDir '${p}' — ` +
+        `granting access to the entire filesystem is not permitted.`
+      );
+      return false;
+    }
+    // Reject any single-character root-level path like "/x"
+    if (/^\/[^/]$/.test(p)) {
+      console.error(
+        `[KALI-DEFENSE] SECURITY: Rejecting overly broad allowedDir '${p}' — ` +
+        `single-character root-level paths are not permitted.`
+      );
+      return false;
+    }
+    // Warn about broad directories
+    if (BROAD_DIRS.has(p)) {
+      console.error(
+        `[KALI-DEFENSE] WARNING: allowedDir '${p}' is very broad. ` +
+        `Consider using a more specific subdirectory.`
+      );
+    }
+    return true;
+  });
 }
 
 /**
@@ -161,12 +216,19 @@ function buildConfigFromEnv(): DefenseConfig {
       isNaN(maxBufferBytes) || maxBufferBytes <= 0
         ? 10 * 1024 * 1024
         : maxBufferBytes,
+    // SECURITY (CICD-013): /etc is excluded from default allowedDirs because it
+    // contains sensitive system configuration files (shadow, sudoers, ssh configs).
+    // Granting default read/write access to /etc is too permissive. Tools that
+    // need /etc access should require explicit configuration via
+    // KALI_DEFENSE_ALLOWED_DIRS=/tmp,/home,/var/log,/etc
     allowedDirs: parsePaths(
       process.env.KALI_DEFENSE_ALLOWED_DIRS,
-      "/tmp,/home,/var/log,/etc"
+      "/tmp,/home,/var/log"
     ),
     logLevel: parseLogLevel(process.env.KALI_DEFENSE_LOG_LEVEL),
-    dryRun: process.env.KALI_DEFENSE_DRY_RUN === "true",
+    // SECURITY (CICD-014): Default to dry-run=true (safe preview mode)
+    // Set KALI_DEFENSE_DRY_RUN=false to enable live system modifications
+    dryRun: process.env.KALI_DEFENSE_DRY_RUN !== "false",
     changelogPath: expandHome(
       process.env.KALI_DEFENSE_CHANGELOG_PATH ??
         "~/.kali-defense/changelog.json"
@@ -174,6 +236,9 @@ function buildConfigFromEnv(): DefenseConfig {
     backupDir: expandHome(
       process.env.KALI_DEFENSE_BACKUP_DIR ?? "~/.kali-defense/backups"
     ),
+    // SECURITY (CICD-014): Backup before modify — enabled by default
+    // Set KALI_DEFENSE_BACKUP_ENABLED=false only in CI/test environments
+    backupEnabled: process.env.KALI_DEFENSE_BACKUP_ENABLED !== "false",
     autoInstall: process.env.KALI_DEFENSE_AUTO_INSTALL === "true",
     protectedPaths: parsePaths(
       process.env.KALI_DEFENSE_PROTECTED_PATHS,

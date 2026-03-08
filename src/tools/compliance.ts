@@ -669,7 +669,7 @@ export function registerComplianceTools(server: McpServer): void {
       level: z.enum(["1", "2"]).optional().default("1").describe("CIS benchmark level (cis action)"),
       // framework params
       framework: z.enum(["pci-dss-v4", "hipaa", "soc2", "iso27001", "gdpr"]).optional().describe("Compliance framework (framework action)"),
-      dryRun: z.boolean().optional().default(false).describe("Preview only (framework action)"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only (framework action)"),
     },
     async (params) => {
       const { action } = params;
@@ -1145,7 +1145,7 @@ export function registerComplianceTools(server: McpServer): void {
       dry_run: z
         .boolean()
         .optional()
-        .default(false)
+        .default(true)
         .describe("Preview changes without applying them"),
     },
     async ({ action, allowed_users, dry_run }) => {
@@ -1221,16 +1221,18 @@ export function registerComplianceTools(server: McpServer): void {
 
         // Create /etc/cron.allow
         await executeCommand({
-          command: "bash",
-          args: ["-c", `printf '${userListContent}\\n' | sudo tee /etc/cron.allow > /dev/null`],
+          command: "sudo",
+          args: ["tee", "/etc/cron.allow"],
+          stdin: allowed_users.join("\n") + "\n",
           timeout: 10_000,
         });
         changes.push("Created /etc/cron.allow");
 
         // Create /etc/at.allow
         await executeCommand({
-          command: "bash",
-          args: ["-c", `printf '${userListContent}\\n' | sudo tee /etc/at.allow > /dev/null`],
+          command: "sudo",
+          args: ["tee", "/etc/at.allow"],
+          stdin: allowed_users.join("\n") + "\n",
           timeout: 10_000,
         });
         changes.push("Created /etc/at.allow");
@@ -1326,7 +1328,7 @@ export function registerComplianceTools(server: McpServer): void {
       dry_run: z
         .boolean()
         .optional()
-        .default(false)
+        .default(true)
         .describe("Preview changes without applying them"),
     },
     async ({ action, mount_options, dry_run }) => {
@@ -1439,8 +1441,9 @@ export function registerComplianceTools(server: McpServer): void {
           // Add new /tmp line
           const fstabLine = `tmpfs /tmp tmpfs defaults,${mount_options} 0 0`;
           await executeCommand({
-            command: "bash",
-            args: ["-c", `echo '${fstabLine}' | sudo tee -a /etc/fstab > /dev/null`],
+            command: "sudo",
+            args: ["tee", "-a", "/etc/fstab"],
+            stdin: fstabLine + "\n",
             timeout: 10_000,
           });
           changes.push(`Added /tmp entry to /etc/fstab: ${fstabLine}`);

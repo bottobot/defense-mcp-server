@@ -75,6 +75,10 @@ export interface ToolManifest {
 
 // ── Registry Class ───────────────────────────────────────────────────────────
 
+// SECURITY (CORE-021): Module-scoped singleton variable prevents external
+// mutation via (ToolRegistry as any)._instance — inaccessible outside module.
+let _registryInstance: ToolRegistry | null = null;
+
 /**
  * Map-based registry with O(1) lookup for tool manifests.
  * Singleton pattern — use {@link ToolRegistry.instance} to obtain.
@@ -82,14 +86,12 @@ export interface ToolManifest {
 export class ToolRegistry {
   private manifests: Map<string, ToolManifest> = new Map();
 
-  private static _instance: ToolRegistry | null = null;
-
   /** Get or create the singleton registry instance. */
   static instance(): ToolRegistry {
-    if (!ToolRegistry._instance) {
-      ToolRegistry._instance = new ToolRegistry();
+    if (!_registryInstance) {
+      _registryInstance = new ToolRegistry();
     }
-    return ToolRegistry._instance;
+    return _registryInstance;
   }
 
   /**
@@ -97,7 +99,7 @@ export class ToolRegistry {
    * @internal
    */
   static resetInstance(): void {
-    ToolRegistry._instance = null;
+    _registryInstance = null;
   }
 
   /** Register a single tool manifest. Overwrites if already registered. */
@@ -180,14 +182,7 @@ const CATEGORY_PREFIX_MAP: [string, string][] = [
   ["supply_chain", "supply-chain"],
   ["drift_baseline", "drift-detection"],
   ["zero_trust", "zero-trust"],
-  ["memory_protection", "hardening"],
-  ["list_ebpf_programs", "ebpf"],
-  ["falco", "ebpf"],
-  ["scan_git_history", "secrets"],
   ["incident_response", "incident-response"],
-  ["vulnerability_intel", "patch-management"],
-  ["security_posture", "meta"],
-  ["scheduled_audit", "meta"],
   ["app_harden", "app-hardening"],
   ["backup", "backup"],
 
@@ -205,6 +200,7 @@ const CATEGORY_PREFIX_MAP: [string, string][] = [
   ["patch_", "patch-management"],
   ["secrets_", "secrets"],
   ["defense_", "meta"],
+  ["ebpf_", "ebpf"],
   ["sudo_", "sudo"],
   ["preflight_", "sudo"],
 ];
@@ -328,7 +324,7 @@ const SUDO_OVERLAYS: SudoOverlay[] = [
     sudoReason: "audit actions may work without sudo; set actions require root",
   },
   {
-    toolName: "memory_protection",
+    toolName: "harden_memory",
     sudo: "conditional",
     sudoReason: "audit/report actions work without sudo; enforce_aslr requires root",
   },
@@ -564,7 +560,7 @@ const SUDO_OVERLAYS: SudoOverlay[] = [
     sudoReason: "Package management requires root",
   },
   {
-    toolName: "vulnerability_intel",
+    toolName: "patch_vulnerability_intel",
     sudo: "never",
     sudoReason: "CVE lookup and package scanning do not require root",
   },
@@ -586,7 +582,7 @@ const SUDO_OVERLAYS: SudoOverlay[] = [
     sudoReason: "Finds SSH keys and checks permissions as current user",
   },
   {
-    toolName: "scan_git_history",
+    toolName: "secrets_git_history_scan",
     sudo: "never",
     sudoReason: "Scans git repository history as current user",
   },
@@ -615,12 +611,12 @@ const SUDO_OVERLAYS: SudoOverlay[] = [
     sudoReason: "Reads in-memory changelog without system access",
   },
   {
-    toolName: "security_posture",
+    toolName: "defense_security_posture",
     sudo: "conditional",
     sudoReason: "score/dashboard may invoke checks that benefit from root; trend is unprivileged",
   },
   {
-    toolName: "scheduled_audit",
+    toolName: "defense_scheduled_audit",
     sudo: "conditional",
     sudoReason: "create/remove actions require root for systemd/cron; list/history are unprivileged",
   },
@@ -681,13 +677,13 @@ const SUDO_OVERLAYS: SudoOverlay[] = [
 
   // ── eBPF tools ────────────────────────────────────────────────────────
   {
-    toolName: "list_ebpf_programs",
+    toolName: "ebpf_list_programs",
     sudo: "always",
     sudoReason: "eBPF program listing requires root",
     capabilities: ["CAP_SYS_ADMIN"],
   },
   {
-    toolName: "falco",
+    toolName: "ebpf_falco",
     sudo: "conditional",
     sudoReason: "status/events may work without root; deploy_rules requires root",
   },

@@ -25,8 +25,52 @@ import {
   validateIptablesChain,
   validateFilePath,
   validateTarget,
+  validatePortRange,
   sanitizeArgs,
+  validateToolPath,
 } from "../core/sanitizer.js";
+
+// ── TOOL-017 remediation: allowed directories for firewall rule file paths ──
+const ALLOWED_FIREWALL_DIRS = ["/etc/iptables", "/etc/nftables", "/etc/ufw", "/tmp", "/var/lib", "/root", "/home"];
+
+// ── TOOL-003 remediation: strict input validation helpers ──────────────────
+
+/** Validate a port or port range string for iptables --dport: "80", "8080:8090" */
+const PORT_SPEC_RE = /^\d{1,5}(:\d{1,5})?$/;
+function validatePortSpec(port: string): string {
+  if (!PORT_SPEC_RE.test(port)) {
+    throw new Error(`Invalid port specification: '${port}'. Must be a number or range (e.g., '80', '8080:8090').`);
+  }
+  const parts = port.split(":").map(Number);
+  for (const p of parts) {
+    if (p < 1 || p > 65535) {
+      throw new Error(`Port out of range: ${p}. Must be 1-65535.`);
+    }
+  }
+  return port;
+}
+
+/** Validate an interface name */
+const IFACE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
+function validateInterfaceName(name: string): string {
+  if (!name || !IFACE_NAME_RE.test(name)) {
+    throw new Error(`Invalid interface name: '${name}'. Only [a-zA-Z0-9._-] allowed.`);
+  }
+  return name;
+}
+
+/** Allowed match module names for iptables -m */
+const ALLOWED_MATCH_MODULES = new Set([
+  "limit", "conntrack", "state", "recent", "multiport", "tcp", "udp",
+  "icmp", "comment", "connlimit", "hashlimit", "iprange", "mark",
+  "time", "addrtype", "geoip", "string", "owner", "set", "mac",
+]);
+function validateMatchModule(mod: string): string {
+  if (!ALLOWED_MATCH_MODULES.has(mod)) {
+    throw new Error(`Unknown match module: '${mod}'. Allowed: ${[...ALLOWED_MATCH_MODULES].join(", ")}`);
+  }
+  return mod;
+}
 
 // ── Table enum shared across iptables tools ────────────────────────────────
 
@@ -253,11 +297,11 @@ export function registerFirewallTools(server: McpServer): void {
             }
 
             if (params.source) {
-              args.push("-s", params.source);
+              args.push("-s", validateTarget(params.source));
             }
 
             if (params.destination) {
-              args.push("-d", params.destination);
+              args.push("-d", validateTarget(params.destination));
             }
 
             if (params.port) {
@@ -271,12 +315,14 @@ export function registerFirewallTools(server: McpServer): void {
                   isError: true,
                 };
               }
-              args.push("--dport", params.port);
+              // TOOL-003: validate port specification before use
+              args.push("--dport", validatePortSpec(params.port));
             }
 
             // Add match module and options
             if (params.match_module) {
-              args.push("-m", params.match_module);
+              // TOOL-003: validate match module against whitelist
+              args.push("-m", validateMatchModule(params.match_module));
               if (params.match_options) {
                 const optTokens = params.match_options.trim().split(/\s+/);
                 args.push(...optTokens);
@@ -1072,6 +1118,8 @@ export function registerFirewallTools(server: McpServer): void {
         case "save": {
           try {
             const output_path = params.output_path ?? "/etc/iptables/rules.v4";
+            // TOOL-017: Validate output path against traversal and allowed dirs
+            validateToolPath(output_path, ALLOWED_FIREWALL_DIRS, "Firewall rules output path");
             const ipv6 = params.ipv6 ?? false;
             const saveCmd = ipv6 ? "ip6tables-save" : "iptables-save";
             const fullCmd = `sudo ${saveCmd} > ${output_path}`;
@@ -1181,6 +1229,8 @@ export function registerFirewallTools(server: McpServer): void {
             }
 
             const input_path = params.input_path;
+            // TOOL-017: Validate input path against traversal and allowed dirs
+            validateToolPath(input_path, ALLOWED_FIREWALL_DIRS, "Firewall rules input path");
             const ipv6 = params.ipv6 ?? false;
             const test_only = params.test_only ?? true;
             const restoreCmd = ipv6 ? "ip6tables-restore" : "iptables-restore";
@@ -1332,7 +1382,8 @@ export function registerFirewallTools(server: McpServer): void {
             if (!installSuccess && da.isDebian) {
               const installResult2 = await executeCommand({
                 command: "sudo",
-                args: ["bash", "-c", `DEBIAN_FRONTEND=noninteractive ${fwp.installCmd.join(" ")}`],
+                args: fwp.installCmd,
+                env: { DEBIAN_FRONTEND: "noninteractive" },
                 toolName: "firewall_persist",
                 timeout: 120000,
               });
@@ -1459,7 +1510,10 @@ export function registerFirewallTools(server: McpServer): void {
     }
   );
 
-  // ── 4. firewall_nftables_list (kept as-is) ────────────────────────────────
+  // ── 4. firewall_nftables_list ──────────────────────────────────────────────
+  // TOOL-008: Added table name validation
+  const NFTABLES_TABLE_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+
   server.tool(
     "firewall_nftables_list",
     "List nftables ruleset. nftables is the modern replacement for iptables on Linux systems.",
@@ -1471,6 +1525,10 @@ export function registerFirewallTools(server: McpServer): void {
       try {
         const args = ["list", "ruleset"];
         if (params.table && params.family) {
+          // TOOL-008: Validate nftables table name
+          if (!NFTABLES_TABLE_NAME_RE.test(params.table)) {
+            return { content: [createErrorContent(`Invalid nftables table name: '${params.table}'. Must match /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/ (start with letter, no whitespace or special characters).`)], isError: true };
+          }
           args.length = 0;
           args.push("list", "table", params.family, params.table);
         }

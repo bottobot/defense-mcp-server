@@ -22,6 +22,8 @@ import {
   validateCertPath,
 } from "../core/sanitizer.js";
 
+import { validateToolPath } from "../core/sanitizer.js";
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Reject paths containing `..` directory-traversal sequences. */
@@ -30,6 +32,40 @@ function assertNoTraversal(p: string): void {
   if (PATH_TRAVERSAL_RE.test(p)) {
     throw new Error("Path contains forbidden directory traversal (..)");
   }
+}
+
+// ── TOOL-023 remediation: encryption parameter validation ──────────────────
+
+/** Allowed encryption algorithms (explicit allowlist) */
+const ALLOWED_ALGORITHMS = new Set([
+  "aes-256-gcm",
+  "aes-256-cbc",
+  "aes-128-gcm",
+  "aes-128-cbc",
+  "chacha20-poly1305",
+]);
+
+/** Allowed directories for key file paths */
+const ALLOWED_KEY_DIRS = ["/etc/ssl", "/etc/pki", "/home", "/root", "/tmp", "/var/lib", "/opt"];
+
+/**
+ * Validate an encryption algorithm against the explicit allowlist.
+ */
+function validateAlgorithm(algorithm: string): string {
+  const lower = algorithm.trim().toLowerCase();
+  if (!ALLOWED_ALGORITHMS.has(lower)) {
+    throw new Error(
+      `Algorithm '${algorithm}' is not allowed. Allowed algorithms: ${[...ALLOWED_ALGORITHMS].join(", ")}`
+    );
+  }
+  return lower;
+}
+
+/**
+ * Validate a key file path for traversal and containment within allowed directories.
+ */
+function validateKeyPath(keyPath: string): string {
+  return validateToolPath(keyPath, ALLOWED_KEY_DIRS, "Key file path");
 }
 
 const WEAK_CIPHERS = [
@@ -791,7 +827,8 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             sanitizeArgs([file_path]);
-            assertNoTraversal(file_path);
+            // TOOL-023: Validate key file path with containment check
+            validateKeyPath(file_path);
 
             if (dry_run ?? getConfig().dryRun) {
               sections.push(
@@ -847,7 +884,8 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             sanitizeArgs([file_path]);
-            assertNoTraversal(file_path);
+            // TOOL-023: Validate key file path with containment check
+            validateKeyPath(file_path);
 
             const result = await executeCommand({
               command: "gpg",

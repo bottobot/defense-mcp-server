@@ -9,12 +9,57 @@ import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
 import { getToolTimeout } from "../core/config.js";
 import { createErrorContent, formatToolOutput } from "../core/parsers.js";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { join, basename } from "node:path";
+import { existsSync, readFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { join, basename, extname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
+import { secureWriteFileSync } from "../core/secure-fs.js";
 
 const BASELINE_DIR = join(homedir(), ".kali-mcp-baselines");
+
+// ── TOOL-024 remediation: baseline path validation ─────────────────────────
+
+/** Allowed directories for drift baseline files */
+const ALLOWED_BASELINE_DIRS = [BASELINE_DIR, "/tmp", "/var/lib", "/home", "/root", "/opt"];
+
+/** Allowed file extensions for baseline files */
+const ALLOWED_BASELINE_EXTENSIONS = new Set([".json", ".yaml", ".yml"]);
+
+/**
+ * Validate a baseline file path:
+ * 1. Reject `..` sequences
+ * 2. Resolve and verify within allowed directories
+ * 3. Validate file extension
+ */
+function validateBaselinePath(inputPath: string): string {
+  if (!inputPath || typeof inputPath !== "string") {
+    throw new Error("Baseline path must be a non-empty string");
+  }
+
+  if (inputPath.includes("..")) {
+    throw new Error(`Baseline path contains forbidden traversal sequence (..): '${inputPath}'`);
+  }
+
+  const resolved = resolve(inputPath);
+  const isAllowed = ALLOWED_BASELINE_DIRS.some(
+    (dir) => resolved === dir || resolved.startsWith(dir + "/")
+  );
+
+  if (!isAllowed) {
+    throw new Error(
+      `Baseline path '${resolved}' is not within allowed directories: ${ALLOWED_BASELINE_DIRS.join(", ")}`
+    );
+  }
+
+  const ext = extname(resolved).toLowerCase();
+  if (ext && !ALLOWED_BASELINE_EXTENSIONS.has(ext)) {
+    throw new Error(
+      `Baseline file has invalid extension '${ext}'. Allowed: ${[...ALLOWED_BASELINE_EXTENSIONS].join(", ")}`
+    );
+  }
+
+  return resolved;
+}
 
 function ensureBaselineDir(): void {
   if (!existsSync(BASELINE_DIR)) {
@@ -58,7 +103,7 @@ export function registerDriftDetectionTools(server: McpServer): void {
       name: z.string().optional().default("default").describe("Baseline name"),
       directories: z.array(z.string()).optional().default(["/etc"]).describe("Directories to hash (create action)"),
       // shared
-      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;
@@ -187,7 +232,9 @@ export function registerDriftDetectionTools(server: McpServer): void {
             };
 
             const outPath = join(BASELINE_DIR, `${name}.json`);
-            writeFileSync(outPath, JSON.stringify(baseline, null, 2), "utf-8");
+            // TOOL-024: Validate baseline output path and use secure write
+            validateBaselinePath(outPath);
+            secureWriteFileSync(outPath, JSON.stringify(baseline, null, 2), "utf-8");
 
             return {
               content: [formatToolOutput({
@@ -209,6 +256,8 @@ export function registerDriftDetectionTools(server: McpServer): void {
           const { name, dryRun } = params;
           try {
             const baselinePath = join(BASELINE_DIR, `${name}.json`);
+            // TOOL-024: Validate baseline path before reading
+            validateBaselinePath(baselinePath);
             if (!existsSync(baselinePath)) {
               return { content: [createErrorContent(`Baseline '${name}' not found at ${baselinePath}`)], isError: true };
             }
