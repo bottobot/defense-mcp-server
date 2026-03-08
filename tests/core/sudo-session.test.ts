@@ -26,11 +26,13 @@ function getInternalBuffer(session: SudoSession): Buffer | null {
 // Helper: reset the singleton so each test gets a fresh instance
 function resetSingleton(): void {
   // Drop any existing session to clear timers
-  const existing = (SudoSession as any).instance as SudoSession | null;
-  if (existing) {
-    existing.drop();
-  }
-  (SudoSession as any).instance = null;
+  try {
+    const existing = SudoSession.getInstance();
+    if (existing) {
+      existing.drop();
+    }
+  } catch { /* ignore if not initialized */ }
+  SudoSession.resetInstance();
 }
 
 describe("SudoSession", () => {
@@ -41,10 +43,6 @@ describe("SudoSession", () => {
 
   afterEach(() => {
     // Clean up: drop session and reset singleton
-    const existing = (SudoSession as any).instance as SudoSession | null;
-    if (existing) {
-      existing.drop();
-    }
     resetSingleton();
     vi.useRealTimers();
   });
@@ -342,6 +340,112 @@ describe("SudoSession", () => {
       const status = session.getStatus();
       expect(status.elevated).toBe(false);
       expect(status.username).toBeNull();
+    });
+  });
+
+  // ── 7. Buffer password overwrite ──────────────────────────────────────
+
+  describe("buffer password overwrite", () => {
+    it("storePassword() overwrites previous password and zeroes old buffer", () => {
+      const session = SudoSession.getInstance();
+      storePassword(session, "first-password");
+
+      const firstRef = getInternalBuffer(session)!;
+      expect(firstRef.toString("utf-8")).toBe("first-password");
+
+      storePassword(session, "second-password");
+
+      // First buffer should be zeroed
+      expect(firstRef.every((b) => b === 0)).toBe(true);
+
+      // New buffer should have the new content
+      const secondRef = getInternalBuffer(session)!;
+      expect(secondRef.toString("utf-8")).toBe("second-password");
+    });
+  });
+
+  // ── 8. Extend edge cases ──────────────────────────────────────────────
+
+  describe("extend edge cases", () => {
+    it("extend() with custom milliseconds resets timer", () => {
+      const session = SudoSession.getInstance();
+      storePassword(session, "pw", 5000);
+
+      vi.advanceTimersByTime(2000);
+      expect(session.isElevated()).toBe(true);
+
+      const result = session.extend(10000);
+      expect(result).toBe(true);
+
+      vi.advanceTimersByTime(8000);
+      expect(session.isElevated()).toBe(true);
+    });
+
+    it("extend() uses default timeout when no arg provided", () => {
+      const session = SudoSession.getInstance();
+      session.setDefaultTimeout(3000);
+      storePassword(session, "pw", 1000);
+
+      vi.advanceTimersByTime(500);
+      
+      const result = session.extend();
+      expect(result).toBe(true);
+
+      vi.advanceTimersByTime(2000);
+      expect(session.isElevated()).toBe(true);
+    });
+
+    it("extend() on root session returns true without expiry", () => {
+      const session = SudoSession.getInstance();
+      storePassword(session, "x");
+      (session as any).username = "root";
+      (session as any).expiresAt = null;
+
+      const result = session.extend(5000);
+      expect(result).toBe(true);
+    });
+  });
+
+  // ── 9. getStatus() edge cases ─────────────────────────────────────────
+
+  describe("getStatus() edge cases", () => {
+    it("returns null remainingSeconds for root sessions", () => {
+      const session = SudoSession.getInstance();
+      storePassword(session, "x");
+      (session as any).username = "root";
+      (session as any).expiresAt = null;
+
+      const status = session.getStatus();
+      expect(status.elevated).toBe(true);
+      expect(status.username).toBe("root");
+      expect(status.expiresAt).toBeNull();
+      expect(status.remainingSeconds).toBeNull();
+    });
+
+    it("returns correct remainingSeconds for timed session", () => {
+      const session = SudoSession.getInstance();
+      storePassword(session, "pw", 60_000);
+      (session as any).username = "testuser";
+
+      const status = session.getStatus();
+      expect(status.elevated).toBe(true);
+      expect(status.remainingSeconds).toBeGreaterThan(0);
+      expect(status.remainingSeconds).toBeLessThanOrEqual(60);
+    });
+  });
+
+  // ── 10. Auto-drop on expiry ───────────────────────────────────────────
+
+  describe("auto-drop on expiry", () => {
+    it("auto-drops session after timeout timer fires", () => {
+      const session = SudoSession.getInstance();
+      storePassword(session, "auto-drop-pw", 2000);
+      expect(session.isElevated()).toBe(true);
+
+      vi.advanceTimersByTime(3000);
+
+      expect(session.isElevated()).toBe(false);
+      expect(session.getPassword()).toBeNull();
     });
   });
 });

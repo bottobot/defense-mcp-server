@@ -1,0 +1,19 @@
+# CICD-021: Exclude development/assessment scripts from npm packages
+run-assessment.mjs
+mcp-call.sh
+
+# Development files
+src/
+tests/
+coverage/
+.github/
+vitest.config.ts
+tsconfig.json
+
+# Reports
+SECURITY-AUDIT-REPORT.md
+HARDENING-ASSESSMENT-REPORT.md
+REMEDIATION-PLAN.md
+PREFLIGHT-ARCHITECTURE.md
+ARCHITECTURE.md
+kali-defense-mcp-server-spec.md

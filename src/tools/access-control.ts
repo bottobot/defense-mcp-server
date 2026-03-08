@@ -149,6 +149,47 @@ const SSH_HARDENING_CHECKS: SshCheck[] = [
   },
 ];
 
+// ── TOOL-012 remediation: Valid SSH configuration directives ────────────────
+
+/** Known-good SSH configuration directives (case-sensitive as used in sshd_config) */
+const VALID_SSH_CONFIG_KEYS = new Set([
+  "PermitRootLogin", "PasswordAuthentication", "X11Forwarding", "MaxAuthTries",
+  "Protocol", "PermitEmptyPasswords", "ClientAliveInterval", "ClientAliveCountMax",
+  "AllowTcpForwarding", "Banner", "LoginGraceTime", "MaxSessions",
+  "AllowAgentForwarding", "PermitUserEnvironment", "UseDNS",
+  "Ciphers", "MACs", "KexAlgorithms", "HostKeyAlgorithms",
+  "PubkeyAuthentication", "AuthorizedKeysFile", "HostbasedAuthentication",
+  "ChallengeResponseAuthentication", "GSSAPIAuthentication", "UsePAM",
+  "AcceptEnv", "AllowUsers", "AllowGroups", "DenyUsers", "DenyGroups",
+  "GatewayPorts", "PermitTunnel", "PrintMotd", "PrintLastLog",
+  "TCPKeepAlive", "Compression", "MaxStartups", "PermitOpen",
+  "AuthenticationMethods", "StrictModes", "SyslogFacility", "LogLevel",
+  "ListenAddress", "Port", "AddressFamily", "HostKey",
+  "RekeyLimit", "Subsystem",
+]);
+
+/** Validate an SSH config value — reject shell metacharacters */
+const SSH_VALUE_UNSAFE_RE = /[;|&`$(){}<>!]/;
+
+function validateSshConfigKey(key: string): string {
+  if (!VALID_SSH_CONFIG_KEYS.has(key)) {
+    throw new Error(
+      `Invalid SSH configuration directive: '${key}'. ` +
+      `Must be a known sshd_config option.`
+    );
+  }
+  return key;
+}
+
+function validateSshConfigValue(value: string): string {
+  if (SSH_VALUE_UNSAFE_RE.test(value)) {
+    throw new Error(
+      `Invalid SSH configuration value: contains shell metacharacters. Value: '${value}'`
+    );
+  }
+  return value;
+}
+
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerAccessControlTools(server: McpServer): void {
@@ -329,6 +370,9 @@ export function registerAccessControlTools(server: McpServer): void {
                 if (eqIdx > 0) {
                   const key = trimmed.substring(0, eqIdx).trim();
                   const value = trimmed.substring(eqIdx + 1).trim();
+                  // TOOL-012: Validate SSH config keys and values
+                  validateSshConfigKey(key);
+                  validateSshConfigValue(value);
                   settingsToApply[key] = value;
                 }
               }
@@ -422,7 +466,8 @@ export function registerAccessControlTools(server: McpServer): void {
               if (grepResult.exitCode !== 0) {
                 await executeCommand({
                   command: "sudo",
-                  args: ["bash", "-c", `echo '${key} ${value}' >> ${configPath}`],
+                  args: ["tee", "-a", configPath],
+                  stdin: `${key} ${value}\n`,
                   toolName: "access_ssh",
                 });
               }

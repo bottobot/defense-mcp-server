@@ -1,7 +1,7 @@
 # Pre-flight Validation System — Architecture Document
 
-> **Status**: Implemented (v0.3.0+, updated in v0.5.0-beta.1)
-> **Scope**: kali-defense-mcp-server v0.5.0-beta.1
+> **Status**: Implemented (v0.3.0+, updated in v0.5.0)
+> **Scope**: kali-defense-mcp-server v0.5.0
 > **Author**: Architecture session 2026-03-03
 
 ---

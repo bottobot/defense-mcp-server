@@ -123,7 +123,7 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     optionalBinaries: ["tee"],
   },
   {
-    toolName: "memory_protection",
+    toolName: "harden_memory",
     requiredBinaries: [],
     optionalBinaries: ["readelf", "checksec", "sysctl"],
   },
@@ -343,7 +343,7 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     requiredBinaries: ["uname"],
   },
   {
-    toolName: "vulnerability_intel",
+    toolName: "patch_vulnerability_intel",
     requiredBinaries: [],
     optionalBinaries: ["curl", "apt", "dpkg"],
   },
@@ -363,7 +363,7 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     requiredBinaries: ["find"],
   },
   {
-    toolName: "scan_git_history",
+    toolName: "secrets_git_history_scan",
     requiredBinaries: [],
     optionalBinaries: ["trufflehog", "gitleaks", "git"],
   },
@@ -389,12 +389,12 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     requiredBinaries: [],
   },
   {
-    toolName: "security_posture",
+    toolName: "defense_security_posture",
     requiredBinaries: [],
     optionalBinaries: ["iptables", "ss", "journalctl", "apt", "sysctl", "systemctl"],
   },
   {
-    toolName: "scheduled_audit",
+    toolName: "defense_scheduled_audit",
     requiredBinaries: [],
     optionalBinaries: ["systemctl", "crontab", "cat"],
   },
@@ -448,12 +448,12 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
 
   // ── eBPF Security Tools (2) ───────────────────────────────────────────────
   {
-    toolName: "list_ebpf_programs",
+    toolName: "ebpf_list_programs",
     requiredBinaries: [],
     optionalBinaries: ["bpftool"],
   },
   {
-    toolName: "falco",
+    toolName: "ebpf_falco",
     requiredBinaries: [],
     optionalBinaries: ["falco", "cat"],
   },

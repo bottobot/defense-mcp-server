@@ -88,15 +88,19 @@ function gracefulShutdown(signal: string) {
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
+// SECURITY (CORE-020): uncaughtException/unhandledRejection handlers must use
+// only synchronous operations. Async operations (file writes, network, cleanup)
+// are NOT guaranteed to complete after an uncaught exception. Async cleanup is
+// handled by SIGTERM/SIGINT handlers above.
 process.on("uncaughtException", (err) => {
   console.error(`[fatal] Uncaught exception: ${err.message}`);
   console.error(err.stack);
-  gracefulShutdown("uncaughtException");
+  process.exit(1);
 });
 
 process.on("unhandledRejection", (reason) => {
   console.error(`[fatal] Unhandled rejection: ${reason}`);
-  gracefulShutdown("unhandledRejection");
+  process.exit(1);
 });
 
 // ── Main entry point ─────────────────────────────────────────────────────────

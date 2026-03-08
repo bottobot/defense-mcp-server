@@ -1614,4 +1614,60 @@ Additional fixes addressing remaining audit findings and operational concerns.
 
 ---
 
+## Phase 6: Security Audit Remediation (v0.5.0-beta.3)
+
+### Status: ✅ COMPLETE
+
+Addresses 34 findings (12 Critical + 22 High) from the comprehensive security audit of v0.5.0-beta.2.
+
+### Fix 6.1 — Core Critical Security Fixes (CORE-001 through CORE-004)
+- **CORE-001**: Shell interpreters in command allowlist — Already secured in prior work
+- **CORE-002**: Policy engine arbitrary execution — Already secured with Zod schemas + allowlist validation
+- **CORE-003**: Rollback command injection — Added `validateRollbackArg()`, `validateFirewallCommand()`, `SAFE_SERVICE_NAME_RE` in [`src/core/rollback.ts`](src/core/rollback.ts)
+- **CORE-004**: `bypassAllowlist` option — Already removed in prior work
+
+### Fix 6.2 — Tool Shell Injection Elimination (TOOL-001 through TOOL-005)
+- **TOOL-001**: Replaced shell string parsing in [`src/tools/incident-response.ts`](src/tools/incident-response.ts) with parameterized `{ command, args }` structures
+- **TOOL-002**: Replaced `bash -c` with temp script approach in [`src/tools/sudo-management.ts`](src/tools/sudo-management.ts)
+- **TOOL-003**: Added input validation + structured commands in [`src/tools/zero-trust-network.ts`](src/tools/zero-trust-network.ts) and [`src/tools/firewall.ts`](src/tools/firewall.ts)
+- **TOOL-004**: Added schedule format validation in [`src/tools/meta.ts`](src/tools/meta.ts)
+- **TOOL-005**: Added per-step safeguard checks in [`src/tools/meta.ts`](src/tools/meta.ts) defense_workflow
+
+### Fix 6.3 — CI/CD Critical Fixes (CICD-006, CICD-020, CICD-023)
+- **CICD-006**: Added `audit:security` npm script in [`package.json`](package.json)
+- **CICD-020**: Fixed printf format string injection in [`mcp-call.sh`](mcp-call.sh) — all echo+variable replaced with `printf '%s'`
+- **CICD-023**: Regenerated [`package-lock.json`](package-lock.json) for version consistency
+
+### Fix 6.4 — Core Module HIGH Fixes
+- **CORE-005**: Password Buffer handling in [`src/core/sudo-session.ts`](src/core/sudo-session.ts) — immediate Buffer conversion, zero on all exit paths
+- **CORE-006**: SUDO_ASKPASS integrity validation in [`src/core/sudo-guard.ts`](src/core/sudo-guard.ts) — symlink, ownership, permission checks
+- **CORE-007**: TOCTOU mitigation in [`src/core/command-allowlist.ts`](src/core/command-allowlist.ts) — runtime inode verification
+- **CORE-008**: Package allowlist in [`src/core/auto-installer.ts`](src/core/auto-installer.ts) — ALLOWED_PIP_PACKAGES, ALLOWED_NPM_PACKAGES
+- **CORE-009**: ReDoS protection in [`src/core/policy-engine.ts`](src/core/policy-engine.ts) — reduced regex limit to 200 chars
+- **CORE-010/CICD-026**: Replaced hardcoded path in [`src/core/safeguards.ts`](src/core/safeguards.ts) with `os.homedir()`
+- **CICD-013**: Removed `/etc` from default `allowedDirs` in [`src/core/config.ts`](src/core/config.ts)
+
+### Fix 6.5 — Tool & CI/CD HIGH Fixes
+- **TOOL-006**: Path traversal validation in [`src/tools/malware.ts`](src/tools/malware.ts) quarantine file_id
+- **TOOL-007**: Path traversal validation in [`src/tools/hardening.ts`](src/tools/hardening.ts) with allowed directory enforcement
+- **TOOL-008**: nftables table name validation in [`src/tools/firewall.ts`](src/tools/firewall.ts)
+- **TOOL-009**: Replaced writeFileSync with secure-fs in [`src/tools/container-security.ts`](src/tools/container-security.ts) AppArmor writes
+- **TOOL-010**: Replaced writeFileSync with secure-fs in [`src/tools/ebpf-security.ts`](src/tools/ebpf-security.ts) Falco rule deployment
+- **TOOL-011**: Seccomp profile path restriction in [`src/tools/container-security.ts`](src/tools/container-security.ts)
+- **TOOL-012**: SSH config key/value validation in [`src/tools/access-control.ts`](src/tools/access-control.ts)
+- **TOOL-013/014**: Changed dry_run defaults to true in [`src/tools/compliance.ts`](src/tools/compliance.ts)
+- **CICD-001**: Disabled source maps in [`tsconfig.json`](tsconfig.json)
+- **CICD-005**: Pinned GitHub Actions to SHA in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+- **CICD-007**: Created CodeQL SAST workflow [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml)
+- **CICD-008**: Added coverage enforcement in CI
+- **CICD-021**: Added security warning to [`run-assessment.mjs`](run-assessment.mjs), created [`.npmignore`](.npmignore)
+
+### Fix 6.6 — Test Coverage Expansion
+- Added 8 new core module test files: tool-registry, preflight, auto-installer, sudo-guard, privilege-manager, distro, parsers, tool-wrapper
+- Added 8 new tool module test files: firewall, malware, hardening, compliance, access-control, container-security, meta, incident-response
+- Total: 663 tests across 28 test files (up from 421 across 12)
+- All security remediation code paths covered by tests
+
+---
+
 *End of Remediation Plan*

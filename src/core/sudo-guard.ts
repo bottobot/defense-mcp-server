@@ -35,6 +35,7 @@
  */
 
 import { SudoSession } from "./sudo-session.js";
+import { statSync, lstatSync } from "node:fs";
 
 // ── Permission Error Detection ───────────────────────────────────────────────
 
@@ -338,5 +339,86 @@ export class SudoGuard {
    */
   static hasActiveSession(): boolean {
     return SudoSession.getInstance().isElevated();
+  }
+
+  /**
+   * SECURITY (CORE-006): Validate the SUDO_ASKPASS environment variable.
+   *
+   * Before trusting the SUDO_ASKPASS path, verify:
+   * 1. The file exists and is a regular file (not a symlink)
+   * 2. Ownership is root or the current user
+   * 3. Permissions are restrictive (0o700 or 0o500 — no world/group access)
+   *
+   * @returns `{ valid: true }` if safe, or `{ valid: false, reason: string }` if not
+   */
+  static validateAskpass(): { valid: boolean; reason?: string } {
+    const askpassPath = process.env.SUDO_ASKPASS;
+
+    if (!askpassPath) {
+      return { valid: true }; // Not set — nothing to validate
+    }
+
+    return SudoGuard.validateAskpassPath(askpassPath);
+  }
+
+  /**
+   * SECURITY (CORE-016): Validate an askpass helper path.
+   *
+   * Before trusting any askpass candidate, verify:
+   * 1. The file exists and is a regular file (not a symlink)
+   * 2. Ownership is root or the current user
+   * 3. Permissions are restrictive (no group/world access)
+   *
+   * @param askpassPath Absolute path to the askpass candidate
+   * @returns `{ valid: true }` if safe, or `{ valid: false, reason: string }` if not
+   */
+  static validateAskpassPath(askpassPath: string): { valid: boolean; reason?: string } {
+    try {
+      // 1. Check with lstat (does NOT follow symlinks)
+      const lstats = lstatSync(askpassPath);
+
+      if (lstats.isSymbolicLink()) {
+        return {
+          valid: false,
+          reason: `Askpass path '${askpassPath}' is a symlink. Refusing to trust it.`,
+        };
+      }
+
+      if (!lstats.isFile()) {
+        return {
+          valid: false,
+          reason: `Askpass path '${askpassPath}' is not a regular file.`,
+        };
+      }
+
+      // 2. Verify ownership: must be root (uid 0) or the current user
+      const currentUid = process.getuid?.() ?? -1;
+      if (lstats.uid !== 0 && lstats.uid !== currentUid) {
+        return {
+          valid: false,
+          reason: `Askpass '${askpassPath}' is owned by uid ${lstats.uid}, expected root (0) or current user (${currentUid}).`,
+        };
+      }
+
+      // 3. Verify permissions: no group or world access (must be 0o700 or 0o500)
+      // Extract the permission bits (lower 9 bits of mode)
+      const perms = lstats.mode & 0o777;
+      const groupWorldBits = perms & 0o077;
+      if (groupWorldBits !== 0) {
+        return {
+          valid: false,
+          reason: `Askpass '${askpassPath}' has overly permissive mode 0o${perms.toString(8)}. ` +
+            `Expected no group/world access (e.g., 0700 or 0500).`,
+        };
+      }
+
+      return { valid: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        valid: false,
+        reason: `Failed to verify askpass '${askpassPath}': ${msg}`,
+      };
+    }
   }
 }

@@ -19,11 +19,48 @@ import {
   backupFile,
   restoreFile,
 } from "../core/changelog.js";
-import { validateFilePath } from "../core/sanitizer.js";
+import { validateFilePath, validateToolPath } from "../core/sanitizer.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+
+// ── TOOL-026 remediation: allowed backup directories ───────────────────────
+const ALLOWED_BACKUP_DIRS = ["/tmp", "/var/backups", "/home", "/root", "/opt", "/var/lib"];
+
+/**
+ * Validate a backup destination path:
+ * 1. Reject `..` sequences
+ * 2. Resolve and verify within allowed backup directories
+ * 3. Validate the destination exists or can be created
+ */
+function validateBackupPath(inputPath: string): string {
+  if (!inputPath || typeof inputPath !== "string") {
+    throw new Error("Backup path must be a non-empty string");
+  }
+
+  if (inputPath.includes("..")) {
+    throw new Error(`Backup path contains forbidden traversal sequence (..): '${inputPath}'`);
+  }
+
+  const resolved = resolve(inputPath);
+
+  // Check it's within allowed directories or the config backupDir
+  const configBackupDir = getConfig().backupDir;
+  const allAllowed = [...ALLOWED_BACKUP_DIRS, configBackupDir];
+
+  const isAllowed = allAllowed.some(
+    (dir) => resolved === dir || resolved.startsWith(dir + "/")
+  );
+
+  if (!isAllowed) {
+    throw new Error(
+      `Backup path '${resolved}' is not within allowed directories: ${allAllowed.join(", ")}`
+    );
+  }
+
+  return resolved;
+}
 
 // ── Default critical configuration files ─────────────────────────────────
 
@@ -146,6 +183,8 @@ export function registerBackupTools(server: McpServer): void {
             const config = getConfig();
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
             const snapshotDir = output_dir ?? `${config.backupDir}/snapshot-${timestamp}`;
+            // TOOL-026: Validate snapshot output directory for traversal
+            validateBackupPath(snapshotDir);
 
             const captureSteps: Array<{ name: string; enabled: boolean; commands: Array<{ label: string; cmd: string; args: string[] }> }> = [
               { name: "packages", enabled: include_packages, commands: [{ label: "dpkg-selections", cmd: "dpkg", args: ["--get-selections"] }] },
@@ -208,7 +247,10 @@ export function registerBackupTools(server: McpServer): void {
             if (!backup_path) return { content: [createErrorContent("backup_path is required for restore action")], isError: true };
             if (!original_path) return { content: [createErrorContent("original_path is required for restore action")], isError: true };
 
+            // TOOL-026: Validate backup paths for traversal
+            validateBackupPath(backup_path);
             const validatedBackup = validateFilePath(backup_path);
+            validateBackupPath(original_path);
             const validatedOriginal = validateFilePath(original_path);
 
             const fullCmd = `cp ${validatedBackup} ${validatedOriginal}`;

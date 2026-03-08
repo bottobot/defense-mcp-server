@@ -70,6 +70,37 @@ const PYTHON_IMPORT_MAP: Record<string, string> = {
   "attrs": "attr",
 };
 
+// ── SECURITY (CORE-008): Package allowlists for pip/npm ──────────────────────
+
+/**
+ * Allowed pip packages that may be auto-installed.
+ * Only packages required by this project's tool manifests are permitted.
+ * Any package not in this set will be rejected with a logged warning.
+ */
+const ALLOWED_PIP_PACKAGES = new Set<string>([
+  // Security/malware analysis
+  "yara-python",
+  "python-nmap",
+  // System interaction
+  "python-apt",
+  // Data formats used by security tools
+  "PyYAML",
+  "python-dateutil",
+  "attrs",
+]);
+
+/**
+ * Allowed npm packages that may be auto-installed globally.
+ * Only packages required by this project's tool manifests are permitted.
+ * Any package not in this set will be rejected with a logged warning.
+ */
+const ALLOWED_NPM_PACKAGES = new Set<string>([
+  // Supply chain security / SBOM generation
+  "cdxgen",
+  // Container vulnerability scanning (when installed via npm)
+  "snyk",
+]);
+
 // ── Library dev-package suffix mapping per distro family ──────────────────────
 
 const LIB_DEV_PATTERNS: Record<string, (lib: string) => string[]> = {
@@ -649,6 +680,21 @@ export class AutoInstaller {
       };
     }
 
+    // SECURITY (CORE-008): Verify pip package is in the allowed packages list
+    if (!ALLOWED_PIP_PACKAGES.has(module)) {
+      console.error(
+        `[auto-install] ⚠ REJECTED: pip package "${module}" is not in the allowed packages list`,
+      );
+      return {
+        dependency: module,
+        type: "python-module",
+        method: "pip",
+        success: false,
+        message: `pip package "${module}" is not in the allowed packages list. Auto-install refused.`,
+        duration: Date.now() - start,
+      };
+    }
+
     console.error(`[auto-installer] Installing Python module '${module}' via ${pip}...`);
 
     // Try user-site install first (no sudo needed)
@@ -747,6 +793,21 @@ export class AutoInstaller {
         method: "npm",
         success: false,
         message: `npm package name "${pkg}" contains invalid characters. Auto-install refused.`,
+        duration: Date.now() - start,
+      };
+    }
+
+    // SECURITY (CORE-008): Verify npm package is in the allowed packages list
+    if (!ALLOWED_NPM_PACKAGES.has(pkg)) {
+      console.error(
+        `[auto-install] ⚠ REJECTED: npm package "${pkg}" is not in the allowed packages list`,
+      );
+      return {
+        dependency: pkg,
+        type: "npm-package",
+        method: "npm",
+        success: false,
+        message: `npm package "${pkg}" is not in the allowed packages list. Auto-install refused.`,
         duration: Date.now() - start,
       };
     }

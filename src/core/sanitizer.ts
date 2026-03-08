@@ -5,7 +5,7 @@ import { getConfig, type DefenseConfig } from "./config.js";
  * Regex matching dangerous shell metacharacters.
  * These characters could enable command injection if passed unsanitized.
  */
-const SHELL_METACHAR_RE = /[;|&$`(){}<>\n\r]/;
+const SHELL_METACHAR_RE = /[;|&$`(){}<>!\\\n\r]/;
 
 /**
  * Regex matching control characters (excluding tab, newline, carriage return
@@ -508,4 +508,115 @@ export function validateAuditdKey(key: string): string {
   }
 
   return trimmed;
+}
+
+/**
+ * Validates a tool-supplied file path against traversal attacks and an explicit
+ * list of allowed root directories.
+ *
+ * 1. Rejects paths containing `..`
+ * 2. Uses `path.resolve()` to normalize
+ * 3. Verifies resolved path is within one of the allowed directories
+ *
+ * @param inputPath  The user-supplied path
+ * @param allowedDirs  Array of allowed root directories (e.g. ["/var/log", "/etc"])
+ * @param label  Human-readable label for error messages (default: "Path")
+ * @returns The resolved, validated path
+ */
+export function validateToolPath(
+  inputPath: string,
+  allowedDirs: string[],
+  label = "Path"
+): string {
+  if (!inputPath || typeof inputPath !== "string") {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+
+  if (inputPath.includes("\0")) {
+    throw new Error(`${label} contains null bytes`);
+  }
+
+  // Defense-in-depth: reject any path containing `..` sequences
+  if (PATH_TRAVERSAL_RE.test(inputPath)) {
+    throw new Error(
+      `${label} contains forbidden directory traversal (..): '${inputPath}'`
+    );
+  }
+
+  if (SHELL_METACHAR_RE.test(inputPath)) {
+    throw new Error(
+      `${label} contains forbidden shell metacharacters: '${inputPath}'`
+    );
+  }
+
+  if (CONTROL_CHAR_RE.test(inputPath)) {
+    throw new Error(`${label} contains control characters: '${inputPath}'`);
+  }
+
+  const resolved = normalize(resolve(inputPath));
+
+  const isAllowed = allowedDirs.some((dir) => {
+    const normalizedDir = normalize(resolve(dir));
+    return (
+      resolved === normalizedDir || resolved.startsWith(normalizedDir + "/")
+    );
+  });
+
+  if (!isAllowed) {
+    throw new Error(
+      `${label} '${resolved}' is not within allowed directories: ${allowedDirs.join(", ")}`
+    );
+  }
+
+  return resolved;
+}
+
+// ── Error Sanitization ───────────────────────────────────────────────────────
+
+/**
+ * SECURITY (TOOL-029): Regex to match absolute paths in error messages.
+ * Matches paths like /home/user/... or /var/lib/...
+ */
+const ABS_PATH_RE = /\/(?:home|root|tmp|var|etc|usr|opt|srv|run|mnt|media)\/\S*/gi;
+
+/**
+ * SECURITY (TOOL-029): Regex to match stack traces in error messages.
+ * Matches lines starting with "    at " (Node.js stack trace format).
+ */
+const STACK_TRACE_RE = /\n\s+at .+/g;
+
+/**
+ * Sanitize error messages before returning them to MCP clients.
+ *
+ * Strips:
+ * 1. Absolute file paths (replaced with `[path]`)
+ * 2. Stack traces (removed entirely)
+ * 3. Overly long messages (truncated to 500 chars)
+ *
+ * @param error - The caught error (unknown type)
+ * @returns A sanitized error message string safe for external exposure
+ */
+export function sanitizeToolError(error: unknown): string {
+  let message: string;
+
+  if (error instanceof Error) {
+    message = error.message;
+  } else if (typeof error === "string") {
+    message = error;
+  } else {
+    message = String(error);
+  }
+
+  // Strip stack traces
+  message = message.replace(STACK_TRACE_RE, "");
+
+  // Strip absolute paths
+  message = message.replace(ABS_PATH_RE, "[path]");
+
+  // Truncate overly long messages
+  if (message.length > 500) {
+    message = message.substring(0, 497) + "...";
+  }
+
+  return message;
 }

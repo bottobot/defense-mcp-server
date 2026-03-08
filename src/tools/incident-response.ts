@@ -51,22 +51,22 @@ export function registerIncidentResponseTools(server: McpServer): void {
           const { output_dir, dry_run } = params;
           try {
             const collectionSteps = [
-              { name: "01-processes", cmd: "ps auxwww", desc: "Running processes" },
-              { name: "02-network-connections", cmd: "ss -tulnpea", desc: "Network connections" },
-              { name: "03-ip-addresses", cmd: "ip addr show", desc: "IP addresses" },
-              { name: "04-routes", cmd: "ip route show", desc: "Routing table" },
-              { name: "05-arp-cache", cmd: "arp -an", desc: "ARP cache" },
-              { name: "06-logged-in-users-who", cmd: "who", desc: "Logged in users (who)" },
-              { name: "07-logged-in-users-w", cmd: "w", desc: "Logged in users (w)" },
-              { name: "08-recent-logins", cmd: "last -n 20", desc: "Recent logins" },
-              { name: "09-open-files", cmd: "lsof -n 2>/dev/null | head -500", desc: "Open files (first 500 lines)" },
-              { name: "10-kernel-modules", cmd: "lsmod", desc: "Loaded kernel modules" },
-              { name: "11-mounts", cmd: "mount", desc: "Mounted filesystems" },
-              { name: "12-disk-usage", cmd: "df -h", desc: "Disk usage" },
-              { name: "13-environment", cmd: "env", desc: "Environment variables" },
-              { name: "14-uptime", cmd: "uptime", desc: "System uptime" },
-              { name: "15-hostname", cmd: "hostname", desc: "Hostname" },
-              { name: "16-utc-time", cmd: "date -u", desc: "Current UTC time" },
+              { name: "01-processes", command: "ps", args: ["auxwww"], desc: "Running processes" },
+              { name: "02-network-connections", command: "ss", args: ["-tulnpea"], desc: "Network connections" },
+              { name: "03-ip-addresses", command: "ip", args: ["addr", "show"], desc: "IP addresses" },
+              { name: "04-routes", command: "ip", args: ["route", "show"], desc: "Routing table" },
+              { name: "05-arp-cache", command: "arp", args: ["-an"], desc: "ARP cache" },
+              { name: "06-logged-in-users-who", command: "who", args: [], desc: "Logged in users (who)" },
+              { name: "07-logged-in-users-w", command: "w", args: [], desc: "Logged in users (w)" },
+              { name: "08-recent-logins", command: "last", args: ["-n", "20"], desc: "Recent logins" },
+              { name: "09-open-files", command: "lsof", args: ["-n"], desc: "Open files", maxLines: 500 },
+              { name: "10-kernel-modules", command: "lsmod", args: [], desc: "Loaded kernel modules" },
+              { name: "11-mounts", command: "mount", args: [], desc: "Mounted filesystems" },
+              { name: "12-disk-usage", command: "df", args: ["-h"], desc: "Disk usage" },
+              { name: "13-environment", command: "env", args: [], desc: "Environment variables" },
+              { name: "14-uptime", command: "uptime", args: [], desc: "System uptime" },
+              { name: "15-hostname", command: "hostname", args: [], desc: "Hostname" },
+              { name: "16-utc-time", command: "date", args: ["-u"], desc: "Current UTC time" },
             ];
 
             if (dry_run ?? getConfig().dryRun) {
@@ -80,7 +80,7 @@ export function registerIncidentResponseTools(server: McpServer): void {
 
               for (const step of collectionSteps) {
                 lines.push(`  ${step.name}: ${step.desc}`);
-                lines.push(`    Command: ${step.cmd}`);
+                lines.push(`    Command: ${step.command} ${step.args.join(" ")}`);
               }
 
               lines.push(``);
@@ -123,11 +123,32 @@ export function registerIncidentResponseTools(server: McpServer): void {
             let failCount = 0;
 
             for (const step of collectionSteps) {
+              // Use pre-defined command and args directly — no shell string parsing
               const result = await executeCommand({
-                command: "sh",
-                args: ["-c", `${step.cmd} > "${collectionDir}/${step.name}.txt" 2>&1`],
+                command: step.command,
+                args: step.args,
                 toolName: "incident_response",
                 timeout: 30000,
+              });
+
+              // Truncate output if maxLines is set (replaces shell piping to head)
+              let stdout = result.stdout;
+              if ('maxLines' in step && step.maxLines) {
+                const allLines = stdout.split("\n");
+                if (allLines.length > step.maxLines) {
+                  stdout = allLines.slice(0, step.maxLines).join("\n");
+                }
+              }
+
+              // Write output to file using tee
+              const outputPath = `${collectionDir}/${step.name}.txt`;
+              const outputContent = stdout + (result.stderr ? "\n" + result.stderr : "");
+              await executeCommand({
+                command: "tee",
+                args: [outputPath],
+                stdin: outputContent,
+                toolName: "incident_response",
+                timeout: 5000,
               });
 
               if (result.exitCode === 0) {
@@ -201,18 +222,36 @@ export function registerIncidentResponseTools(server: McpServer): void {
               }
 
               const deletedResult = await executeCommand({
-                command: "sh",
-                args: [
-                  "-c",
-                  `ls -la /proc/*/exe 2>/dev/null | grep "deleted" | head -20`,
-                ],
+                command: "ls",
+                args: ["-la", "/proc/self/exe"],
                 toolName: "incident_response",
                 timeout: 15000,
               });
 
-              const deletedProcs = deletedResult.stdout
-                .split("\n")
-                .filter((l) => l.trim());
+              // Use find to locate deleted exe symlinks instead of globbing with shell
+              const deletedFindResult = await executeCommand({
+                command: "find",
+                args: ["/proc", "-maxdepth", "2", "-name", "exe", "-type", "l"],
+                toolName: "incident_response",
+                timeout: 15000,
+              });
+
+              // Filter for "deleted" in TypeScript by checking each symlink
+              const exeLinks = deletedFindResult.stdout.split("\n").filter((l) => l.trim());
+              const deletedChecks: string[] = [];
+              for (const link of exeLinks.slice(0, 50)) {
+                const lsResult = await executeCommand({
+                  command: "ls",
+                  args: ["-la", link],
+                  toolName: "incident_response",
+                  timeout: 2000,
+                });
+                if (lsResult.exitCode === 0 && lsResult.stdout.includes("deleted")) {
+                  deletedChecks.push(lsResult.stdout.trim());
+                }
+              }
+
+              const deletedProcs = deletedChecks.slice(0, 20);
               if (deletedProcs.length > 0) {
                 lines.push(`  [HIGH] Processes with deleted executables:`);
                 for (const proc of deletedProcs) {
@@ -341,15 +380,57 @@ export function registerIncidentResponseTools(server: McpServer): void {
               lines.push(`── PERSISTENCE IOCs ──`);
 
               lines.push(`  ─ Cron Jobs ─`);
-              const cronResult = await executeCommand({
-                command: "sh",
-                args: [
-                  "-c",
-                  `crontab -l 2>/dev/null; echo "---"; for f in /etc/cron.d/* /etc/cron.daily/* /etc/cron.hourly/* /etc/cron.weekly/* /etc/cron.monthly/*; do [ -f "$f" ] && echo "FILE: $f" && head -5 "$f" && echo "---"; done 2>/dev/null`,
-                ],
+              // Get user crontab
+              const crontabResult = await executeCommand({
+                command: "crontab",
+                args: ["-l"],
                 toolName: "incident_response",
-                timeout: 15000,
+                timeout: 10000,
               });
+
+              // Get system crontab
+              const cronTabFileResult = await executeCommand({
+                command: "cat",
+                args: ["/etc/crontab"],
+                toolName: "incident_response",
+                timeout: 5000,
+              });
+
+              // Find cron files in standard directories
+              const cronDirs = ["/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.weekly", "/etc/cron.monthly"];
+              const cronFileEntries: string[] = [];
+              for (const dir of cronDirs) {
+                const lsResult = await executeCommand({
+                  command: "find",
+                  args: [dir, "-maxdepth", "1", "-type", "f"],
+                  toolName: "incident_response",
+                  timeout: 5000,
+                });
+                if (lsResult.exitCode === 0 && lsResult.stdout.trim()) {
+                  for (const f of lsResult.stdout.trim().split("\n").filter((l) => l.trim())) {
+                    const headResult = await executeCommand({
+                      command: "head",
+                      args: ["-5", f],
+                      toolName: "incident_response",
+                      timeout: 2000,
+                    });
+                    cronFileEntries.push(`FILE: ${f}\n${headResult.stdout.trim()}`);
+                  }
+                }
+              }
+
+              // Combine all cron data
+              const cronParts: string[] = [];
+              if (crontabResult.exitCode === 0 && crontabResult.stdout.trim()) {
+                cronParts.push(crontabResult.stdout.trim());
+              }
+              for (const entry of cronFileEntries) {
+                cronParts.push(entry);
+              }
+              const cronResult = {
+                stdout: cronParts.join("\n---\n"),
+                exitCode: 0,
+              };
 
               if (cronResult.stdout.trim() && cronResult.stdout.trim() !== "---") {
                 const cronEntries = cronResult.stdout
@@ -413,36 +494,49 @@ export function registerIncidentResponseTools(server: McpServer): void {
               }
 
               lines.push(`  ─ rc.local ─`);
-              const rcResult = await executeCommand({
-                command: "sh",
-                args: [
-                  "-c",
-                  `[ -f /etc/rc.local ] && cat /etc/rc.local | grep -v "^#" | grep -v "^$" | grep -v "^exit 0" || echo "not found or empty"`,
-                ],
+              const rcCatResult = await executeCommand({
+                command: "cat",
+                args: ["/etc/rc.local"],
                 toolName: "incident_response",
                 timeout: 10000,
               });
 
-              if (
-                rcResult.stdout.trim() &&
-                rcResult.stdout.trim() !== "not found or empty"
-              ) {
+              // Filter out comments, empty lines, and "exit 0" in TypeScript
+              const rcContent = rcCatResult.exitCode === 0
+                ? rcCatResult.stdout
+                    .split("\n")
+                    .filter((l) => l.trim() && !l.trim().startsWith("#") && l.trim() !== "exit 0")
+                    .join("\n")
+                    .trim()
+                : "";
+
+              if (rcContent) {
                 lines.push(`    [MEDIUM] Non-standard rc.local entries:`);
-                for (const entry of rcResult.stdout.trim().split("\n")) {
+                for (const entry of rcContent.split("\n")) {
                   lines.push(`      ${entry.trim()}`);
                 }
-                totalFindings += rcResult.stdout.trim().split("\n").length;
+                totalFindings += rcContent.split("\n").length;
               } else {
                 lines.push(`    rc.local is clean or not present.`);
               }
 
               lines.push(`  ─ Shell Profile Checks ─`);
+              // Search shell profiles for suspicious patterns
+              const profileFiles = ["/root/.bashrc", "/root/.profile"];
+              // Find user profile files
+              const homeFind = await executeCommand({
+                command: "find",
+                args: ["/home", "-maxdepth", "2", "(", "-name", ".bashrc", "-o", "-name", ".profile", ")", "-type", "f"],
+                toolName: "incident_response",
+                timeout: 5000,
+              });
+              if (homeFind.exitCode === 0 && homeFind.stdout.trim()) {
+                profileFiles.push(...homeFind.stdout.trim().split("\n").filter((l) => l.trim()));
+              }
+
               const bashrcResult = await executeCommand({
-                command: "sh",
-                args: [
-                  "-c",
-                  `grep -rnH "curl\\|wget\\|base64\\|/dev/tcp\\|nc -e\\|ncat\\|python.*-c.*import" /home/*/.bashrc /home/*/.profile /root/.bashrc /root/.profile 2>/dev/null | head -20`,
-                ],
+                command: "grep",
+                args: ["-rnH", "curl\\|wget\\|base64\\|/dev/tcp\\|nc -e\\|ncat\\|python.*-c.*import", ...profileFiles],
                 toolName: "incident_response",
                 timeout: 15000,
               });

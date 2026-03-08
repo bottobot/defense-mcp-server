@@ -10,8 +10,28 @@ import { executeCommand } from "../core/executor.js";
 import { createErrorContent, formatToolOutput } from "../core/parsers.js";
 import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
-import { validateFilePath } from "../core/sanitizer.js";
+import { validateFilePath, validateTarget, validatePort } from "../core/sanitizer.js";
 import { existsSync, readFileSync } from "node:fs";
+
+// ── Input validation helpers (TOOL-003 remediation) ────────────────────────
+
+/** Validate a service name for use in iptables comments — alphanumeric, dash, underscore only */
+const SERVICE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
+function validateServiceName(name: string): string {
+  if (!name || !SERVICE_NAME_RE.test(name)) {
+    throw new Error(`Invalid service name: '${name}'. Only [a-zA-Z0-9._-] allowed.`);
+  }
+  return name;
+}
+
+/** Validate an interface name */
+const INTERFACE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
+function validateInterfaceName(name: string): string {
+  if (!name || !INTERFACE_NAME_RE.test(name)) {
+    throw new Error(`Invalid interface name: '${name}'. Only [a-zA-Z0-9._-] allowed.`);
+  }
+  return name;
+}
 
 export function registerZeroTrustNetworkTools(server: McpServer): void {
 
@@ -316,23 +336,41 @@ ListenPort = ${listenPort}
               return { content: [createErrorContent("allowPorts is required for microsegment action")], isError: true };
             }
 
-            const safety = await SafeguardRegistry.getInstance().checkSafety("configure_microsegmentation", { service, ports: allowPorts });
+            // TOOL-003 remediation: validate all user-supplied inputs
+            const validatedService = validateServiceName(service);
+            const validatedPorts: number[] = allowPorts.map(p => validatePort(p));
+            const validatedSources: string[] = allowSources.map(s => validateTarget(s));
 
-            const rules: string[] = [];
+            const safety = await SafeguardRegistry.getInstance().checkSafety("configure_microsegmentation", { service: validatedService, ports: validatedPorts });
 
-            for (const port of allowPorts) {
-              if (allowSources.length > 0) {
-                for (const src of allowSources) {
-                  rules.push(`iptables -A INPUT -p tcp --dport ${port} -s ${src} -j ACCEPT -m comment --comment "microseg-${service}"`);
+            // Build rules as structured {command, args} arrays — no string interpolation/splitting
+            const rules: { description: string; command: string; args: string[] }[] = [];
+
+            for (const port of validatedPorts) {
+              if (validatedSources.length > 0) {
+                for (const src of validatedSources) {
+                  rules.push({
+                    description: `iptables -A INPUT -p tcp --dport ${port} -s ${src} -j ACCEPT -m comment --comment "microseg-${validatedService}"`,
+                    command: "iptables",
+                    args: ["-A", "INPUT", "-p", "tcp", "--dport", String(port), "-s", src, "-j", "ACCEPT", "-m", "comment", "--comment", `microseg-${validatedService}`],
+                  });
                 }
               } else {
-                rules.push(`iptables -A INPUT -p tcp --dport ${port} -j ACCEPT -m comment --comment "microseg-${service}"`);
+                rules.push({
+                  description: `iptables -A INPUT -p tcp --dport ${port} -j ACCEPT -m comment --comment "microseg-${validatedService}"`,
+                  command: "iptables",
+                  args: ["-A", "INPUT", "-p", "tcp", "--dport", String(port), "-j", "ACCEPT", "-m", "comment", "--comment", `microseg-${validatedService}`],
+                });
               }
             }
 
             if (denyAll) {
-              for (const port of allowPorts) {
-                rules.push(`iptables -A INPUT -p tcp --dport ${port} -j DROP -m comment --comment "microseg-${service}-deny"`);
+              for (const port of validatedPorts) {
+                rules.push({
+                  description: `iptables -A INPUT -p tcp --dport ${port} -j DROP -m comment --comment "microseg-${validatedService}-deny"`,
+                  command: "iptables",
+                  args: ["-A", "INPUT", "-p", "tcp", "--dport", String(port), "-j", "DROP", "-m", "comment", "--comment", `microseg-${validatedService}-deny`],
+                });
               }
             }
 
@@ -340,8 +378,8 @@ ListenPort = ${listenPort}
               return {
                 content: [formatToolOutput({
                   dryRun: true,
-                  service,
-                  rules,
+                  service: validatedService,
+                  rules: rules.map(r => r.description),
                   warnings: safety.warnings,
                 })],
               };
@@ -349,13 +387,13 @@ ListenPort = ${listenPort}
 
             const results: { rule: string; success: boolean; error?: string }[] = [];
             for (const rule of rules) {
-              const parts = rule.split(/\s+/);
+              // Execute directly with parameterized arrays — no shell string splitting
               const result = await executeCommand({
-                command: parts[0],
-                args: parts.slice(1),
+                command: rule.command,
+                args: rule.args,
                 timeout: 10000,
               });
-              results.push({ rule, success: result.exitCode === 0, error: result.exitCode !== 0 ? result.stderr : undefined });
+              results.push({ rule: rule.description, success: result.exitCode === 0, error: result.exitCode !== 0 ? result.stderr : undefined });
             }
 
             const entry = createChangeEntry({

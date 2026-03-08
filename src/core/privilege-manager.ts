@@ -15,7 +15,7 @@
  * @module privilege-manager
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, lstatSync } from "node:fs";
 import { execFileSafe } from "./spawn-safe.js";
 import { SudoSession } from "./sudo-session.js";
 import type { ToolManifest } from "./tool-registry.js";
@@ -37,6 +37,25 @@ let cachedAskpassAvailable: boolean | null = null;
  * When available, `sudo -A` can pop a secure GUI dialog for the password,
  * so tools should NOT be blocked at pre-flight for missing sudo sessions.
  */
+/**
+ * SECURITY (CORE-016): Validate an askpass candidate's ownership and permissions.
+ * This is a local implementation to avoid circular dependency with sudo-guard.ts.
+ * Mirrors SudoGuard.validateAskpassPath() logic.
+ */
+function isAskpassCandidateValid(candidatePath: string): boolean {
+  try {
+    const lstats = lstatSync(candidatePath);
+    if (lstats.isSymbolicLink() || !lstats.isFile()) return false;
+    const currentUid = process.getuid?.() ?? -1;
+    if (lstats.uid !== 0 && lstats.uid !== currentUid) return false;
+    const perms = lstats.mode & 0o777;
+    if ((perms & 0o077) !== 0) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isAskpassAvailable(): boolean {
   if (cachedAskpassAvailable !== null) return cachedAskpassAvailable;
 
@@ -46,14 +65,16 @@ function isAskpassAvailable(): boolean {
     return false;
   }
 
+  // SECURITY (CORE-016): Validate env-specified askpass helper
   const envAskpass = process.env.SUDO_ASKPASS;
-  if (envAskpass && existsSync(envAskpass)) {
+  if (envAskpass && existsSync(envAskpass) && isAskpassCandidateValid(envAskpass)) {
     cachedAskpassAvailable = true;
     return true;
   }
 
+  // SECURITY (CORE-016): Validate each candidate before accepting
   for (const candidate of ASKPASS_CANDIDATES) {
-    if (existsSync(candidate)) {
+    if (existsSync(candidate) && isAskpassCandidateValid(candidate)) {
       cachedAskpassAvailable = true;
       return true;
     }

@@ -10,18 +10,64 @@ import { executeCommand } from "../core/executor.js";
 import { createErrorContent, formatToolOutput } from "../core/parsers.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
-import { existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { secureWriteFileSync } from "../core/secure-fs.js";
+
+// ── TOOL-018 remediation: BPF filter expression validation ─────────────────
+
+/** Characters allowed in BPF filter expressions */
+const BPF_FILTER_ALLOWED_RE = /^[a-zA-Z0-9\s.\/:_\-\[\]!=<>'"]+$/;
+
+/** Shell metacharacters that must be rejected in BPF filters */
+const BPF_SHELL_METACHAR_RE = /[;|&`$(){}<>]/;
+
+/** Maximum BPF filter expression length */
+const BPF_FILTER_MAX_LENGTH = 500;
+
+/**
+ * Validate a BPF filter expression.
+ * Rejects shell metacharacters, enforces length limits, and allows only
+ * safe characters (alphanumeric, spaces, dots, colons, slashes, hyphens,
+ * underscores, brackets, comparison operators, and quotes).
+ */
+export function validateBpfFilter(filter: string): string {
+  if (!filter || typeof filter !== "string") {
+    throw new Error("BPF filter must be a non-empty string");
+  }
+
+  const trimmed = filter.trim();
+
+  if (trimmed.length > BPF_FILTER_MAX_LENGTH) {
+    throw new Error(
+      `BPF filter expression too long (${trimmed.length} chars). Maximum is ${BPF_FILTER_MAX_LENGTH} characters.`
+    );
+  }
+
+  if (BPF_SHELL_METACHAR_RE.test(trimmed)) {
+    throw new Error(
+      `BPF filter contains forbidden shell metacharacters: '${trimmed}'`
+    );
+  }
+
+  if (!BPF_FILTER_ALLOWED_RE.test(trimmed)) {
+    throw new Error(
+      `BPF filter contains invalid characters. Only alphanumeric, spaces, dots, colons, slashes, hyphens, underscores, brackets, comparison operators, and quotes are allowed.`
+    );
+  }
+
+  return trimmed;
+}
 
 export function registerEbpfSecurityTools(server: McpServer): void {
 
   // ── list_ebpf_programs (kept as-is) ────────────────────────────────────────
 
   server.tool(
-    "list_ebpf_programs",
+    "ebpf_list_programs",
     "List loaded eBPF programs and pinned maps.",
     {
-      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async ({ dryRun }) => {
       try {
@@ -88,7 +134,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
   // ── falco (merged: check_falco + deploy_falco_rules + get_ebpf_events) ────
 
   server.tool(
-    "falco",
+    "ebpf_falco",
     "Falco runtime security: check status, deploy custom rules, or read recent events.",
     {
       action: z.enum(["status", "deploy_rules", "events"]).describe("Action: status=check Falco, deploy_rules=deploy custom rules, events=read recent events"),
@@ -99,7 +145,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
       lines: z.number().optional().default(50).describe("Number of recent events to return (events action)"),
       priority: z.enum(["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]).optional().describe("Filter by minimum priority (events action)"),
       // shared
-      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;
@@ -185,7 +231,8 @@ export function registerEbpfSecurityTools(server: McpServer): void {
               mkdirSync(rulesDir, { recursive: true });
             }
 
-            writeFileSync(rulePath, ruleContent, "utf-8");
+            // TOOL-010: Use secure-fs instead of direct writeFileSync for audit trail
+            secureWriteFileSync(rulePath, ruleContent, "utf-8");
 
             // Validate rules
             const validate = await executeCommand({
@@ -195,7 +242,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
             });
 
             const entry = createChangeEntry({
-              tool: "falco",
+              tool: "ebpf_falco",
               action: `Deploy Falco rule ${ruleName}`,
               target: rulePath,
               dryRun: false,

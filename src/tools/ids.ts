@@ -18,7 +18,10 @@ import {
   logChange,
   createChangeEntry,
 } from "../core/changelog.js";
-import { sanitizeArgs } from "../core/sanitizer.js";
+import { sanitizeArgs, validateToolPath } from "../core/sanitizer.js";
+
+// ── TOOL-016 remediation: allowed directories for IDS config/baseline paths ─
+const ALLOWED_IDS_DIRS = ["/etc", "/var/lib", "/tmp", "/home", "/opt", "/usr"];
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -63,8 +66,9 @@ export function registerIdsTools(server: McpServer): void {
         }
 
         if (config) {
-          sanitizeArgs([config]);
-          args.push("--config", config);
+          // TOOL-016: Validate config path against traversal and allowed dirs
+          const validatedConfig = validateToolPath(config, ALLOWED_IDS_DIRS, "AIDE config path");
+          args.push("--config", validatedConfig);
         }
 
         const fullCmd = `sudo aide ${args.join(" ")}`;
@@ -517,6 +521,10 @@ export function registerIdsTools(server: McpServer): void {
           };
         }
 
+        // TOOL-016: Validate each file path against traversal
+        for (const fp of filePaths) {
+          validateToolPath(fp, ALLOWED_IDS_DIRS, "File integrity path");
+        }
         sanitizeArgs(filePaths);
 
         // Compute sha256sum for each file
@@ -552,7 +560,8 @@ export function registerIdsTools(server: McpServer): void {
         // Create baseline mode
         if (create_baseline) {
           const baselineOutput = baseline_path ?? "/tmp/file-integrity-baseline.sha256";
-          sanitizeArgs([baselineOutput]);
+          // TOOL-016: Validate baseline output path
+          validateToolPath(baselineOutput, ALLOWED_IDS_DIRS, "Baseline output path");
 
           const writeResult = await executeCommand({
             command: "sudo",
@@ -599,7 +608,8 @@ export function registerIdsTools(server: McpServer): void {
 
         // Compare against baseline mode
         if (baseline_path) {
-          sanitizeArgs([baseline_path]);
+          // TOOL-016: Validate baseline path for traversal
+          validateToolPath(baseline_path, ALLOWED_IDS_DIRS, "Baseline path");
 
           // Read baseline
           const baselineResult = await executeCommand({

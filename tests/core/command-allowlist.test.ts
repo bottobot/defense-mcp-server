@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
     isAllowlisted,
     resolveCommand,
@@ -9,6 +9,8 @@ import {
     verifyBinaryOwnership,
     verifyAllBinaries,
     getCriticalBinaryPackages,
+    isRuntimePathVerificationEnabled,
+    setRuntimePathVerification,
 } from "../../src/core/command-allowlist.js";
 
 describe("command-allowlist", () => {
@@ -285,6 +287,129 @@ describe("command-allowlist", () => {
                 expect(result.path).toBeTruthy();
                 expect(typeof result.verified).toBe("boolean");
                 expect(result.message).toBeTruthy();
+            }
+        });
+    });
+
+    // ── Runtime path verification ─────────────────────────────────────────
+
+    describe("runtime path verification", () => {
+        it("should report runtime path verification status", () => {
+            const enabled = isRuntimePathVerificationEnabled();
+            expect(typeof enabled).toBe("boolean");
+        });
+
+        it("should allow toggling runtime path verification", () => {
+            const original = isRuntimePathVerificationEnabled();
+            setRuntimePathVerification(!original);
+            expect(isRuntimePathVerificationEnabled()).toBe(!original);
+            // Restore
+            setRuntimePathVerification(original);
+            expect(isRuntimePathVerificationEnabled()).toBe(original);
+        });
+
+        it("should resolve commands with verification enabled", () => {
+            setRuntimePathVerification(true);
+            initializeAllowlist();
+            const resolved = resolveCommand("cat");
+            expect(resolved).toMatch(/^\//);
+        });
+
+        it("should resolve commands with verification disabled", () => {
+            setRuntimePathVerification(false);
+            initializeAllowlist();
+            const resolved = resolveCommand("cat");
+            expect(resolved).toMatch(/^\//);
+            // Restore
+            setRuntimePathVerification(true);
+        });
+    });
+
+    // ── resolveSudoCommand edge cases ─────────────────────────────────────
+
+    describe("resolveSudoCommand edge cases", () => {
+        it("should skip empty string arguments", () => {
+            const result = resolveSudoCommand(["-S", "-p", "", "cat", "/etc/passwd"]);
+            expect(result.targetIndex).toBe(3);
+            expect(result.targetPath).toMatch(/cat$/);
+        });
+
+        it("should handle --stdin long flag", () => {
+            const result = resolveSudoCommand(["--stdin", "cat", "/etc/passwd"]);
+            expect(result.targetIndex).toBe(1);
+            expect(result.targetPath).toMatch(/cat$/);
+        });
+
+        it("should handle -k (kill cached credentials) alone", () => {
+            const result = resolveSudoCommand(["-k"]);
+            expect(result.targetIndex).toBe(-1);
+            expect(result.targetPath).toBe("");
+        });
+
+        it("should handle -K (remove timestamp)", () => {
+            const result = resolveSudoCommand(["-K"]);
+            expect(result.targetIndex).toBe(-1);
+        });
+
+        it("should skip unknown flags starting with -", () => {
+            // Unknown flag -- should be skipped
+            const result = resolveSudoCommand(["-Z", "cat", "/etc/passwd"]);
+            expect(result.targetIndex).toBe(1);
+            expect(result.targetPath).toMatch(/cat$/);
+        });
+
+        it("should handle --user flag with argument", () => {
+            const result = resolveSudoCommand(["--user", "root", "cat", "/dev/null"]);
+            expect(result.targetIndex).toBe(2);
+            expect(result.targetPath).toMatch(/cat$/);
+        });
+    });
+
+    // ── isAllowlisted edge cases ──────────────────────────────────────────
+
+    describe("isAllowlisted edge cases", () => {
+        it("should handle empty string", () => {
+            expect(isAllowlisted("")).toBe(false);
+        });
+
+        it("should return true for allowlisted absolute paths from candidates", () => {
+            // Test with a candidate path that exists on the system
+            const entries = getAllowlistEntries();
+            const catEntry = entries.find((e) => e.binary === "cat");
+            if (catEntry && catEntry.resolvedPath) {
+                expect(isAllowlisted(catEntry.resolvedPath)).toBe(true);
+            }
+        });
+    });
+
+    // ── Allowlist entries structure ────────────────────────────────────────
+
+    describe("allowlist entries structure", () => {
+        it("should have resolvedPath or undefined for each entry", () => {
+            initializeAllowlist();
+            const entries = getAllowlistEntries();
+            for (const entry of entries) {
+                expect(
+                    entry.resolvedPath === undefined || typeof entry.resolvedPath === "string"
+                ).toBe(true);
+            }
+        });
+
+        it("should record inodes for resolved entries", () => {
+            initializeAllowlist();
+            const entries = getAllowlistEntries();
+            const resolvedEntries = entries.filter((e) => e.resolvedPath);
+            // At least some should have inodes recorded
+            const withInodes = resolvedEntries.filter((e) => e.resolvedInode !== undefined);
+            expect(withInodes.length).toBeGreaterThan(0);
+        });
+
+        it("should have all candidate paths as absolute paths", () => {
+            const entries = getAllowlistEntries();
+            for (const entry of entries) {
+                for (const candidate of entry.candidates) {
+                    expect(candidate.startsWith("/")).toBe(true);
+                }
             }
         });
     });

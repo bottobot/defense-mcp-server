@@ -6,11 +6,13 @@ import {
     writeFileSync,
     existsSync,
     statSync,
+    symlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
     BackupManager,
+    validateBackupPath,
     type BackupEntry,
     type BackupManifest,
 } from "../../src/core/backup-manager.js";
@@ -370,6 +372,116 @@ describe("backup-manager", () => {
             const manager = new BackupManager(backupDir);
             await expect(manager.pruneOldBackups(0)).rejects.toThrow();
             await expect(manager.pruneOldBackups(-1)).rejects.toThrow();
+        });
+
+        it("should delete backup files from disk during prune", async () => {
+            const manager = new BackupManager(backupDir);
+
+            const srcPath = join(sourceDir, "delete-disk.conf");
+            writeFileSync(srcPath, "delete me from disk");
+            const entry = manager.backupSync(srcPath);
+
+            expect(existsSync(entry.backupPath)).toBe(true);
+
+            // Make it old
+            const manifestPath = join(backupDir, "manifest.json");
+            const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+            manifest.backups[0].timestamp = "2020-01-01T00:00:00.000Z";
+            writeFileSync(manifestPath, JSON.stringify(manifest));
+
+            await manager.pruneOldBackups(1);
+
+            // File should be deleted from disk
+            expect(existsSync(entry.backupPath)).toBe(false);
+        });
+    });
+
+    // ── CORE-015: validateBackupPath ──────────────────────────────────────
+
+    describe("validateBackupPath (CORE-015)", () => {
+        it("should reject paths containing '..' traversal", () => {
+            expect(() =>
+                validateBackupPath("../etc/shadow", backupDir)
+            ).toThrow("SECURITY");
+            expect(() =>
+                validateBackupPath(`${backupDir}/../etc/shadow`, backupDir)
+            ).toThrow("SECURITY");
+        });
+
+        it("should reject paths outside base directory", () => {
+            expect(() =>
+                validateBackupPath("/tmp/outside", backupDir)
+            ).toThrow("SECURITY");
+        });
+
+        it("should accept paths within base directory", () => {
+            const { mkdirSync } = require("node:fs");
+            mkdirSync(backupDir, { recursive: true });
+            const validPath = join(backupDir, "valid-backup.dat");
+            writeFileSync(validPath, "data");
+
+            expect(() => validateBackupPath(validPath, backupDir)).not.toThrow();
+        });
+
+        it("should reject symlinks (CORE-015)", () => {
+            const { mkdirSync } = require("node:fs");
+            mkdirSync(backupDir, { recursive: true });
+
+            const realFile = join(sourceDir, "real.txt");
+            writeFileSync(realFile, "real content");
+
+            const symlinkPath = join(backupDir, "symlink-backup");
+            symlinkSync(realFile, symlinkPath);
+
+            expect(() => validateBackupPath(symlinkPath, backupDir)).toThrow("SECURITY");
+        });
+
+        it("should accept base directory itself", () => {
+            const { mkdirSync } = require("node:fs");
+            mkdirSync(backupDir, { recursive: true });
+
+            expect(() => validateBackupPath(backupDir, backupDir)).not.toThrow();
+        });
+    });
+
+    // ── Multiple backups of same file ────────────────────────────────────
+
+    describe("multiple backups", () => {
+        it("should create multiple backups of the same file", async () => {
+            const manager = new BackupManager(backupDir);
+            const srcPath = join(sourceDir, "multi.conf");
+            writeFileSync(srcPath, "version1");
+            const entry1 = manager.backupSync(srcPath);
+
+            // Small delay to ensure different timestamps in backup filenames
+            await new Promise((resolve) => setTimeout(resolve, 50));
+
+            writeFileSync(srcPath, "version2");
+            const entry2 = manager.backupSync(srcPath);
+
+            expect(entry1.id).not.toBe(entry2.id);
+            // Backup paths may be the same if within same millisecond
+            // but IDs must differ
+            const manifest = readManifest();
+            expect(manifest.backups.length).toBe(2);
+        });
+    });
+
+    // ── Corrupt manifest recovery ────────────────────────────────────────
+
+    describe("corrupt manifest recovery", () => {
+        it("should handle corrupt manifest JSON gracefully", () => {
+            const { mkdirSync } = require("node:fs");
+            mkdirSync(backupDir, { recursive: true });
+            const manifestPath = join(backupDir, "manifest.json");
+            writeFileSync(manifestPath, "{invalid json");
+
+            const manager = new BackupManager(backupDir);
+            const srcPath = join(sourceDir, "recovery.conf");
+            writeFileSync(srcPath, "data");
+
+            // Should not throw — starts fresh
+            expect(() => manager.backupSync(srcPath)).not.toThrow();
         });
     });
 });

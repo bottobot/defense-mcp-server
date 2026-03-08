@@ -152,7 +152,7 @@ Reference: NIST Special Publication 800-53 Revision 5 — Security and Privacy C
 | Control | Title | Tool(s) | Evidence Type |
 |---------|-------|---------|---------------|
 | CA-2 | Control Assessments | `compliance_lynis_audit`, `compliance_cis_check` | Lynis/CIS audit report |
-| CA-7 | Continuous Monitoring | `setup_scheduled_audit`, `calculate_security_score`, `get_posture_trend` | Scheduled audit history |
+| CA-7 | Continuous Monitoring | `defense_scheduled_audit`, `defense_security_posture` | Scheduled audit history |
 
 ### CM — Configuration Management
 
@@ -194,7 +194,7 @@ Reference: NIST Special Publication 800-53 Revision 5 — Security and Privacy C
 | Control | Title | Tool(s) | Evidence Type |
 |---------|-------|---------|---------------|
 | SA-10 | Developer Configuration Management | `generate_sbom`, `verify_package_integrity`, `check_slsa_attestation` | SBOM, integrity checks |
-| SA-11 | Developer Testing and Evaluation | `scan_for_secrets`, `scan_git_history` | Secret scan findings |
+| SA-11 | Developer Testing and Evaluation | `secrets_scan`, `secrets_git_history_scan` | Secret scan findings |
 
 ### SC — System and Communications Protection
 
@@ -207,7 +207,7 @@ Reference: NIST Special Publication 800-53 Revision 5 — Security and Privacy C
 | SC-13 | Cryptographic Protection | `crypto_tls_audit`, `crypto_file_hash` | Cipher/hash verification |
 | SC-17 | Public Key Infrastructure Certificates | `crypto_cert_expiry`, `setup_mtls` | Certificate validity |
 | SC-28 | Protection of Information at Rest | `crypto_luks_manage` | LUKS volume status |
-| SC-39 | Process Isolation | `container_namespace_check`, `audit_memory_protections` | Namespace and ASLR status |
+| SC-39 | Process Isolation | `container_namespace_check`, `harden_memory` | Namespace and ASLR status |
 
 ### SI — System and Information Integrity
 
@@ -243,7 +243,7 @@ Key tools and their PCI-DSS requirement mappings:
 | Req 4.2 | Strong cryptography in transit | `crypto_tls_audit`, `crypto_tls_config_audit`, `access_ssh_cipher_audit` | TLS/SSH cipher findings |
 | Req 5.2 | Malicious software detection | `malware_clamav_scan`, `malware_clamav_update`, `malware_yara_scan` | Scan results, signature dates |
 | Req 5.3 | Anti-malware mechanisms actively running | `malware_clamav_update`, `ids_aide_manage` | Update status, IDS active |
-| Req 6.2 | Bespoke software security | `scan_for_secrets`, `scan_git_history`, `generate_sbom` | Secret scan, SBOM |
+| Req 6.2 | Bespoke software security | `secrets_scan`, `secrets_git_history_scan`, `supply_chain` | Secret scan, SBOM |
 | Req 6.3 | Security vulnerabilities identified and addressed | `patch_update_audit`, `lookup_cve`, `scan_packages_cves` | Vulnerability findings |
 | Req 7.2 | Access control system implemented | `access_user_audit`, `access_sudo_audit`, `access_pam_configure` | Account and PAM config |
 | Req 8.2 | User account management | `access_user_audit`, `access_password_policy` | Account audit |
@@ -318,7 +318,7 @@ AICPA Trust Services Criteria (2017 edition with 2022 points of focus updates). 
 | CC6.7 | Restrict data transmission | `crypto_tls_audit`, `configure_microsegmentation` | TLS and segmentation |
 | CC6.8 | Malicious code prevention | `malware_clamav_scan`, `malware_yara_scan`, `ids_rootkit_summary` | Malware scan results |
 | CC7.1 | Configuration monitoring | `create_baseline`, `compare_to_baseline`, `list_drift_alerts` | Drift detection records |
-| CC7.2 | System monitoring | `setup_scheduled_audit`, `log_auditd_cis_rules` | Scheduled audit records |
+| CC7.2 | System monitoring | `defense_scheduled_audit`, `log_auditd` | Scheduled audit records |
 | CC7.3 | Vulnerability monitoring | `patch_update_audit`, `scan_packages_cves`, `lookup_cve` | Vulnerability scan reports |
 | CC7.4 | Incident detection and response | `ir_ioc_scan`, `ir_volatile_collect`, `ids_aide_manage` | IOC and forensic data |
 | CC8.1 | Change management | `defense_change_history`, `backup_config_files` | Change log with backups |
@@ -343,7 +343,7 @@ Annex A Controls (ISO/IEC 27001:2022 / ISO/IEC 27002:2022).
 | A.7.5 | Protecting Assets | `crypto_luks_manage`, `crypto_file_hash` | Data-at-rest encryption |
 | A.8.2 | Privileged Access Rights | `access_sudo_audit`, `access_user_audit` | Privileged account review |
 | A.8.3 | Information Access Restriction | `firewall_policy_audit`, `netdef_open_ports_audit` | Network access review |
-| A.8.4 | Access to Source Code | `scan_for_secrets`, `scan_git_history` | Source code secret scan |
+| A.8.4 | Access to Source Code | `secrets_scan`, `secrets_git_history_scan` | Source code secret scan |
 | A.8.5 | Secure Authentication | `access_ssh_harden`, `access_ssh_cipher_audit`, `crypto_tls_audit` | Secure auth config |
 | A.8.6 | Capacity Management | `backup_system_state` | System snapshot |
 | A.8.7 | Malware Protection | `malware_clamav_scan`, `malware_clamav_update`, `ids_rootkit_summary` | Antimalware evidence |
@@ -352,7 +352,7 @@ Annex A Controls (ISO/IEC 27001:2022 / ISO/IEC 27002:2022).
 | A.8.11 | Data Masking | `secrets_scan`, `secrets_env_audit` | Secret exposure findings |
 | A.8.12 | Data Leakage Prevention | `scan_for_secrets`, `secrets_ssh_key_sprawl` | Data leakage evidence |
 | A.8.15 | Logging | `log_auditd_rules`, `log_auditd_cis_rules`, `log_rotation_audit` | Logging configuration |
-| A.8.16 | Monitoring Activities | `setup_scheduled_audit`, `get_posture_trend` | Monitoring records |
+| A.8.16 | Monitoring Activities | `defense_scheduled_audit`, `defense_security_posture` | Monitoring records |
 | A.8.17 | Clock Synchronization | `log_auditd_cis_rules` | Time change audit rules |
 | A.8.20 | Networks Security | `firewall_policy_audit`, `netdef_ipv6_audit` | Network security controls |
 | A.8.21 | Security of Network Services | `crypto_tls_audit`, `netdef_open_ports_audit` | Service security audit |
@@ -361,7 +361,7 @@ Annex A Controls (ISO/IEC 27001:2022 / ISO/IEC 27002:2022).
 | A.8.24 | Use of Cryptography | `crypto_tls_config_audit`, `crypto_gpg_keys`, `crypto_luks_manage` | Cryptography controls |
 | A.8.25 | Secure Development Lifecycle | `generate_sbom`, `verify_package_integrity`, `check_slsa_attestation` | Supply chain controls |
 | A.8.26 | Application Security Requirements | `scan_for_secrets`, `generate_sbom` | Application security findings |
-| A.8.28 | Secure Coding | `scan_for_secrets`, `scan_git_history` | Code secret scanning |
+| A.8.28 | Secure Coding | `secrets_scan`, `secrets_git_history_scan` | Code secret scanning |
 | A.8.29 | Security Testing in Dev/Acceptance | `netdef_self_scan`, `scan_packages_cves` | Vulnerability testing |
 | A.8.32 | Change Management | `defense_change_history`, `backup_config_files` | Change records with rollback |
 | A.8.33 | Test Information | `create_baseline`, `backup_system_state` | Pre-change snapshots |
@@ -384,7 +384,7 @@ General Data Protection Regulation, Article 32 — Security of Processing. Requi
 | Art. 32(1)(b) — Resilience | Resilience of systems | `patch_update_audit`, `harden_sysctl_audit` | Patch and hardening status |
 | Art. 32(1)(c) — Restore availability | Timely restore capability | `backup_restore`, `backup_verify` | Restore capability demonstration |
 | Art. 32(1)(d) — Regular testing | Effectiveness testing | `compliance_report`, `run_compliance_check`, `calculate_security_score` | Periodic assessment reports |
-| Art. 32(2) — Appropriate measures | Risk-proportionate controls | `defense_security_posture`, `get_posture_trend` | Posture scoring over time |
+| Art. 32(2) — Appropriate measures | Risk-proportionate controls | `defense_security_posture` | Posture scoring over time |
 | Recital 83 — Personal data breach | Breach detection | `ir_ioc_scan`, `ids_rootkit_summary`, `log_auditd_search` | IOC and audit search results |
 | Recital 83 — Access logging | Authentication logging | `log_auditd_cis_rules`, `log_auditd_report` | Login event audit records |
 

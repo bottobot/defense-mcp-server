@@ -14,6 +14,56 @@ import {
   formatToolOutput,
 } from "../core/parsers.js";
 
+// ── TOOL-021 remediation: error message sanitization ───────────────────────
+
+/** Patterns for sensitive environment variable names */
+const SENSITIVE_ENV_PATTERNS = [
+  /SECRET/i,
+  /KEY/i,
+  /TOKEN/i,
+  /PASSWORD/i,
+  /PASSWD/i,
+  /CREDENTIAL/i,
+  /AUTH/i,
+  /API_KEY/i,
+  /PRIVATE/i,
+];
+
+/**
+ * Sanitize an error message by redacting potential environment variable values
+ * and other sensitive data that might be exposed in error output.
+ * Never logs the full process.env object.
+ */
+function sanitizeErrorMessage(message: string): string {
+  let sanitized = message;
+
+  // Redact values of known-sensitive environment variables
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!value || value.length < 4) continue; // Skip very short values
+    const isSensitive = SENSITIVE_ENV_PATTERNS.some((pattern) =>
+      pattern.test(key)
+    );
+    if (isSensitive) {
+      // Replace all occurrences of the sensitive value
+      sanitized = sanitized.split(value).join("[REDACTED]");
+    }
+  }
+
+  // Redact common token-like patterns in the message itself
+  sanitized = sanitized.replace(
+    /(ghp_|gho_|github_pat_|sk-|sk_live_|AKIA|glpat-|glrt-|hvs\.)[A-Za-z0-9_\-]{8,}/g,
+    "$1[REDACTED]"
+  );
+
+  // Redact long base64-like strings that may be tokens/keys (40+ chars)
+  sanitized = sanitized.replace(
+    /(?<==|:\s*)[A-Za-z0-9+/]{40,}={0,2}/g,
+    "[REDACTED]"
+  );
+
+  return sanitized;
+}
+
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerSecretsTools(server: McpServer): void {
@@ -202,7 +252,8 @@ export function registerSecretsTools(server: McpServer): void {
         return { content: [createTextContent(lines.join("\n"))] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
+        // TOOL-021: Sanitize error message to avoid leaking sensitive data
+        return { content: [createErrorContent(sanitizeErrorMessage(msg))], isError: true };
       }
     }
   );
@@ -235,17 +286,21 @@ export function registerSecretsTools(server: McpServer): void {
         if (check_env) {
           lines.push(`── SENSITIVE ENVIRONMENT VARIABLES ──`);
           const envResult = await executeCommand({
-            command: "sh",
-            args: [
-              "-c",
-              `env | grep -iE "(password|secret|token|key|api)" | sed 's/=.*/=<REDACTED>/' | sort`,
-            ],
+            command: "env",
+            args: [],
             toolName: "secrets_env_audit",
             timeout: 10000,
           });
 
-          if (envResult.stdout.trim()) {
-            const envVars = envResult.stdout.trim().split("\n");
+          // Filter and redact sensitive variables in TypeScript
+          const sensitivePattern = /password|secret|token|key|api/i;
+          const envVars = envResult.stdout
+            .split("\n")
+            .filter((line) => sensitivePattern.test(line.split("=")[0] ?? ""))
+            .map((line) => line.replace(/=.*/, "=<REDACTED>"))
+            .sort();
+
+          if (envVars.length > 0) {
             lines.push(`Found ${envVars.length} sensitive variable(s) (values redacted):`);
             for (const v of envVars) {
               lines.push(`  ${v}`);
@@ -305,21 +360,28 @@ export function registerSecretsTools(server: McpServer): void {
 
           // ── Check /proc/*/environ readability ────────────────────────
           lines.push(`── /proc/*/environ ACCESSIBILITY ──`);
-          const procResult = await executeCommand({
-            command: "sh",
-            args: [
-              "-c",
-              `ls -la /proc/1/environ 2>/dev/null && echo "---" && find /proc -maxdepth 2 -name "environ" -readable 2>/dev/null | head -20`,
-            ],
+          // Check /proc/1/environ permissions
+          const proc1Result = await executeCommand({
+            command: "ls",
+            args: ["-la", "/proc/1/environ"],
+            toolName: "secrets_env_audit",
+            timeout: 5000,
+          });
+          // Find readable environ files
+          const procFindResult = await executeCommand({
+            command: "find",
+            args: ["/proc", "-maxdepth", "2", "-name", "environ", "-readable"],
             toolName: "secrets_env_audit",
             timeout: 10000,
           });
 
-          if (procResult.stdout.trim()) {
-            const readableFiles = procResult.stdout
-              .trim()
-              .split("\n")
-              .filter((l) => l.startsWith("/proc"));
+          const procOutput = [
+            ...(proc1Result.exitCode === 0 ? [proc1Result.stdout.trim()] : []),
+            ...(procFindResult.exitCode === 0 ? procFindResult.stdout.trim().split("\n") : []),
+          ].filter((l) => l.trim());
+
+          if (procOutput.length > 0) {
+            const readableFiles = procOutput.filter((l) => l.startsWith("/proc"));
             if (readableFiles.length > 0) {
               lines.push(
                 `WARNING: ${readableFiles.length} /proc/*/environ file(s) are readable by current user.`
@@ -345,7 +407,8 @@ export function registerSecretsTools(server: McpServer): void {
         return { content: [createTextContent(lines.join("\n"))] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
+        // TOOL-021: Sanitize error message to avoid leaking sensitive data
+        return { content: [createErrorContent(sanitizeErrorMessage(msg))], isError: true };
       }
     }
   );
@@ -493,11 +556,8 @@ export function registerSecretsTools(server: McpServer): void {
 
               // Count entries and check for command restrictions
               const wcResult = await executeCommand({
-                command: "sh",
-                args: [
-                  "-c",
-                  `grep -c "^[^#]" "${akFile}" 2>/dev/null || echo 0`,
-                ],
+                command: "grep",
+                args: ["-c", "^[^#]", akFile],
                 toolName: "secrets_ssh_key_sprawl",
                 timeout: 5000,
               });
@@ -506,11 +566,8 @@ export function registerSecretsTools(server: McpServer): void {
 
               // Check for command restrictions
               const cmdResult = await executeCommand({
-                command: "sh",
-                args: [
-                  "-c",
-                  `grep -c "^command=" "${akFile}" 2>/dev/null || echo 0`,
-                ],
+                command: "grep",
+                args: ["-c", "^command=", akFile],
                 toolName: "secrets_ssh_key_sprawl",
                 timeout: 5000,
               });
@@ -539,24 +596,21 @@ export function registerSecretsTools(server: McpServer): void {
         lines.push(`── SUMMARY ──`);
         lines.push(`Private keys found: ${keyFiles.length}`);
         if (check_authorized_keys) {
-          const akCount = (
-            await executeCommand({
-              command: "sh",
-              args: [
-                "-c",
-                `find ${search_path} -name "authorized_keys" -type f 2>/dev/null | wc -l`,
-              ],
-              toolName: "secrets_ssh_key_sprawl",
-              timeout: 10000,
-            })
-          ).stdout.trim();
+          const akFindResult = await executeCommand({
+            command: "find",
+            args: [search_path, "-name", "authorized_keys", "-type", "f"],
+            toolName: "secrets_ssh_key_sprawl",
+            timeout: 10000,
+          });
+          const akCount = akFindResult.stdout.trim().split("\n").filter((l) => l.trim()).length;
           lines.push(`Authorized_keys files: ${akCount}`);
         }
 
         return { content: [createTextContent(lines.join("\n"))] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
+        // TOOL-021: Sanitize error message to avoid leaking sensitive data
+        return { content: [createErrorContent(sanitizeErrorMessage(msg))], isError: true };
       }
     }
   );
@@ -564,11 +618,11 @@ export function registerSecretsTools(server: McpServer): void {
   // ── 4. scan_git_history ───────────────────────────────────────────────
 
   server.tool(
-    "scan_git_history",
+    "secrets_git_history_scan",
     "Scan git repository history for leaked secrets using truffleHog or gitleaks.",
     {
       repoPath: z.string().describe("Path to git repository"),
-      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async ({ repoPath, dryRun }) => {
       try {
@@ -625,7 +679,8 @@ export function registerSecretsTools(server: McpServer): void {
         return { content: [createErrorContent("Neither truffleHog nor gitleaks found. Install one for git history scanning.")], isError: true };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(`Git history scan failed: ${msg}`)], isError: true };
+        // TOOL-021: Sanitize error message to avoid leaking sensitive data
+        return { content: [createErrorContent(`Git history scan failed: ${sanitizeErrorMessage(msg)}`)], isError: true };
       }
     }
   );

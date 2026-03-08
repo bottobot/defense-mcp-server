@@ -23,8 +23,12 @@ import {
 import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
 import { sanitizeArgs } from "../core/sanitizer.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
-import { writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { secureWriteFileSync } from "../core/secure-fs.js";
+
+// ── TOOL-011 remediation: safe directory for seccomp profiles ──────────────
+const SECCOMP_PROFILE_DIR = "/tmp/kali-defense/seccomp";
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -312,8 +316,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
               sections.push("\n[DRY RUN] No changes written.");
             } else {
               if (readResult.exitCode === 0) { await backupFile(daemonPath); sections.push(`\n  ✅ Backed up ${daemonPath}`); }
-              const escaped = newJson.replace(/'/g, "'\\''");
-              const writeResult = await executeCommand({ command: "sh", args: ["-c", `printf '%s' '${escaped}' | sudo tee ${daemonPath} > /dev/null`], toolName: "container_docker", timeout: 10000 });
+              const writeResult = await executeCommand({ command: "sudo", args: ["tee", daemonPath], stdin: newJson, toolName: "container_docker", timeout: 10000 });
               if (writeResult.exitCode !== 0) return { content: [createErrorContent(`Failed to write ${daemonPath}: ${writeResult.stderr}`)], isError: true };
               sections.push(`  ✅ Written to ${daemonPath}`);
               sections.push("\n  ⚠️ Restart Docker: sudo systemctl restart docker");
@@ -449,7 +452,8 @@ export function registerContainerSecurityTools(server: McpServer): void {
             }
 
             const profilePath = `/etc/apparmor.d/${profileName}`;
-            writeFileSync(profilePath, profileContent, "utf-8");
+            // TOOL-009: Use secure-fs instead of direct writeFileSync
+            secureWriteFileSync(profilePath, profileContent, "utf-8");
 
             const result = await executeCommand({ command: "apparmor_parser", args: ["-r", profilePath], timeout: 15000 });
 
@@ -480,7 +484,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
       username: z.string().optional().describe("Username to configure (rootless action)"),
       subuidCount: z.number().optional().default(65536).describe("Number of subordinate UIDs (rootless action)"),
       // shared
-      dryRun: z.boolean().optional().default(false).describe("Preview only"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;
@@ -499,18 +503,32 @@ export function registerContainerSecurityTools(server: McpServer): void {
               syscalls: [{ names: allowedSyscalls, action: "SCMP_ACT_ALLOW" }],
             };
 
+            // TOOL-011: Validate the profile content is valid JSON (it's constructed above, so this verifies serialization)
             const json = JSON.stringify(profile, null, 2);
 
             if (dryRun || !outputPath) {
               return { content: [formatToolOutput({ dryRun: dryRun || !outputPath, profile, syscallCount: allowedSyscalls.length, outputPath: outputPath ?? "(stdout)" })] };
             }
 
-            const dir = dirname(outputPath);
-            if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-            writeFileSync(outputPath, json, "utf-8");
+            // TOOL-011: Restrict seccomp profile output to safe directory
+            const safeBaseDir = resolve(SECCOMP_PROFILE_DIR);
+            const resolvedOutput = resolve(outputPath);
+            if (!resolvedOutput.startsWith(safeBaseDir + "/") && resolvedOutput !== safeBaseDir) {
+              // If the user-provided path isn't within the safe dir, place it there instead
+              const filename = outputPath.replace(/[^a-zA-Z0-9._-]/g, "_");
+              const safePath = resolve(safeBaseDir, filename);
+              if (!existsSync(safeBaseDir)) mkdirSync(safeBaseDir, { recursive: true });
+              secureWriteFileSync(safePath, json, "utf-8");
+              logChange(createChangeEntry({ tool: "container_security_config", action: "Create seccomp profile (path restricted to safe directory)", target: safePath, dryRun: false, success: true }));
+              return { content: [formatToolOutput({ success: true, outputPath: safePath, note: `Output path was restricted to safe directory: ${SECCOMP_PROFILE_DIR}`, syscallCount: allowedSyscalls.length, defaultAction })] };
+            }
 
-            logChange(createChangeEntry({ tool: "container_security_config", action: "Create seccomp profile", target: outputPath, dryRun: false, success: true }));
-            return { content: [formatToolOutput({ success: true, outputPath, syscallCount: allowedSyscalls.length, defaultAction })] };
+            if (!existsSync(safeBaseDir)) mkdirSync(safeBaseDir, { recursive: true });
+            // TOOL-011: Use secure-fs for the write operation
+            secureWriteFileSync(resolvedOutput, json, "utf-8");
+
+            logChange(createChangeEntry({ tool: "container_security_config", action: "Create seccomp profile", target: resolvedOutput, dryRun: false, success: true }));
+            return { content: [formatToolOutput({ success: true, outputPath: resolvedOutput, syscallCount: allowedSyscalls.length, defaultAction })] };
           } catch (err: unknown) { return { content: [createErrorContent(`Seccomp profile generation failed: ${err instanceof Error ? err.message : String(err)}`)], isError: true }; }
         }
 

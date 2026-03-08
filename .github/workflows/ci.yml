@@ -6,30 +6,55 @@ on:
   pull_request:
     branches: [master, main]
 
+# CICD-015: Signed commits should be enforced via GitHub branch protection rules
+# (Settings → Branches → Branch protection → Require signed commits).
+# This is a repository-level setting, not a CI workflow check.
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # CICD-002: OS matrix for cross-platform CI. Currently Linux-only because
+    # this is a Kali/Linux defensive security tool — all underlying binaries
+    # (iptables, systemctl, auditd, fail2ban, etc.) are Linux-specific.
+    # macOS and Windows are not meaningful targets for this project.
+    # Add additional Linux variants (e.g., ubuntu-22.04) here if needed.
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest]
         node-version: [18, 20, 22]
 
     steps:
-      - uses: actions/checkout@v4
+      # CICD-005: All actions pinned to full commit SHAs
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node-version }}
+          # CICD-003: npm caching via setup-node built-in cache option.
+          # Cache key is automatically derived from package-lock.json hash,
+          # ensuring cache integrity after restore.
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Security audit
+        run: npm audit --audit-level=high
+
       - name: Type check
         run: npx tsc --noEmit
 
-      - name: Run tests
-        run: npm test
+      # CICD-007: SAST / static analysis step
+      - name: Static analysis (lint)
+        run: npx tsc --noEmit --strict
+        # Note: For full SAST, configure CodeQL via .github/workflows/codeql.yml
+
+      # CICD-008: Run tests with coverage enforcement (thresholds in vitest.config.ts)
+      - name: Run tests with coverage
+        run: npx vitest run --coverage
 
       - name: Build
         run: npm run build

@@ -116,20 +116,67 @@ const PYTHON_IMPORT_MAP: Record<string, string> = {
   attrs: "attr",
 };
 
+// ── SECURITY (CORE-017): Module name validation ────────────────────────────
+
+/** Strict pattern for valid Python module names to prevent injection */
+const PYTHON_MODULE_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/;
+
 // ── Dependency check helpers ─────────────────────────────────────────────────
 
 /**
- * Check if a Python module is importable via `python3 -c "import <module>"`.
+ * SECURITY (CORE-017): Check if a Python module is installed WITHOUT executing code.
+ *
+ * Previous approach used `python3 -c "import <module>"` which executes
+ * `__init__.py`, potentially running arbitrary code. New approach:
+ * 1. Try `pip show <package_name>` which queries metadata without execution
+ * 2. Fall back to `python3 -c "import importlib; importlib.util.find_spec('module')"` 
+ *    which locates modules without executing them
+ * 3. Validate module name against strict pattern before use
+ *
  * Uses {@link PYTHON_IMPORT_MAP} to translate pip names to import names.
  */
 function isPythonModuleInstalled(moduleName: string): boolean {
   const importName =
     PYTHON_IMPORT_MAP[moduleName] ?? moduleName.replace(/-/g, "_");
+
+  // SECURITY (CORE-017): Validate module name against strict pattern
+  if (!PYTHON_MODULE_NAME_RE.test(importName)) {
+    console.error(
+      `[preflight] Rejecting invalid Python module name: '${importName}'`
+    );
+    return false;
+  }
+
+  // Strategy 1: Try pip show (queries metadata, no code execution)
   try {
-    execFileSafe("python3", ["-c", `import ${importName}`], {
+    execFileSafe("pip3", ["show", moduleName], {
       timeout: 5_000,
       stdio: "pipe",
     });
+    return true;
+  } catch {
+    // pip3 not available or package not found by pip name; try pip
+    try {
+      execFileSafe("pip", ["show", moduleName], {
+        timeout: 5_000,
+        stdio: "pipe",
+      });
+      return true;
+    } catch {
+      // Fall through to Strategy 2
+    }
+  }
+
+  // Strategy 2: Use importlib.util.find_spec() which finds without executing
+  try {
+    execFileSafe(
+      "python3",
+      ["-c", `import importlib; exit(0 if importlib.util.find_spec('${importName}') else 1)`],
+      {
+        timeout: 5_000,
+        stdio: "pipe",
+      }
+    );
     return true;
   } catch {
     return false;

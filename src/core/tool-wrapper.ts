@@ -27,6 +27,7 @@ import { PreflightEngine, type PreflightResult } from "./preflight.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { PrivilegeManager } from "./privilege-manager.js";
 import { SudoGuard } from "./sudo-guard.js";
+import { RateLimiter } from "./rate-limiter.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,8 @@ interface WrappedToolContext {
   bypassSet: Set<string>;
   preflightEngine: PreflightEngine;
   registry: ToolRegistry;
+  /** CICD-024: Rate limiter for tool invocations */
+  rateLimiter: RateLimiter;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -119,6 +122,8 @@ export function createPreflightServer(
   // Eagerly initialise singletons so they're ready when tools register
   const preflightEngine = PreflightEngine.instance();
   const registry = ToolRegistry.instance();
+  // CICD-024: Rate limiter — configurable via env vars
+  const rateLimiter = RateLimiter.instance();
 
   const ctx: WrappedToolContext = {
     enabled,
@@ -126,6 +131,7 @@ export function createPreflightServer(
     bypassSet,
     preflightEngine,
     registry,
+    rateLimiter,
   };
 
   console.error(
@@ -247,6 +253,23 @@ function createWrappedHandler(
       !Array.isArray(callbackArgs[0])
         ? (callbackArgs[0] as Record<string, unknown>)
         : undefined;
+
+    // ── CICD-024: Rate limit check ─────────────────────────────────────
+    const rateLimitResult = ctx.rateLimiter.check(toolName);
+    if (!rateLimitResult.allowed) {
+      console.error(
+        `[rate-limiter] Tool '${toolName}' rejected: ${rateLimitResult.reason}`,
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `⚠ Rate limit exceeded\n\n${rateLimitResult.reason}`,
+          },
+        ],
+        isError: true,
+      };
+    }
 
     // ── Run pre-flight with error safety ─────────────────────────────
     try {

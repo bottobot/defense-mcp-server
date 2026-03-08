@@ -252,6 +252,263 @@ describe("safeguards", () => {
       );
       expect(sshBlockers.length).toBe(0);
     });
+  
+    // ── Database service stop blocker ────────────────────────────────────
+  
+    describe("Database service stop blocker", () => {
+      it("blocks stopping postgresql service when dbs detected", async () => {
+        // Force detection cache to include databases
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: false, detail: "Not detected" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: true, detail: "Active: PostgreSQL" },
+            web: { category: "Web Servers", detected: false, detail: "Not detected" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        const result = await registry.checkSafety("service_manage", {
+          action: "stop",
+          service: "postgresql",
+        });
+  
+        expect(result.safe).toBe(false);
+        expect(result.blockers.some((b) => b.includes("BLOCKED"))).toBe(true);
+        expect(result.blockers.some((b) => b.includes("postgresql"))).toBe(true);
+      });
+  
+      it("blocks disabling mysql service when dbs detected", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: false, detail: "Not detected" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: true, detail: "Active: MySQL" },
+            web: { category: "Web Servers", detected: false, detail: "Not detected" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        const result = await registry.checkSafety("service_manage", {
+          action: "disable",
+          service: "mysql",
+        });
+  
+        expect(result.safe).toBe(false);
+        expect(result.blockers.some((b) => b.includes("BLOCKED"))).toBe(true);
+      });
+  
+      it("does NOT block stopping non-database service when dbs detected", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: false, detail: "Not detected" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: true, detail: "Active: PostgreSQL" },
+            web: { category: "Web Servers", detected: false, detail: "Not detected" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        const result = await registry.checkSafety("service_manage", {
+          action: "stop",
+          service: "nginx",
+        });
+  
+        const dbBlockers = result.blockers.filter((b) => b.includes("database service"));
+        expect(dbBlockers.length).toBe(0);
+      });
+    });
+  
+    // ── Firewall warnings with detected services ────────────────────────
+  
+    describe("Firewall operation warnings", () => {
+      it("warns about firewall impact on detected docker", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: true, detail: "Docker socket exists" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: false, detail: "Not detected" },
+            web: { category: "Web Servers", detected: false, detail: "Not detected" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        delete process.env.SSH_CONNECTION;
+        delete process.env.SSH_TTY;
+  
+        const result = await registry.checkSafety("firewall_iptables_add", {
+          chain: "INPUT",
+          port: "80",
+          action: "DROP",
+        });
+  
+        expect(result.warnings.some((w) => w.includes("Docker"))).toBe(true);
+        expect(result.impactedApps).toContain("Docker");
+      });
+  
+      it("warns about firewall impact on detected web servers", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: false, detail: "Not detected" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: false, detail: "Not detected" },
+            web: { category: "Web Servers", detected: true, detail: "Running: nginx" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        delete process.env.SSH_CONNECTION;
+        delete process.env.SSH_TTY;
+  
+        const result = await registry.checkSafety("firewall_ufw_rule", {});
+  
+        expect(result.warnings.some((w) => w.includes("Web"))).toBe(true);
+        expect(result.impactedApps).toContain("Web Servers");
+      });
+  
+      it("warns about firewall impact on detected databases", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: false, detail: "Not detected" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: true, detail: "Active: Redis" },
+            web: { category: "Web Servers", detected: false, detail: "Not detected" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        delete process.env.SSH_CONNECTION;
+        delete process.env.SSH_TTY;
+  
+        const result = await registry.checkSafety("firewall_iptables_add", {});
+  
+        expect(result.warnings.some((w) => w.includes("Database"))).toBe(true);
+      });
+  
+      it("warns about firewall impact on MCP servers", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: false, detail: "Not detected" },
+            mcp: { category: "MCP Servers", detected: true, detail: "2 MCP server(s) configured" },
+            dbs: { category: "Databases", detected: false, detail: "Not detected" },
+            web: { category: "Web Servers", detected: false, detail: "Not detected" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        delete process.env.SSH_CONNECTION;
+        delete process.env.SSH_TTY;
+  
+        const result = await registry.checkSafety("firewall_nftables_rule", {});
+  
+        expect(result.warnings.some((w) => w.includes("MCP"))).toBe(true);
+      });
+    });
+  
+    // ── Service operation warnings ───────────────────────────────────────
+  
+    describe("Service operation warnings", () => {
+      it("warns about service changes affecting Docker daemon", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: true, detail: "Docker socket exists" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: false, detail: "Not detected" },
+            web: { category: "Web Servers", detected: false, detail: "Not detected" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        delete process.env.SSH_CONNECTION;
+        delete process.env.SSH_TTY;
+  
+        const result = await registry.checkSafety("service_restart", {});
+  
+        expect(result.warnings.some((w) => w.includes("Docker"))).toBe(true);
+      });
+    });
+  
+    // ── VS Code informational warning ────────────────────────────────────
+  
+    describe("VS Code informational warning", () => {
+      it("adds VS Code active warning when detected", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: true, detail: "VS Code process running" },
+            docker: { category: "Docker", detected: false, detail: "Not detected" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: false, detail: "Not detected" },
+            web: { category: "Web Servers", detected: false, detail: "Not detected" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        delete process.env.SSH_CONNECTION;
+        delete process.env.SSH_TTY;
+  
+        const result = await registry.checkSafety("harden_sysctl_set", {
+          key: "net.ipv4.ip_forward",
+          value: "0",
+        });
+  
+        expect(result.warnings.some((w) => w.includes("VS Code"))).toBe(true);
+      });
+    });
+  
+    // ── impactedApps deduplication ───────────────────────────────────────
+  
+    describe("impactedApps deduplication", () => {
+      it("should deduplicate impacted apps", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        (registry as any).detectionCache = {
+          result: {
+            vscode: { category: "VS Code", detected: false, detail: "Not detected" },
+            docker: { category: "Docker", detected: true, detail: "Docker socket exists" },
+            mcp: { category: "MCP Servers", detected: false, detail: "Not detected" },
+            dbs: { category: "Databases", detected: true, detail: "Active: PostgreSQL" },
+            web: { category: "Web Servers", detected: true, detail: "Running: nginx" },
+          },
+          timestamp: Date.now(),
+        };
+  
+        delete process.env.SSH_CONNECTION;
+        delete process.env.SSH_TTY;
+  
+        const result = await registry.checkSafety("firewall_iptables_add", {});
+  
+        // No duplicate entries
+        const unique = [...new Set(result.impactedApps)];
+        expect(result.impactedApps.length).toBe(unique.length);
+      });
+    });
+  
+    // ── Operation name too long ──────────────────────────────────────────
+  
+    describe("Operation name validation", () => {
+      it("rejects operation name exceeding 256 chars", async () => {
+        const registry = SafeguardRegistry.getInstance();
+        const result = await registry.checkSafety("a".repeat(257), {});
+        expect(result.safe).toBe(false);
+        expect(result.blockers).toContain("Invalid operation name");
+      });
+    });
   });
 
   // ── Password auth disable blocker ────────────────────────────────────

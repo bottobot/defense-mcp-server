@@ -49,8 +49,8 @@ describe("executor", () => {
 
         it("should handle custom environment variables", async () => {
             const result = await executeCommand({
-                command: "sh",
-                args: ["-c", "echo $TEST_KALI_EXEC_VAR"],
+                command: "env",
+                args: [],
                 env: { TEST_KALI_EXEC_VAR: "kali_exec_test_123" },
             });
             expect(result.exitCode).toBe(0);
@@ -216,6 +216,180 @@ describe("executor", () => {
             });
             expect(result.exitCode).toBe(1);
             expect(result.stderr).toContain("Allowlist");
+        });
+    });
+
+    // ── Additional: sudo with -S/-A flags already present ──────────────
+
+    describe("executeCommand — sudo flag passthrough", () => {
+        it("should not inject sudo flags when -S is already present", async () => {
+            const result = await executeCommand({
+                command: "sudo",
+                args: ["-S", "cat", "/dev/null"],
+                skipSudoInjection: true,
+                timeout: 2000,
+            });
+            // Just verify it runs without allowlist errors — it may fail due to no password
+            if (result.exitCode !== 0) {
+                expect(result.stderr).not.toContain("Allowlist validation failed");
+            }
+        }, 15000);
+
+        it("should not inject sudo flags when -A is already present", async () => {
+            const result = await executeCommand({
+                command: "sudo",
+                args: ["-A", "cat", "/dev/null"],
+                skipSudoInjection: true,
+                timeout: 2000,
+            });
+            if (result.exitCode !== 0) {
+                expect(result.stderr).not.toContain("Allowlist validation failed");
+            }
+        }, 15000);
+    });
+
+    // ── Additional: toolName timeout resolution ────────────────────────
+
+    describe("executeCommand — toolName timeout", () => {
+        it("should accept toolName for timeout lookup", async () => {
+            const result = await executeCommand({
+                command: "cat",
+                args: ["/dev/null"],
+                toolName: "some_tool",
+            });
+            expect(result.exitCode).toBe(0);
+        });
+
+        it("should use custom timeout over toolName when both provided", async () => {
+            const result = await executeCommand({
+                command: "cat",
+                args: ["/dev/null"],
+                timeout: 30000,
+                toolName: "some_tool",
+            });
+            expect(result.exitCode).toBe(0);
+            expect(result.timedOut).toBe(false);
+        });
+    });
+
+    // ── Additional: cwd option ─────────────────────────────────────────
+
+    describe("executeCommand — working directory", () => {
+        it("should execute command in specified cwd", async () => {
+            const result = await executeCommand({
+                command: "cat",
+                args: ["/dev/null"],
+                cwd: "/tmp",
+            });
+            expect(result.exitCode).toBe(0);
+        });
+    });
+
+    // ── Additional: output buffer behavior ─────────────────────────────
+
+    describe("executeCommand — output buffer handling", () => {
+        it("should capture both stdout and stderr", async () => {
+            // ls on nonexistent produces stderr; cat /dev/null produces empty stdout
+            const result = await executeCommand({
+                command: "ls",
+                args: ["/nonexistent_path_for_test"],
+            });
+            expect(result.exitCode).not.toBe(0);
+            expect(result.stderr.length).toBeGreaterThan(0);
+        });
+
+        it("should handle very small maxBuffer", async () => {
+            const result = await executeCommand({
+                command: "cat",
+                args: ["/proc/version"],
+                maxBuffer: 10,
+            });
+            // Output should be truncated
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).toContain("[OUTPUT TRUNCATED");
+        });
+
+        it("should handle large output within default maxBuffer", async () => {
+            const result = await executeCommand({
+                command: "cat",
+                args: ["/proc/meminfo"],
+            });
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout.length).toBeGreaterThan(100);
+        });
+    });
+
+    // ── Additional: permission denied detection ────────────────────────
+
+    describe("executeCommand — permissionDenied detection", () => {
+        it("should detect permission denied on /etc/shadow (non-root)", async () => {
+            // Only test if we're not root
+            if (process.getuid?.() === 0) return;
+            const result = await executeCommand({
+                command: "cat",
+                args: ["/etc/shadow"],
+            });
+            expect(result.exitCode).not.toBe(0);
+            expect(result.permissionDenied).toBe(true);
+        });
+
+        it("should not flag permissionDenied on timeouts", async () => {
+            const result = await executeCommand({
+                command: "cat",
+                args: [],
+                timeout: 300,
+            });
+            expect(result.timedOut).toBe(true);
+            expect(result.permissionDenied).toBe(false);
+        }, 10000);
+
+        it("should not flag permissionDenied on file-not-found", async () => {
+            const result = await executeCommand({
+                command: "cat",
+                args: ["/nonexistent/file/for/test"],
+            });
+            expect(result.exitCode).not.toBe(0);
+            expect(result.permissionDenied).toBe(false);
+        });
+    });
+
+    // ── Additional: env option merging ─────────────────────────────────
+
+    describe("executeCommand — environment merging", () => {
+        it("should merge env with process.env", async () => {
+            const result = await executeCommand({
+                command: "env",
+                args: [],
+                env: { KALI_TEST_VAR_A: "alpha", KALI_TEST_VAR_B: "beta" },
+            });
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).toContain("KALI_TEST_VAR_A=alpha");
+            expect(result.stdout).toContain("KALI_TEST_VAR_B=beta");
+        });
+
+        it("should still have PATH from process.env when custom env is set", async () => {
+            const result = await executeCommand({
+                command: "env",
+                args: [],
+                env: { KALI_CUSTOM: "yes" },
+            });
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).toContain("PATH=");
+        });
+    });
+
+    // ── Additional: multiple successive commands ───────────────────────
+
+    describe("executeCommand — multiple calls", () => {
+        it("should handle multiple concurrent commands", async () => {
+            const results = await Promise.all([
+                executeCommand({ command: "cat", args: ["/dev/null"] }),
+                executeCommand({ command: "cat", args: ["/dev/null"] }),
+                executeCommand({ command: "cat", args: ["/dev/null"] }),
+            ]);
+            for (const result of results) {
+                expect(result.exitCode).toBe(0);
+            }
         });
     });
 });

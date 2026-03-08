@@ -137,9 +137,11 @@ function isSSHModification(operation: string, params: Record<string, unknown>): 
 
 // ── SafeguardRegistry ────────────────────────────────────────────────────────
 
-export class SafeguardRegistry {
-  private static instance: SafeguardRegistry | null = null;
+// SECURITY (CORE-021): Module-scoped singleton variable prevents external
+// mutation via (SafeguardRegistry as any).instance — inaccessible outside module.
+let _safeguardInstance: SafeguardRegistry | null = null;
 
+export class SafeguardRegistry {
   /** Cached detection results with TTL to avoid re-running on every tool call */
   private detectionCache: {
     result: { vscode: DetectedApp; docker: DetectedApp; mcp: DetectedApp; dbs: DetectedApp; web: DetectedApp } | null;
@@ -152,10 +154,10 @@ export class SafeguardRegistry {
 
   /** Get the singleton instance. */
   static getInstance(): SafeguardRegistry {
-    if (!SafeguardRegistry.instance) {
-      SafeguardRegistry.instance = new SafeguardRegistry();
+    if (!_safeguardInstance) {
+      _safeguardInstance = new SafeguardRegistry();
     }
-    return SafeguardRegistry.instance;
+    return _safeguardInstance;
   }
 
   /** Detect VS Code editor presence. */
@@ -242,7 +244,8 @@ export class SafeguardRegistry {
     let detected = false;
 
     try {
-      const mcpConfigPath = "/home/robert/kali-mcp-workspace/.mcp.json";
+      // SECURITY (CORE-010): Use environment-aware path instead of hardcoded /home/robert/...
+      const mcpConfigPath = path.join(os.homedir(), "kali-mcp-workspace", ".mcp.json");
       if (fs.existsSync(mcpConfigPath)) {
         const raw = fs.readFileSync(mcpConfigPath, "utf-8");
         const config = JSON.parse(raw);

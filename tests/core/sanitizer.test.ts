@@ -16,6 +16,8 @@ import {
     validateCertPath,
     validateFirewallZone,
     validateAuditdKey,
+    validateToolPath,
+    sanitizeToolError,
 } from "../../src/core/sanitizer.js";
 import type { DefenseConfig } from "../../src/core/config.js";
 
@@ -29,6 +31,7 @@ function tmpConfig(): DefenseConfig {
         dryRun: false,
         changelogPath: "/tmp/test-changelog.json",
         backupDir: "/tmp/test-backups",
+        backupEnabled: true,
         autoInstall: false,
         protectedPaths: ["/boot", "/usr/lib/systemd", "/usr/bin", "/usr/sbin"],
         requireConfirmation: true,
@@ -36,6 +39,8 @@ function tmpConfig(): DefenseConfig {
         policyDir: "/tmp/test-policies",
         toolTimeouts: {},
         sudoSessionTimeout: 15 * 60 * 1000,
+        commandTimeout: 120_000,
+        networkTimeout: 30_000,
     };
 }
 
@@ -565,6 +570,115 @@ describe("sanitizer", () => {
 
         it("should reject dots", () => {
             expect(() => validateAuditdKey("my.key")).toThrow("Invalid auditd key");
+        });
+    });
+
+    // ── validateToolPath ──────────────────────────────────────────────────
+
+    describe("validateToolPath", () => {
+        it("should accept path within allowed directories", () => {
+            const result = validateToolPath("/var/log/syslog", ["/var/log", "/tmp"]);
+            expect(result).toContain("/var/log/syslog");
+        });
+
+        it("should reject path outside allowed directories", () => {
+            expect(() => validateToolPath("/etc/shadow", ["/var/log", "/tmp"])).toThrow(
+                "not within allowed directories"
+            );
+        });
+
+        it("should reject null bytes", () => {
+            expect(() => validateToolPath("/tmp/test\0.txt", ["/tmp"])).toThrow("null bytes");
+        });
+
+        it("should reject path traversal with ..", () => {
+            expect(() => validateToolPath("/tmp/../etc/shadow", ["/tmp"])).toThrow(
+                "directory traversal"
+            );
+        });
+
+        it("should reject shell metacharacters", () => {
+            expect(() => validateToolPath("/tmp/test;rm -rf /", ["/tmp"])).toThrow(
+                "forbidden shell metacharacters"
+            );
+        });
+
+        it("should reject control characters", () => {
+            expect(() => validateToolPath("/tmp/test\x01file", ["/tmp"])).toThrow(
+                "control characters"
+            );
+        });
+
+        it("should reject empty path", () => {
+            expect(() => validateToolPath("", ["/tmp"])).toThrow("non-empty string");
+        });
+
+        it("should use custom label in error messages", () => {
+            expect(() => validateToolPath("", ["/tmp"], "Config path")).toThrow("Config path");
+        });
+
+        it("should accept path matching allowed dir exactly", () => {
+            const result = validateToolPath("/tmp", ["/tmp"]);
+            expect(result).toContain("/tmp");
+        });
+
+        it("should accept nested paths within allowed dirs", () => {
+            const result = validateToolPath("/tmp/deep/nested/file.txt", ["/tmp"]);
+            expect(result).toContain("/tmp/deep/nested/file.txt");
+        });
+    });
+
+    // ── sanitizeToolError ─────────────────────────────────────────────────
+
+    describe("sanitizeToolError", () => {
+        it("should handle Error objects", () => {
+            const result = sanitizeToolError(new Error("something went wrong"));
+            expect(result).toBe("something went wrong");
+        });
+
+        it("should handle string errors", () => {
+            const result = sanitizeToolError("string error message");
+            expect(result).toBe("string error message");
+        });
+
+        it("should handle non-string/non-Error values", () => {
+            const result = sanitizeToolError(42);
+            expect(result).toBe("42");
+        });
+
+        it("should strip absolute paths from error messages", () => {
+            const result = sanitizeToolError(new Error("File not found: /home/user/secret.txt"));
+            expect(result).not.toContain("/home/user/secret.txt");
+            expect(result).toContain("[path]");
+        });
+
+        it("should strip stack traces from error messages", () => {
+            const result = sanitizeToolError(new Error("Error occurred\n    at Function.foo (/path/to/file.js:10:5)\n    at bar (/path/to/other.js:20:10)"));
+            expect(result).not.toContain("at Function.foo");
+        });
+
+        it("should truncate overly long messages", () => {
+            const longMsg = "x".repeat(600);
+            const result = sanitizeToolError(longMsg);
+            expect(result.length).toBeLessThanOrEqual(500);
+            expect(result).toContain("...");
+        });
+
+        it("should handle null/undefined", () => {
+            const result1 = sanitizeToolError(null);
+            expect(typeof result1).toBe("string");
+            const result2 = sanitizeToolError(undefined);
+            expect(typeof result2).toBe("string");
+        });
+
+        it("should strip /tmp paths from messages", () => {
+            const result = sanitizeToolError("Cannot read /tmp/some-temp-file.txt");
+            expect(result).toContain("[path]");
+        });
+
+        it("should preserve short messages without paths", () => {
+            const result = sanitizeToolError("Invalid argument");
+            expect(result).toBe("Invalid argument");
         });
     });
 });

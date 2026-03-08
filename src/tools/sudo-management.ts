@@ -173,7 +173,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               const size = stat.size || 64;
               fs.writeFileSync(SUDO_PW_FILE, crypto.randomBytes(size));
               fs.unlinkSync(SUDO_PW_FILE);
-            } catch {}
+            } catch { console.error("[sudo-gui] Failed to wipe insecure password file"); }
             return {
               content: [
                 createErrorContent(
@@ -209,7 +209,7 @@ export function registerSudoManagementTools(server: McpServer): void {
             fs.unlinkSync(SUDO_PW_FILE);
             console.error("[sudo-gui] Password file securely wiped (2x random overwrite + unlink)");
           } catch {
-            try { fs.unlinkSync(SUDO_PW_FILE); } catch {}
+            try { fs.unlinkSync(SUDO_PW_FILE); } catch { console.error("[sudo-gui] Failed to unlink password file during wipe fallback"); }
           }
 
           if (!password || password.length === 0) {
@@ -789,28 +789,36 @@ async function openGuiPasswordDialog(tool: GuiPasswordTool): Promise<string | nu
   const doneFile = path.join(tmpDir, "done");
 
   try {
-    // Build env export lines for bash
-    const envExports: string[] = [];
+    // Write a self-contained helper script to the secure temp directory
+    // instead of passing interpolated strings to bash -c (TOOL-002 remediation).
+    const scriptPath = path.join(tmpDir, "gui-helper.sh");
+
+    // Build safe env export lines — only allow validated env var names
+    const envExports: string[] = ["#!/bin/sh"];
     for (const [k, v] of Object.entries(sessionEnv)) {
       if (v !== undefined && k !== "_" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+        // Single-quote the value with proper escaping
         envExports.push(`export ${k}='${v.replace(/'/g, "'\\''")}'`);
       }
     }
 
-    // Construct a self-contained bash script that runs zenity in its own session
-    const shellScript = `
-${envExports.join("\n")}
-PW=$(setsid ${tool.command} ${tool.args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")} 2>/dev/null)
-RC=$?
-if [ $RC -eq 0 ] && [ -n "$PW" ]; then
-  printf '%s' "$PW" > '${pwFile}'
-  chmod 600 '${pwFile}'
-fi
-touch '${doneFile}'
-`;
+    // Build command args with proper quoting — no template literal interpolation into shell
+    const quotedArgs = tool.args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ");
+    const scriptLines = [
+      ...envExports,
+      `PW=$(setsid '${tool.command.replace(/'/g, "'\\''")}' ${quotedArgs} 2>/dev/null)`,
+      `RC=$?`,
+      `if [ $RC -eq 0 ] && [ -n "$PW" ]; then`,
+      `  printf '%s' "$PW" > '${pwFile.replace(/'/g, "'\\''")}'`,
+      `  chmod 600 '${pwFile.replace(/'/g, "'\\''")}'`,
+      `fi`,
+      `touch '${doneFile.replace(/'/g, "'\\''")}'`,
+    ];
 
-    // Launch completely detached — won't be killed with MCP server
-    const bg = spawnSafe("setsid", ["bash", "-c", shellScript], {
+    fs.writeFileSync(scriptPath, scriptLines.join("\n") + "\n", { mode: 0o700 });
+
+    // Launch the script directly via setsid — no bash -c with interpolated strings
+    const bg = spawnSafe("setsid", [scriptPath], {
       stdio: "ignore",
       detached: true,
       env: sessionEnv,
@@ -863,8 +871,8 @@ touch '${doneFile}'
     return null;
   } finally {
     // Clean up temp dir
-    try { fs.unlinkSync(pwFile); } catch {}
-    try { fs.unlinkSync(doneFile); } catch {}
-    try { fs.rmdirSync(tmpDir); } catch {}
+    try { fs.unlinkSync(pwFile); } catch { /* best-effort cleanup of sensitive temp file */ }
+    try { fs.unlinkSync(doneFile); } catch { /* best-effort cleanup */ }
+    try { fs.rmdirSync(tmpDir); } catch { /* best-effort cleanup */ }
   }
 }

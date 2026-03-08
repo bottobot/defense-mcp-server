@@ -1,6 +1,6 @@
 # Tools Reference
 
-Complete reference for all 78 tools registered in the kali-defense-mcp-server v0.5.0-beta.1. The server registers 21 tool modules providing 78 defensive security tools.
+Complete reference for all 78 tools registered in the kali-defense-mcp-server v0.5.0. The server registers 21 tool modules providing 78 defensive security tools.
 
 > **v0.5.0 Consolidation**: Former fine-grained tools have been merged into action-based tools. Each consolidated tool accepts an `action` parameter to select sub-operations. All prior functionality is preserved.
 
@@ -39,7 +39,7 @@ Complete reference for all 78 tools registered in the kali-defense-mcp-server v0
 | `harden_kernel` | Kernel security hardening | `audit`, `modules`, `coredump` | Y | conditional |
 | `harden_bootloader` | Bootloader security | `audit`, `configure` | Y | conditional |
 | `harden_misc` | Miscellaneous hardening (cron, umask, banners) | `cron_audit`, `umask_audit`, `umask_set`, `banner_audit`, `banner_set` | Y | conditional |
-| `memory_protection` | Memory and exploit mitigations | `audit`, `enforce_aslr`, `report` | Y | conditional |
+| `harden_memory` | Memory and exploit mitigations | `audit`, `enforce_aslr`, `report` | Y | conditional |
 
 ## IDS (`ids.ts`) — 3 tools
 
@@ -132,7 +132,7 @@ Complete reference for all 78 tools registered in the kali-defense-mcp-server v0
 | `patch_unattended_audit` | Audit unattended-upgrades configuration | — | N | always |
 | `patch_integrity_check` | Verify installed package integrity | — | N | always |
 | `patch_kernel_audit` | Audit kernel version and update status | — | N | always |
-| `vulnerability_intel` | Vulnerability intelligence (CVE lookup, scan, urgency) | `lookup`, `scan`, `urgency` | N | never |
+| `patch_vulnerability_intel` | Vulnerability intelligence (CVE lookup, scan, urgency) | `lookup`, `scan`, `urgency` | N | never |
 
 ## Secrets (`secrets.ts`) — 4 tools
 
@@ -141,7 +141,7 @@ Complete reference for all 78 tools registered in the kali-defense-mcp-server v0
 | `secrets_scan` | Scan filesystem for hardcoded secrets | — | N | never |
 | `secrets_env_audit` | Audit environment variable security and .env exposure | — | N | never |
 | `secrets_ssh_key_sprawl` | Detect SSH key sprawl | — | N | never |
-| `scan_git_history` | Scan git repository history for leaked secrets | — | N | never |
+| `secrets_git_history_scan` | Scan git repository history for leaked secrets | — | N | never |
 
 ## Incident Response (`incident-response.ts`) — 1 tool
 
@@ -156,8 +156,8 @@ Complete reference for all 78 tools registered in the kali-defense-mcp-server v0
 | `defense_check_tools` | Check availability of defensive security tools | — | N | conditional |
 | `defense_workflow` | Defense workflows (suggest or run) | `suggest`, `run` | Y | conditional |
 | `defense_change_history` | View audit trail of defensive changes | — | N | never |
-| `security_posture` | Security posture (score, trend, dashboard) | `score`, `trend`, `dashboard` | N | conditional |
-| `scheduled_audit` | Scheduled security audits | `create`, `list`, `remove`, `history` | Y | conditional |
+| `defense_security_posture` | Security posture (score, trend, dashboard) | `score`, `trend`, `dashboard` | N | conditional |
+| `defense_scheduled_audit` | Scheduled security audits | `create`, `list`, `remove`, `history` | Y | conditional |
 
 ## Sudo Management (`sudo-management.ts`) — 6 tools
 
@@ -192,8 +192,8 @@ Complete reference for all 78 tools registered in the kali-defense-mcp-server v0
 
 | Tool Name | Description | Actions | dryRun | Sudo |
 |-----------|-------------|---------|--------|------|
-| `list_ebpf_programs` | List loaded eBPF programs and pinned maps | — | N | always |
-| `falco` | Falco runtime security | `status`, `deploy_rules`, `events` | Y | conditional |
+| `ebpf_list_programs` | List loaded eBPF programs and pinned maps | — | N | always |
+| `ebpf_falco` | Falco runtime security | `status`, `deploy_rules`, `events` | Y | conditional |
 
 ## Application Hardening (`app-hardening.ts`) — 1 tool
 

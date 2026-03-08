@@ -1,7 +1,7 @@
 # Kali Defense MCP Server — Architecture Document
 
 > **Project**: `kali-defense-mcp-server`
-> **Version**: 1.0.0
+> **Version**: 0.5.0
 > **Purpose**: Standalone MCP server for defensive security, system hardening, and blue team operations
 > **SDK**: `@modelcontextprotocol/sdk` v1.12.1 · `zod` v3.25.0
 > **Transport**: StdioServerTransport
@@ -104,7 +104,7 @@ graph TB
     end
 
     subgraph Server_Core
-        MCP[McpServer - kali-defense-mcp-server v1.0.0]
+        MCP[McpServer - kali-defense-mcp-server v0.5.0]
     end
 
     subgraph Core_Modules
@@ -119,17 +119,17 @@ graph TB
     end
 
     subgraph Tool_Modules
-        FW[firewall.ts - 7 tools]
-        HD[hardening.ts - 7 tools]
-        IDS[ids.ts - 5 tools]
-        LOG[logging.ts - 7 tools]
-        ND[network-defense.ts - 6 tools]
-        CMP[compliance.ts - 5 tools]
-        MAL[malware.ts - 5 tools]
-        BKP[backup.ts - 5 tools]
+        FW[firewall.ts - 5 tools]
+        HD[hardening.ts - 8 tools]
+        IDS[ids.ts - 3 tools]
+        LOG[logging.ts - 4 tools]
+        ND[network-defense.ts - 3 tools]
+        CMP[compliance.ts - 7 tools]
+        MAL[malware.ts - 4 tools]
+        BKP[backup.ts - 1 tool]
         ACC[access-control.ts - 6 tools]
-        ENC[encryption.ts - 6 tools]
-        CTR[container-security.ts - 5 tools]
+        ENC[encryption.ts - 4 tools]
+        CTR[container-security.ts - 6 tools]
         META[meta.ts - 5 tools]
     end
 
@@ -1747,7 +1747,7 @@ The policy engine (`policy-engine.ts`) enables declarative compliance checking. 
 ```json
 {
   "name": "CIS Level 1 - Server",
-  "version": "1.0.0",
+  "version": "0.5.0",
   "description": "CIS Benchmark Level 1 checks for Linux servers",
   "rules": [
     {
@@ -1984,27 +1984,29 @@ import { registerMetaTools } from "./tools/meta.js";
 
 const server = new McpServer({
   name: "kali-defense-mcp-server",
-  version: "1.0.0",
+  version: "0.5.0",
 });
 
-registerFirewallTools(server);          // 7 tools
-registerHardeningTools(server);         // 7 tools
-registerIdsTools(server);               // 5 tools
-registerLoggingTools(server);           // 7 tools
-registerNetworkDefenseTools(server);    // 6 tools
-registerComplianceTools(server);        // 5 tools
-registerMalwareTools(server);           // 5 tools
-registerBackupTools(server);            // 5 tools
+registerFirewallTools(server);          // 5 tools
+registerHardeningTools(server);         // 8 tools
+registerIdsTools(server);               // 3 tools
+registerLoggingTools(server);           // 4 tools
+registerNetworkDefenseTools(server);    // 3 tools
+registerComplianceTools(server);        // 7 tools
+registerMalwareTools(server);           // 4 tools
+registerBackupTools(server);            // 1 tool
 registerAccessControlTools(server);     // 6 tools
-registerEncryptionTools(server);        // 6 tools
-registerContainerSecurityTools(server); // 5 tools
+registerEncryptionTools(server);        // 4 tools
+registerContainerSecurityTools(server); // 6 tools
 registerMetaTools(server);              // 5 tools
-                                        // TOTAL: 69 tools
+// + patch-management, secrets, incident-response, supply-chain,
+//   drift-detection, zero-trust, ebpf, app-hardening, sudo-management
+                                        // TOTAL: 78 tools across 21 modules
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Kali Defense MCP Server v1.0.0 running on stdio");
+  console.error("Kali Defense MCP Server v0.5.0 running on stdio");
   console.error(
     "Registered: firewall, hardening, ids, logging, network-defense, " +
     "compliance, malware, backup, access-control, encryption, container-security, meta"
@@ -2022,7 +2024,7 @@ main().catch((err) => {
 ```json
 {
   "name": "kali-defense-mcp-server",
-  "version": "1.0.0",
+  "version": "0.5.0",
   "description": "Defensive security, system hardening, and blue team operations MCP server",
   "type": "module",
   "main": "build/index.js",

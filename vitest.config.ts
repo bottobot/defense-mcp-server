@@ -4,6 +4,9 @@ export default defineConfig({
     test: {
         globals: true,
         environment: "node",
+        // CONVENTION (CICD-016): All test files must use the *.test.ts naming pattern.
+        // Test files live under tests/ mirroring the src/ directory structure.
+        // Example: src/core/sanitizer.ts → tests/core/sanitizer.test.ts
         include: ["tests/**/*.test.ts"],
         coverage: {
             provider: "v8",
