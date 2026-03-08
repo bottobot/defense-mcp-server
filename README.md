@@ -158,7 +158,7 @@ This server is designed to be safe by default:
 - Rate limited to prevent abuse (30/tool/min, 100 global/min)
 - All file writes go through secure-fs with audit trail
 
-For the full security architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For the full security architecture, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Development
 
