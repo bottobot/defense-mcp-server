@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.5.0-beta.6] — 2026-03-08
+
+### Build Verification
+- **Clean build verified:** Fresh `npm run build` completes with zero TypeScript errors
+- **TypeScript error fix:** Resolved compilation issues for clean production build
+
+---
+
 ## [0.5.0-beta.5] — 2026-03-08
 
 ### GA Readiness — Phase 10
