@@ -39,6 +39,31 @@ Every tool runs with safety guardrails:
 - **Backup before changes** — system state backed up before modifications
 - **Rate limiting** — prevents runaway tool invocations
 
+## Automatic Tool Installation
+
+You don't need to pre-install every security tool. The server automatically detects missing dependencies and installs them when needed.
+
+**How it works:**
+
+1. Each tool declares which system binaries it requires (e.g., `firewall_status` needs `iptables` or `ufw`)
+2. Before executing a tool, the server checks if the required binary is installed
+3. If it's missing, the server installs it using your system's package manager (`apt` on Kali/Debian, `dnf` on RHEL, `pacman` on Arch)
+4. The tool then runs normally
+
+**Example:** If you ask the assistant to scan for malware but ClamAV isn't installed, the server will run `apt install clamav` automatically, then proceed with the scan.
+
+**Security controls on auto-installation:**
+
+- System packages are installed via the official package manager only
+- npm/pip packages are restricted to a hardcoded allowlist (e.g., `yara-python`, `cdxgen`) — arbitrary packages cannot be installed
+- Auto-installation requires sudo privileges — if running without elevated access, the server will report what needs to be installed manually
+- All installation actions are logged
+
+To disable auto-installation entirely, run with:
+```bash
+KALI_DEFENSE_AUTO_INSTALL=false node dist/index.js
+```
+
 ## Requirements
 
 - **Kali Linux** (or Debian-based Linux with security tools installed)
@@ -115,6 +140,7 @@ Configuration is via environment variables. All have secure defaults:
 | `KALI_DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log` | Directories the server can access |
 | `KALI_DEFENSE_LOG_LEVEL` | `info` | Log verbosity (debug/info/warn/error) |
 | `KALI_DEFENSE_BACKUP_ENABLED` | `true` | Auto-backup before system changes |
+| `KALI_DEFENSE_AUTO_INSTALL` | `true` | Auto-install missing tool dependencies |
 
 To apply changes for real (not just preview), set:
 ```bash
