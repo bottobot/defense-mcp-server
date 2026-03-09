@@ -54,6 +54,19 @@ import { registerZeroTrustNetworkTools } from "./tools/zero-trust-network.js";
 import { registerEbpfSecurityTools } from "./tools/ebpf-security.js";
 import { registerAppHardeningTools } from "./tools/app-hardening.js";
 
+// ── v0.6.0 tool modules ─────────────────────────────────────────────────────
+import { registerReportingTools } from "./tools/reporting.js";
+import { registerDnsSecurityTools } from "./tools/dns-security.js";
+import { registerVulnerabilityManagementTools } from "./tools/vulnerability-management.js";
+import { registerProcessSecurityTools } from "./tools/process-security.js";
+import { registerWafTools } from "./tools/waf.js";
+import { registerThreatIntelTools } from "./tools/threat-intel.js";
+import { registerCloudSecurityTools } from "./tools/cloud-security.js";
+import { registerApiSecurityTools } from "./tools/api-security.js";
+import { registerDeceptionTools } from "./tools/deception.js";
+import { registerWirelessSecurityTools } from "./tools/wireless-security.js";
+import { registerSiemIntegrationTools } from "./tools/siem-integration.js";
+
 // ── Graceful shutdown handler ────────────────────────────────────────────────
 
 function gracefulShutdown(signal: string) {
@@ -256,6 +269,19 @@ async function main() {
   safeRegister("zero-trust-network", registerZeroTrustNetworkTools);
   safeRegister("ebpf-security", registerEbpfSecurityTools);
   safeRegister("app-hardening", registerAppHardeningTools);
+
+  // v0.6.0 tool modules
+  safeRegister("api-security", registerApiSecurityTools);
+  safeRegister("cloud-security", registerCloudSecurityTools);
+  safeRegister("deception", registerDeceptionTools);
+  safeRegister("dns-security", registerDnsSecurityTools);
+  safeRegister("process-security", registerProcessSecurityTools);
+  safeRegister("reporting", registerReportingTools);
+  safeRegister("siem-integration", registerSiemIntegrationTools);
+  safeRegister("threat-intel", registerThreatIntelTools);
+  safeRegister("vulnerability-management", registerVulnerabilityManagementTools);
+  safeRegister("waf", registerWafTools);
+  safeRegister("wireless-security", registerWirelessSecurityTools);
 
   // Fail hard if no modules loaded at all
   if (registered === 0) {

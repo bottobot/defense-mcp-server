@@ -302,6 +302,73 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   { binary: "kdialog",      candidates: ["/usr/bin/kdialog"] },
   { binary: "ksshaskpass",  candidates: ["/usr/bin/ksshaskpass"] },
   { binary: "lxqt-sudo",    candidates: ["/usr/bin/lxqt-sudo"] },
+
+  // ── DNS security ───────────────────────────────────────────────────────
+  { binary: "dig",             candidates: ["/usr/bin/dig", "/usr/local/bin/dig"] },
+  { binary: "systemd-resolve", candidates: ["/usr/bin/systemd-resolve"] },
+  { binary: "resolvectl",     candidates: ["/usr/bin/resolvectl"] },
+  { binary: "whois",          candidates: ["/usr/bin/whois", "/bin/whois"] },
+
+  // ── Vulnerability scanning ─────────────────────────────────────────────
+  { binary: "nikto",         candidates: ["/usr/bin/nikto", "/usr/local/bin/nikto"] },
+  { binary: "searchsploit",  candidates: ["/usr/bin/searchsploit", "/usr/local/bin/searchsploit"] },
+
+  // ── Process security ───────────────────────────────────────────────────
+  { binary: "getpcaps",      candidates: ["/usr/sbin/getpcaps", "/sbin/getpcaps", "/usr/bin/getpcaps"] },
+  { binary: "capsh",         candidates: ["/usr/sbin/capsh", "/sbin/capsh", "/usr/bin/capsh"] },
+  { binary: "systemd-cgls",  candidates: ["/usr/bin/systemd-cgls", "/bin/systemd-cgls"] },
+  { binary: "systemd-cgtop", candidates: ["/usr/bin/systemd-cgtop", "/bin/systemd-cgtop"] },
+
+  // ── WAF / web server ──────────────────────────────────────────────────
+  { binary: "apache2ctl",    candidates: ["/usr/sbin/apache2ctl", "/sbin/apache2ctl"] },
+
+  // ── Cloud security ────────────────────────────────────────────────────
+  { binary: "cloud-init",    candidates: ["/usr/bin/cloud-init", "/usr/local/bin/cloud-init"] },
+  { binary: "aws",           candidates: ["/usr/bin/aws", "/usr/local/bin/aws"] },
+  { binary: "gsutil",        candidates: ["/usr/bin/gsutil", "/usr/local/bin/gsutil", "/snap/bin/gsutil"] },
+  { binary: "az",            candidates: ["/usr/bin/az", "/usr/local/bin/az"] },
+
+  // ── Deception / honeypots ─────────────────────────────────────────────
+  { binary: "ncat",          candidates: ["/usr/bin/ncat", "/usr/local/bin/ncat"] },
+  { binary: "inotifywait",   candidates: ["/usr/bin/inotifywait", "/usr/local/bin/inotifywait"] },
+
+  // ── Wireless security ─────────────────────────────────────────────────
+  { binary: "hciconfig",     candidates: ["/usr/bin/hciconfig", "/usr/sbin/hciconfig", "/bin/hciconfig"] },
+  { binary: "bluetoothctl",  candidates: ["/usr/bin/bluetoothctl"] },
+  { binary: "iwconfig",      candidates: ["/usr/sbin/iwconfig", "/sbin/iwconfig"] },
+  { binary: "iw",            candidates: ["/usr/sbin/iw", "/sbin/iw", "/usr/bin/iw"] },
+  { binary: "nmcli",         candidates: ["/usr/bin/nmcli"] },
+  { binary: "rfkill",        candidates: ["/usr/sbin/rfkill", "/usr/bin/rfkill", "/sbin/rfkill"] },
+
+  // ── SIEM integration ──────────────────────────────────────────────────
+  { binary: "nc",            candidates: ["/usr/bin/nc", "/bin/nc", "/usr/bin/nc.openbsd", "/usr/bin/nc.traditional"] },
+  { binary: "logger",        candidates: ["/usr/bin/logger", "/bin/logger"] },
+  { binary: "filebeat",      candidates: ["/usr/bin/filebeat", "/usr/local/bin/filebeat"] },
+
+  // ── Certificate lifecycle ─────────────────────────────────────────────
+  { binary: "certbot",       candidates: ["/usr/bin/certbot", "/usr/local/bin/certbot", "/snap/bin/certbot"] },
+
+  // ── Forensics / incident response ─────────────────────────────────────
+  { binary: "avml",          candidates: ["/usr/bin/avml", "/usr/local/bin/avml"] },
+  { binary: "dd",            candidates: ["/usr/bin/dd", "/bin/dd"] },
+  { binary: "fdisk",         candidates: ["/usr/sbin/fdisk", "/sbin/fdisk"] },
+
+  // ── Network segmentation ──────────────────────────────────────────────
+  { binary: "traceroute",    candidates: ["/usr/bin/traceroute", "/usr/sbin/traceroute", "/bin/traceroute"] },
+  { binary: "tracepath",     candidates: ["/usr/bin/tracepath", "/bin/tracepath"] },
+  { binary: "bridge",        candidates: ["/usr/sbin/bridge", "/sbin/bridge"] },
+
+  // ── USB device control ────────────────────────────────────────────────
+  { binary: "lsusb",         candidates: ["/usr/bin/lsusb", "/bin/lsusb"] },
+  { binary: "udevadm",       candidates: ["/usr/bin/udevadm", "/bin/udevadm", "/sbin/udevadm"] },
+
+  // ── Reporting (optional conversion tools) ─────────────────────────────
+  { binary: "pandoc",        candidates: ["/usr/bin/pandoc", "/usr/local/bin/pandoc"] },
+  { binary: "wkhtmltopdf",   candidates: ["/usr/bin/wkhtmltopdf", "/usr/local/bin/wkhtmltopdf"] },
+
+  // ── General utilities ─────────────────────────────────────────────────
+  { binary: "sh",            candidates: ["/usr/bin/sh", "/bin/sh"] },
+  { binary: "kill",          candidates: ["/usr/bin/kill", "/bin/kill"] },
 ];
 
 // ── Module-level constants for resolveSudoCommand() (Opt 6) ──────────────────

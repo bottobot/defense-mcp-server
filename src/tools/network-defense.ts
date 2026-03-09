@@ -1,10 +1,11 @@
 /**
  * Network defense tools for Kali Defense MCP Server.
  *
- * Registers 3 tools:
+ * Registers 4 tools:
  *   netdef_connections (actions: list, audit)
  *   netdef_capture (actions: custom, dns, arp)
  *   netdef_security_audit (actions: scan_detect, ipv6, self_scan)
+ *   network_segmentation_audit (actions: map_zones, verify_isolation, test_paths, audit_vlans)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -21,6 +22,8 @@ import { logChange, createChangeEntry } from "../core/changelog.js";
 import { validateInterface, sanitizeArgs, validateTarget as sanitizerValidateTarget, validateToolPath } from "../core/sanitizer.js";
 import { validateBpfFilter } from "./ebpf-security.js";
 import * as net from "node:net";
+import { spawnSafe } from "../core/spawn-safe.js";
+import type { ChildProcess } from "node:child_process";
 
 // ── TOOL-022 remediation: strict network parameter validation helpers ───────
 
@@ -93,6 +96,78 @@ const KNOWN_SAFE_PORTS: Record<number, string> = {
   631: "CUPS (printing)",
   5353: "mDNS",
 };
+
+// ── Segmentation audit command helpers ─────────────────────────────────────
+
+interface SegmentCommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
+ * Run a command via spawnSafe for segmentation audit operations.
+ * Returns collected stdout/stderr and exit code — never throws.
+ */
+async function runSegmentCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 30_000,
+): Promise<SegmentCommandResult> {
+  return new Promise((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawnSafe(command, args);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resolve({ stdout: "", stderr: msg, exitCode: -1 });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        child.kill("SIGTERM");
+        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
+      }
+    }, timeoutMs);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on("close", (code: number | null) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code ?? -1 });
+      }
+    });
+
+    child.on("error", (err: Error) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr: err.message, exitCode: -1 });
+      }
+    });
+  });
+}
+
+async function runSudoSegmentCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 30_000,
+): Promise<SegmentCommandResult> {
+  return runSegmentCommand("sudo", [command, ...args], timeoutMs);
+}
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -438,6 +513,378 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             return { content: [createTextContent(`Self-Scan Results (target: ${scanTarget}, type: ${params.scan_type}):\n\n${result.stdout}\n${result.stderr ? `\nWarnings:\n${result.stderr}` : ""}`)] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
+          }
+        }
+
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
+      }
+    }
+  );
+
+  // ── 4. network_segmentation_audit ────────────────────────────────────────
+
+  server.tool(
+    "network_segmentation_audit",
+    "Network segmentation audit: map network zones, verify isolation enforcement, test paths between zones, audit VLAN configurations.",
+    {
+      action: z.enum(["map_zones", "verify_isolation", "test_paths", "audit_vlans"]).describe("Action: map_zones=map network zones, verify_isolation=check segmentation enforcement, test_paths=test connectivity between zones, audit_vlans=audit VLAN configs"),
+      source_zone: z.string().optional().describe("Source network zone/subnet in CIDR notation (test_paths action)"),
+      dest_zone: z.string().optional().describe("Destination network zone/subnet in CIDR notation (test_paths action)"),
+      interface: z.string().optional().describe("Specific network interface to audit"),
+      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format: text or json"),
+    },
+    async (params) => {
+      const { action, output_format } = params;
+
+      switch (action) {
+        case "map_zones": {
+          try {
+            const ifaceFilter = params.interface;
+
+            // Get network interfaces and subnets
+            const addrResult = await runSegmentCommand("ip", ["addr", "show"]);
+
+            // Get routing table
+            const routeResult = await runSegmentCommand("ip", ["route", "show"]);
+
+            // Get firewall rules
+            const fwResult = await runSudoSegmentCommand("iptables", ["-L", "-n", "-v"]);
+
+            // Get FORWARD chain specifically
+            const fwdResult = await runSudoSegmentCommand("iptables", ["-L", "FORWARD", "-n", "-v"]);
+
+            // Get bridge interfaces
+            const bridgeResult = await runSegmentCommand("bridge", ["link", "show"]);
+
+            // Parse interfaces into zone map
+            interface ZoneInfo {
+              interface: string;
+              subnet: string;
+              gateway: string | null;
+              firewallRules: string[];
+            }
+
+            const zones: ZoneInfo[] = [];
+            const ifaceBlocks = addrResult.stdout.split(/(?=^\d+:)/m).filter(b => b.trim());
+
+            for (const block of ifaceBlocks) {
+              const ifaceMatch = /^\d+:\s+(\S+?)(?:@\S+)?:/.exec(block);
+              if (!ifaceMatch) continue;
+              const ifaceName = ifaceMatch[1];
+              if (ifaceName === "lo") continue;
+              if (ifaceFilter && ifaceName !== ifaceFilter) continue;
+
+              const inetMatches = [...block.matchAll(/inet\s+(\S+)/g)];
+              for (const m of inetMatches) {
+                const subnet = m[1];
+
+                // Find gateway from route table
+                let gateway: string | null = null;
+                const routeLines = routeResult.stdout.split("\n");
+                for (const line of routeLines) {
+                  if (line.includes(ifaceName) && line.includes("via")) {
+                    const gwMatch = /via\s+(\S+)/.exec(line);
+                    if (gwMatch) { gateway = gwMatch[1]; break; }
+                  }
+                }
+
+                // Find associated firewall rules
+                const firewallRules: string[] = [];
+                if (fwResult.exitCode === 0) {
+                  const fwLines = fwResult.stdout.split("\n");
+                  for (const line of fwLines) {
+                    if (line.includes(subnet.split("/")[0]) || line.includes(ifaceName)) {
+                      firewallRules.push(line.trim());
+                    }
+                  }
+                }
+
+                zones.push({ interface: ifaceName, subnet, gateway, firewallRules });
+              }
+            }
+
+            const bridgeInterfaces: string[] = [];
+            if (bridgeResult.exitCode === 0 && bridgeResult.stdout.trim()) {
+              for (const line of bridgeResult.stdout.split("\n")) {
+                if (line.trim()) bridgeInterfaces.push(line.trim());
+              }
+            }
+
+            const zoneMap = {
+              zones,
+              totalZones: zones.length,
+              forwardChain: fwdResult.exitCode === 0 ? fwdResult.stdout.trim() : "Unable to read FORWARD chain",
+              bridgeInterfaces,
+            };
+
+            if (output_format === "json") {
+              return { content: [formatToolOutput(zoneMap)] };
+            }
+
+            let text = `=== Network Zone Map ===\n\nTotal zones detected: ${zones.length}\n\n`;
+            for (const zone of zones) {
+              text += `Interface: ${zone.interface}\n`;
+              text += `  Subnet: ${zone.subnet}\n`;
+              text += `  Gateway: ${zone.gateway ?? "none"}\n`;
+              text += `  Firewall rules: ${zone.firewallRules.length > 0 ? "\n    " + zone.firewallRules.join("\n    ") : "none"}\n\n`;
+            }
+            if (fwdResult.exitCode === 0) {
+              text += `--- FORWARD Chain ---\n${fwdResult.stdout}\n`;
+            }
+            if (bridgeInterfaces.length > 0) {
+              text += `--- Bridge Interfaces ---\n${bridgeInterfaces.join("\n")}\n`;
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        case "verify_isolation": {
+          try {
+            const violations: string[] = [];
+            let score = 100;
+
+            // Check FORWARD chain default policy
+            const fwdResult = await runSudoSegmentCommand("iptables", ["-L", "FORWARD", "-n"]);
+
+            let forwardPolicy = "UNKNOWN";
+            if (fwdResult.exitCode === 0) {
+              const policyMatch = /Chain FORWARD \(policy (\w+)\)/.exec(fwdResult.stdout);
+              if (policyMatch) {
+                forwardPolicy = policyMatch[1];
+                if (forwardPolicy !== "DROP" && forwardPolicy !== "REJECT") {
+                  violations.push(`FORWARD chain default policy is ${forwardPolicy} (should be DROP or REJECT)`);
+                  score -= 30;
+                }
+              }
+
+              // Check for overly permissive rules (ACCEPT all from any to any)
+              const fwdLines = fwdResult.stdout.split("\n");
+              for (const line of fwdLines) {
+                if (line.includes("ACCEPT") && line.includes("0.0.0.0/0") &&
+                    (line.match(/0\.0\.0\.0\/0/g) || []).length >= 2) {
+                  violations.push(`Overly permissive FORWARD rule: ${line.trim()}`);
+                  score -= 20;
+                }
+              }
+            } else {
+              violations.push("Unable to read FORWARD chain - iptables may not be available");
+              score -= 40;
+            }
+
+            // Check for NAT/masquerade rules that might bypass segmentation
+            const natResult = await runSudoSegmentCommand("iptables", ["-t", "nat", "-L", "-n"]);
+            const natBypasses: string[] = [];
+            if (natResult.exitCode === 0) {
+              const natLines = natResult.stdout.split("\n");
+              for (const line of natLines) {
+                if (line.includes("MASQUERADE") || line.includes("SNAT")) {
+                  natBypasses.push(line.trim());
+                }
+              }
+              if (natBypasses.length > 0) {
+                violations.push(`NAT/masquerade rules detected that may bypass segmentation: ${natBypasses.length} rule(s)`);
+                score -= 10;
+              }
+            }
+
+            score = Math.max(0, score);
+
+            const isolation = {
+              forwardPolicy,
+              violations,
+              natBypasses,
+              segmentationScore: score,
+              segmentationStatus: score >= 80 ? "GOOD" : score >= 50 ? "FAIR" : "POOR",
+              violationCount: violations.length,
+            };
+
+            if (output_format === "json") {
+              return { content: [formatToolOutput(isolation)] };
+            }
+
+            let text = `=== Segmentation Isolation Verification ===\n\n`;
+            text += `FORWARD Chain Policy: ${forwardPolicy}\n`;
+            text += `Segmentation Score: ${score}/100 (${isolation.segmentationStatus})\n`;
+            text += `Violations: ${violations.length}\n\n`;
+            if (violations.length > 0) {
+              text += `--- Violations ---\n`;
+              for (const v of violations) {
+                text += `  ⚠ ${v}\n`;
+              }
+            }
+            if (natBypasses.length > 0) {
+              text += `\n--- NAT/Masquerade Rules ---\n`;
+              for (const n of natBypasses) {
+                text += `  ${n}\n`;
+              }
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        case "test_paths": {
+          const { source_zone, dest_zone } = params;
+          if (!source_zone || !dest_zone) {
+            return { content: [createErrorContent("test_paths requires both source_zone and dest_zone parameters (CIDR notation)")], isError: true };
+          }
+
+          try {
+            validateCIDR(source_zone, "source_zone");
+            validateCIDR(dest_zone, "dest_zone");
+
+            const destIP = dest_zone.split("/")[0];
+
+            // Try traceroute first, fall back to tracepath
+            let traceResult = await runSegmentCommand("traceroute", ["-n", "-m", "15", destIP], 30_000);
+            if (traceResult.exitCode !== 0) {
+              traceResult = await runSegmentCommand("tracepath", ["-n", destIP], 30_000);
+            }
+
+            // Host discovery in target zone
+            const nmapResult = await runSudoSegmentCommand("nmap", ["-sn", dest_zone], 60_000);
+
+            const reachableHosts: string[] = [];
+            if (nmapResult.exitCode === 0) {
+              const hostRe = /Nmap scan report for (\S+)/g;
+              let hm;
+              while ((hm = hostRe.exec(nmapResult.stdout)) !== null) {
+                reachableHosts.push(hm[1]);
+              }
+            }
+
+            const pathResult = {
+              sourceZone: source_zone,
+              destZone: dest_zone,
+              traceroute: traceResult.exitCode === 0 ? traceResult.stdout.trim() : `Trace failed: ${traceResult.stderr}`,
+              reachableHosts,
+              reachableHostCount: reachableHosts.length,
+              pathExists: traceResult.exitCode === 0,
+            };
+
+            if (output_format === "json") {
+              return { content: [formatToolOutput(pathResult)] };
+            }
+
+            let text = `=== Path Test: ${source_zone} → ${dest_zone} ===\n\n`;
+            text += `--- Traceroute ---\n${traceResult.exitCode === 0 ? traceResult.stdout : `Failed: ${traceResult.stderr}`}\n\n`;
+            text += `--- Host Discovery (${dest_zone}) ---\n`;
+            text += `Reachable hosts: ${reachableHosts.length}\n`;
+            for (const h of reachableHosts) {
+              text += `  ${h}\n`;
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        case "audit_vlans": {
+          try {
+            // List VLAN interfaces
+            const linkResult = await runSegmentCommand("ip", ["-d", "link", "show"]);
+
+            interface VlanInfo {
+              interface: string;
+              vlanId: string;
+              parentInterface: string;
+              flags: string;
+            }
+            const vlans: VlanInfo[] = [];
+
+            if (linkResult.exitCode === 0) {
+              const blocks = linkResult.stdout.split(/(?=^\d+:)/m).filter(b => b.trim());
+              for (const block of blocks) {
+                if (block.includes("vlan")) {
+                  const ifMatch = /^\d+:\s+(\S+?)(?:@(\S+))?:/.exec(block);
+                  const vlanIdMatch = /vlan.*?id\s+(\d+)/i.exec(block);
+                  if (ifMatch && vlanIdMatch) {
+                    vlans.push({
+                      interface: ifMatch[1],
+                      vlanId: vlanIdMatch[1],
+                      parentInterface: ifMatch[2] || "unknown",
+                      flags: (block.match(/<([^>]+)>/) || ["", ""])[1],
+                    });
+                  }
+                }
+              }
+            }
+
+            // Check VLAN tagging config
+            let vlanConfig = "";
+            const vlanConfigResult = await runSegmentCommand("cat", ["/proc/net/vlan/config"]);
+            if (vlanConfigResult.exitCode === 0) {
+              vlanConfig = vlanConfigResult.stdout.trim();
+            }
+
+            // Check 802.1Q support
+            let dot1qSupported = vlanConfigResult.exitCode === 0;
+            if (!dot1qSupported) {
+              const lsmodResult = await runSegmentCommand("lsmod", []);
+              if (lsmodResult.exitCode === 0 && lsmodResult.stdout.includes("8021q")) {
+                dot1qSupported = true;
+              }
+            }
+
+            // Security concerns
+            const concerns: string[] = [];
+            if (vlans.length === 0) {
+              concerns.push("No VLAN interfaces detected - network may lack segmentation");
+            }
+            if (!dot1qSupported) {
+              concerns.push("802.1Q VLAN support not detected");
+            }
+            // Check for promiscuous interfaces (possible trunk port exposure)
+            if (linkResult.exitCode === 0 && linkResult.stdout.includes("PROMISC")) {
+              concerns.push("Promiscuous interface detected - possible trunk port exposure");
+            }
+
+            const vlanAudit = {
+              vlans,
+              vlanCount: vlans.length,
+              vlanConfig: vlanConfig || "Not available",
+              dot1qSupported,
+              securityConcerns: concerns,
+            };
+
+            if (output_format === "json") {
+              return { content: [formatToolOutput(vlanAudit)] };
+            }
+
+            let text = `=== VLAN Audit ===\n\n`;
+            text += `VLANs detected: ${vlans.length}\n`;
+            text += `802.1Q support: ${dot1qSupported ? "yes" : "no"}\n\n`;
+            if (vlans.length > 0) {
+              text += `--- VLAN Interfaces ---\n`;
+              for (const v of vlans) {
+                text += `  ${v.interface}: VLAN ID ${v.vlanId} (parent: ${v.parentInterface})\n`;
+              }
+              text += "\n";
+            }
+            if (vlanConfig) {
+              text += `--- VLAN Config ---\n${vlanConfig}\n\n`;
+            }
+            if (concerns.length > 0) {
+              text += `--- Security Concerns ---\n`;
+              for (const c of concerns) {
+                text += `  ⚠ ${c}\n`;
+              }
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 

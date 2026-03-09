@@ -6,6 +6,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.0] — 2026-03-09
+
+### v0.6.0 — 16 New Security Tools
+
+#### Added
+- **Reporting** — `report_export` tool: generate consolidated security reports in Markdown/HTML/JSON/CSV
+- **DNS Security** — `dns_security` tool: DNSSEC validation, DNS tunneling detection, domain blocklists, query log analysis
+- **Vulnerability Management** — `vuln_manage` tool: nmap/nikto vulnerability scanning, vulnerability lifecycle tracking, risk prioritization
+- **Forensics** — `ir_forensics` tool: memory acquisition, forensic disk imaging, evidence chain-of-custody
+- **Process Security** — `process_security` tool: capability auditing, namespace isolation, anomaly detection (deleted binaries, shell spawning)
+- **WAF Management** — `waf_manage` tool: ModSecurity audit/rules, OWASP CRS deployment, rate limiting, WAF log analysis
+- **Network Segmentation** — `network_segmentation_audit` tool: zone mapping, isolation verification, path testing, VLAN auditing
+- **Threat Intelligence** — `threat_intel` tool: IP/hash/domain checking against feeds, blocklist application to iptables/fail2ban
+- **Auto-Remediation** — `auto_remediate` tool: consolidated remediation planning, batch safe-fix application with rollback sessions
+- **Cloud Security** — `cloud_security` tool: AWS/GCP/Azure detection, IMDS security, IAM credential scanning, cloud storage audit
+- **API Security** — `api_security` tool: local API discovery, auth auditing, rate-limit testing, TLS verification, CORS checking
+- **Deception/Honeypots** — `honeypot_manage` tool: canary token deployment, honeyport listeners, trigger monitoring
+- **Wireless Security** — `wireless_security` tool: Bluetooth/WiFi auditing, rogue AP detection, interface disabling
+- **Certificate Lifecycle** — `certificate_lifecycle` tool: cert inventory, Let's Encrypt renewal check, CA trust store audit, OCSP, CT logs
+- **SIEM Integration** — `siem_export` tool: rsyslog/Filebeat configuration, log forwarding audit, connectivity testing
+- **USB Device Control** — `usb_device_control` tool: device auditing, storage blocking (modprobe/udev), whitelisting, event monitoring
+
+#### Infrastructure
+- Added 37 new binary entries to command allowlist
+- Added 16 new tool dependency declarations
+- Updated TOOLS-REFERENCE.md with documentation for all 16 new tools
+- 1,801 total tests passing across 60 test files
+
+---
+
 ## [0.5.2] — 2026-03-09
 
 ### Security

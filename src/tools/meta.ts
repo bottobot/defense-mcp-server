@@ -1,9 +1,10 @@
 /**
  * Meta/utility tools for Kali Defense MCP Server.
  *
- * Registers 5 tools: defense_check_tools, defense_workflow (actions: suggest, run),
+ * Registers 6 tools: defense_check_tools, defense_workflow (actions: suggest, run),
  * defense_change_history, security_posture (actions: score, trend, dashboard),
- * scheduled_audit (actions: create, list, remove, history).
+ * scheduled_audit (actions: create, list, remove, history),
+ * auto_remediate (actions: plan, apply, rollback_session, status).
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -27,6 +28,8 @@ import { SafeguardRegistry } from "../core/safeguards.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { spawnSafe } from "../core/spawn-safe.js";
+import { secureWriteFileSync } from "../core/secure-fs.js";
 
 // ── Security Posture Helpers ───────────────────────────────────────────────
 
@@ -868,6 +871,347 @@ const WORKFLOW_SUGGESTIONS: Record<
     ],
   },
 };
+
+// ── Auto-Remediate Helpers ─────────────────────────────────────────────────
+
+const REMEDIATION_SESSIONS_DIR = "/var/lib/kali-defense/remediation-sessions";
+
+const SEVERITY_LEVELS_ORDER = ["critical", "high", "medium", "low"] as const;
+type RemSeverity = (typeof SEVERITY_LEVELS_ORDER)[number];
+type RemRiskLevel = "safe" | "moderate" | "risky";
+
+interface RemediationFinding {
+  finding_id: string;
+  description: string;
+  severity: RemSeverity;
+  remediation_command: string;
+  remediation_args: string[];
+  rollback_command: string;
+  rollback_args: string[];
+  risk_level: RemRiskLevel;
+  category: string;
+}
+
+interface RemSessionAction {
+  finding_id: string;
+  description: string;
+  remediation_command: string;
+  remediation_args: string[];
+  rollback_command: string;
+  rollback_args: string[];
+  before_state: string;
+  after_state: string;
+  status: "success" | "failed" | "skipped" | "rolled_back";
+  error?: string;
+  timestamp: string;
+}
+
+interface RemediationSession {
+  session_id: string;
+  created_at: string;
+  status: "in_progress" | "completed" | "rolled_back" | "partial";
+  actions: RemSessionAction[];
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+    skipped: number;
+    rolled_back: number;
+  };
+}
+
+/** Hardcoded set of known, safe remediation mappings */
+const KNOWN_REMEDIATIONS: RemediationFinding[] = [
+  // ── Hardening: kernel sysctl parameters ──
+  {
+    finding_id: "HARD-001",
+    description: "ASLR not fully enabled (kernel.randomize_va_space != 2)",
+    severity: "high",
+    remediation_command: "sysctl",
+    remediation_args: ["-w", "kernel.randomize_va_space=2"],
+    rollback_command: "sysctl",
+    rollback_args: ["-w", "kernel.randomize_va_space=0"],
+    risk_level: "safe",
+    category: "hardening",
+  },
+  {
+    finding_id: "HARD-002",
+    description: "IP forwarding enabled (net.ipv4.ip_forward = 1)",
+    severity: "medium",
+    remediation_command: "sysctl",
+    remediation_args: ["-w", "net.ipv4.ip_forward=0"],
+    rollback_command: "sysctl",
+    rollback_args: ["-w", "net.ipv4.ip_forward=1"],
+    risk_level: "moderate",
+    category: "hardening",
+  },
+  {
+    finding_id: "HARD-003",
+    description: "SYN cookies not enabled (net.ipv4.tcp_syncookies != 1)",
+    severity: "medium",
+    remediation_command: "sysctl",
+    remediation_args: ["-w", "net.ipv4.tcp_syncookies=1"],
+    rollback_command: "sysctl",
+    rollback_args: ["-w", "net.ipv4.tcp_syncookies=0"],
+    risk_level: "safe",
+    category: "hardening",
+  },
+  {
+    finding_id: "HARD-004",
+    description: "Reverse path filtering not enabled (net.ipv4.conf.all.rp_filter != 1)",
+    severity: "medium",
+    remediation_command: "sysctl",
+    remediation_args: ["-w", "net.ipv4.conf.all.rp_filter=1"],
+    rollback_command: "sysctl",
+    rollback_args: ["-w", "net.ipv4.conf.all.rp_filter=0"],
+    risk_level: "safe",
+    category: "hardening",
+  },
+  {
+    finding_id: "HARD-005",
+    description: "ICMP redirects accepted (net.ipv4.conf.all.accept_redirects != 0)",
+    severity: "medium",
+    remediation_command: "sysctl",
+    remediation_args: ["-w", "net.ipv4.conf.all.accept_redirects=0"],
+    rollback_command: "sysctl",
+    rollback_args: ["-w", "net.ipv4.conf.all.accept_redirects=1"],
+    risk_level: "safe",
+    category: "hardening",
+  },
+  {
+    finding_id: "HARD-006",
+    description: "Source routing accepted (net.ipv4.conf.all.accept_source_route != 0)",
+    severity: "high",
+    remediation_command: "sysctl",
+    remediation_args: ["-w", "net.ipv4.conf.all.accept_source_route=0"],
+    rollback_command: "sysctl",
+    rollback_args: ["-w", "net.ipv4.conf.all.accept_source_route=1"],
+    risk_level: "safe",
+    category: "hardening",
+  },
+  // ── Access control ──
+  {
+    finding_id: "ACCESS-001",
+    description: "SSH PermitRootLogin is enabled",
+    severity: "critical",
+    remediation_command: "sed",
+    remediation_args: ["-i", "s/^PermitRootLogin yes/PermitRootLogin no/", "/etc/ssh/sshd_config"],
+    rollback_command: "sed",
+    rollback_args: ["-i", "s/^PermitRootLogin no/PermitRootLogin yes/", "/etc/ssh/sshd_config"],
+    risk_level: "moderate",
+    category: "access_control",
+  },
+  {
+    finding_id: "ACCESS-002",
+    description: "SSH PermitEmptyPasswords is enabled",
+    severity: "critical",
+    remediation_command: "sed",
+    remediation_args: ["-i", "s/^PermitEmptyPasswords yes/PermitEmptyPasswords no/", "/etc/ssh/sshd_config"],
+    rollback_command: "sed",
+    rollback_args: ["-i", "s/^PermitEmptyPasswords no/PermitEmptyPasswords yes/", "/etc/ssh/sshd_config"],
+    risk_level: "moderate",
+    category: "access_control",
+  },
+  // ── Firewall ──
+  {
+    finding_id: "FW-001",
+    description: "Firewall INPUT chain has default ACCEPT policy",
+    severity: "high",
+    remediation_command: "iptables",
+    remediation_args: ["-P", "INPUT", "DROP"],
+    rollback_command: "iptables",
+    rollback_args: ["-P", "INPUT", "ACCEPT"],
+    risk_level: "risky",
+    category: "firewall",
+  },
+  {
+    finding_id: "FW-002",
+    description: "Firewall FORWARD chain has default ACCEPT policy",
+    severity: "high",
+    remediation_command: "iptables",
+    remediation_args: ["-P", "FORWARD", "DROP"],
+    rollback_command: "iptables",
+    rollback_args: ["-P", "FORWARD", "ACCEPT"],
+    risk_level: "risky",
+    category: "firewall",
+  },
+];
+
+/** Allowed commands for auto-remediation execution */
+const REMEDIATION_ALLOWLIST = new Set(["sysctl", "sed", "iptables"]);
+
+function generateSessionId(): string {
+  const ts = Date.now();
+  const rand = Math.random().toString(36).substring(2, 8);
+  return `rem-${ts}-${rand}`;
+}
+
+function severityAtOrAbove(finding: RemSeverity, threshold: RemSeverity): boolean {
+  return SEVERITY_LEVELS_ORDER.indexOf(finding) <= SEVERITY_LEVELS_ORDER.indexOf(threshold);
+}
+
+function riskSortValue(risk: RemRiskLevel): number {
+  switch (risk) {
+    case "safe": return 0;
+    case "moderate": return 1;
+    case "risky": return 2;
+    default: return 3;
+  }
+}
+
+/**
+ * Run a command via spawnSafe and collect output as a promise.
+ * Handles errors gracefully — returns error info instead of throwing.
+ */
+async function runRemediateCmd(
+  command: string,
+  args: string[],
+  timeoutMs = 30_000,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawnSafe>;
+    try {
+      child = spawnSafe(command, args);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resolve({ stdout: "", stderr: msg, exitCode: -1 });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let resolved = false;
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        child.kill("SIGTERM");
+        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
+      }
+    }, timeoutMs);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on("close", (code: number | null) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code ?? -1 });
+      }
+    });
+
+    child.on("error", (err: Error) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr: err.message, exitCode: -1 });
+      }
+    });
+  });
+}
+
+/**
+ * Gather applicable remediation findings by running audit commands and matching
+ * against known remediation mappings.
+ */
+async function gatherRemediationFindings(
+  source: string,
+  severityFilter: RemSeverity,
+): Promise<RemediationFinding[]> {
+  const findings: RemediationFinding[] = [];
+  const shouldInclude = (cat: string): boolean => source === "all" || source === cat;
+
+  // ── Hardening: check sysctl params ──
+  if (shouldInclude("hardening")) {
+    const sysctlResult = await runRemediateCmd("sysctl", ["-a"]);
+    if (sysctlResult.exitCode === 0) {
+      const sysctlValues = new Map<string, string>();
+      for (const line of sysctlResult.stdout.split("\n")) {
+        const match = line.match(/^([^=]+?)\s*=\s*(.+)$/);
+        if (match) sysctlValues.set(match[1].trim(), match[2].trim());
+      }
+
+      for (const f of KNOWN_REMEDIATIONS.filter(r => r.category === "hardening")) {
+        const setArg = f.remediation_args.find(a => a.includes("="));
+        if (setArg) {
+          const eqIdx = setArg.indexOf("=");
+          const key = setArg.substring(0, eqIdx);
+          const expected = setArg.substring(eqIdx + 1);
+          const actual = sysctlValues.get(key);
+          if (actual !== undefined && actual !== expected) {
+            findings.push(f);
+          }
+        }
+      }
+    }
+  }
+
+  // ── Access control: check SSH config ──
+  if (shouldInclude("access_control")) {
+    const sshResult = await runRemediateCmd("grep", ["-E", "^PermitRootLogin|^PermitEmptyPasswords", "/etc/ssh/sshd_config"]);
+    if (sshResult.exitCode === 0 || sshResult.stdout.length > 0) {
+      if (sshResult.stdout.includes("PermitRootLogin yes")) {
+        const f = KNOWN_REMEDIATIONS.find(r => r.finding_id === "ACCESS-001");
+        if (f) findings.push(f);
+      }
+      if (sshResult.stdout.includes("PermitEmptyPasswords yes")) {
+        const f = KNOWN_REMEDIATIONS.find(r => r.finding_id === "ACCESS-002");
+        if (f) findings.push(f);
+      }
+    }
+  }
+
+  // ── Firewall: check iptables policies ──
+  if (shouldInclude("firewall")) {
+    const fwResult = await runRemediateCmd("iptables", ["-L", "-n"]);
+    if (fwResult.exitCode === 0) {
+      if (fwResult.stdout.includes("Chain INPUT (policy ACCEPT)")) {
+        const f = KNOWN_REMEDIATIONS.find(r => r.finding_id === "FW-001");
+        if (f) findings.push(f);
+      }
+      if (fwResult.stdout.includes("Chain FORWARD (policy ACCEPT)")) {
+        const f = KNOWN_REMEDIATIONS.find(r => r.finding_id === "FW-002");
+        if (f) findings.push(f);
+      }
+    }
+  }
+
+  // ── Compliance: run lynis and cross-reference known remediations ──
+  if (shouldInclude("compliance")) {
+    const lynisResult = await runRemediateCmd("lynis", ["audit", "system", "--quick", "--no-colors"], 120_000);
+    if (lynisResult.exitCode === 0 || lynisResult.stdout.length > 0) {
+      // Cross-reference lynis output with known remediations
+      for (const f of KNOWN_REMEDIATIONS) {
+        if (findings.some(e => e.finding_id === f.finding_id)) continue;
+        // Check if lynis mentions the relevant sysctl key or SSH setting
+        const setArg = f.remediation_args.find(a => a.includes("="));
+        if (setArg) {
+          const key = setArg.substring(0, setArg.indexOf("="));
+          if (lynisResult.stdout.includes(key)) {
+            findings.push(f);
+          }
+        }
+      }
+    }
+  }
+
+  // Apply severity filter
+  const filtered = findings.filter(f => severityAtOrAbove(f.severity, severityFilter));
+
+  // Sort by severity (critical first) then risk level (safe first)
+  filtered.sort((a, b) => {
+    const sevDiff = SEVERITY_LEVELS_ORDER.indexOf(a.severity) - SEVERITY_LEVELS_ORDER.indexOf(b.severity);
+    if (sevDiff !== 0) return sevDiff;
+    return riskSortValue(a.risk_level) - riskSortValue(b.risk_level);
+  });
+
+  return filtered;
+}
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -1745,5 +2089,476 @@ export function registerMetaTools(server: McpServer): void {
           return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
+  );
+
+  // ── 6. auto_remediate ─────────────────────────────────────────────────────
+
+  server.tool(
+    "auto_remediate",
+    "Automated remediation: plan findings, apply fixes (with dry-run), rollback sessions, and check status.",
+    {
+      action: z.enum(["plan", "apply", "rollback_session", "status"]).describe("Action: plan=generate remediation plan, apply=execute remediations, rollback_session=undo a session, status=view sessions"),
+      source: z.enum(["compliance", "hardening", "access_control", "firewall", "all"]).optional().default("all").describe("Source of findings to remediate (plan/apply)"),
+      severity_filter: z.enum(["critical", "high", "medium", "low"]).optional().default("medium").describe("Minimum severity level to include (plan/apply)"),
+      dry_run: z.boolean().optional().default(true).describe("If true, only show what would be done without executing (apply action)"),
+      session_id: z.string().optional().describe("Remediation session ID (rollback_session/status)"),
+      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format"),
+    },
+    async (params) => {
+      const { action, source, severity_filter, dry_run, session_id, output_format } = params;
+
+      switch (action) {
+        // ── plan ──────────────────────────────────────────────────────────
+        case "plan": {
+          try {
+            const effectiveSource = source ?? "all";
+            const effectiveSeverity = (severity_filter ?? "medium") as RemSeverity;
+            const findings = await gatherRemediationFindings(effectiveSource, effectiveSeverity);
+
+            if (output_format === "json") {
+              return {
+                content: [formatToolOutput({
+                  action: "plan",
+                  source: effectiveSource,
+                  severity_filter: effectiveSeverity,
+                  total_findings: findings.length,
+                  findings: findings.map(f => ({
+                    finding_id: f.finding_id,
+                    description: f.description,
+                    severity: f.severity,
+                    remediation_command: `${f.remediation_command} ${f.remediation_args.join(" ")}`,
+                    risk_level: f.risk_level,
+                    category: f.category,
+                  })),
+                })],
+              };
+            }
+
+            const sections: string[] = [];
+            sections.push("🔍 Auto-Remediation Plan");
+            sections.push("=".repeat(50));
+            sections.push(`Source: ${effectiveSource} | Severity filter: >= ${effectiveSeverity}`);
+            sections.push(`Total findings: ${findings.length}`);
+
+            if (findings.length === 0) {
+              sections.push("\n✅ No findings match the current filters. System looks good!");
+              return { content: [createTextContent(sections.join("\n"))] };
+            }
+
+            for (const f of findings) {
+              sections.push("");
+              sections.push(`  [${f.severity.toUpperCase()}] ${f.finding_id}: ${f.description}`);
+              sections.push(`    Category: ${f.category}`);
+              sections.push(`    Fix: ${f.remediation_command} ${f.remediation_args.join(" ")}`);
+              sections.push(`    Risk: ${f.risk_level}`);
+            }
+
+            const safeCount = findings.filter(f => f.risk_level === "safe").length;
+            const moderateCount = findings.filter(f => f.risk_level === "moderate").length;
+            const riskyCount = findings.filter(f => f.risk_level === "risky").length;
+            sections.push("\n── Plan Summary ──");
+            sections.push(`  Safe: ${safeCount} | Moderate: ${moderateCount} | Risky: ${riskyCount}`);
+            sections.push("  Use action=apply with dry_run=false to execute safe remediations.");
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Remediation plan failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── apply ─────────────────────────────────────────────────────────
+        case "apply": {
+          try {
+            const effectiveSource = source ?? "all";
+            const effectiveSeverity = (severity_filter ?? "medium") as RemSeverity;
+            const effectiveDryRun = dry_run ?? true;
+            const findings = await gatherRemediationFindings(effectiveSource, effectiveSeverity);
+
+            if (findings.length === 0) {
+              const msg = "No findings match the current filters. Nothing to remediate.";
+              if (output_format === "json") {
+                return { content: [formatToolOutput({ action: "apply", dry_run: effectiveDryRun, message: msg, actions_taken: 0 })] };
+              }
+              return { content: [createTextContent(`✅ ${msg}`)] };
+            }
+
+            if (effectiveDryRun) {
+              // Dry run — show what would be done
+              if (output_format === "json") {
+                return {
+                  content: [formatToolOutput({
+                    action: "apply",
+                    dry_run: true,
+                    total_findings: findings.length,
+                    would_execute: findings.filter(f => f.risk_level === "safe").map(f => ({
+                      finding_id: f.finding_id,
+                      description: f.description,
+                      command: `${f.remediation_command} ${f.remediation_args.join(" ")}`,
+                      risk_level: f.risk_level,
+                    })),
+                    would_skip: findings.filter(f => f.risk_level !== "safe").map(f => ({
+                      finding_id: f.finding_id,
+                      description: f.description,
+                      risk_level: f.risk_level,
+                      reason: `risk_level is ${f.risk_level} (only safe actions auto-executed)`,
+                    })),
+                  })],
+                };
+              }
+
+              const sections: string[] = [];
+              sections.push("🔒 Auto-Remediation — DRY RUN");
+              sections.push("=".repeat(50));
+              sections.push("[DRY RUN] No changes will be made.\n");
+
+              const safeFindings = findings.filter(f => f.risk_level === "safe");
+              const skippedFindings = findings.filter(f => f.risk_level !== "safe");
+
+              if (safeFindings.length > 0) {
+                sections.push("Would execute:");
+                for (const f of safeFindings) {
+                  sections.push(`  ✅ ${f.finding_id}: ${f.remediation_command} ${f.remediation_args.join(" ")}`);
+                  sections.push(`     ${f.description}`);
+                }
+              }
+
+              if (skippedFindings.length > 0) {
+                sections.push("\nWould skip (too risky for auto-execution):");
+                for (const f of skippedFindings) {
+                  sections.push(`  ⏭️  ${f.finding_id}: ${f.description} [${f.risk_level}]`);
+                }
+              }
+
+              sections.push("\nSet dry_run=false to execute safe remediations.");
+              return { content: [createTextContent(sections.join("\n"))] };
+            }
+
+            // ── Live execution (dry_run=false) ──
+            const sessionId = generateSessionId();
+            const session: RemediationSession = {
+              session_id: sessionId,
+              created_at: new Date().toISOString(),
+              status: "in_progress",
+              actions: [],
+              summary: { total: 0, successful: 0, failed: 0, skipped: 0, rolled_back: 0 },
+            };
+
+            const sections: string[] = [];
+            sections.push("🔧 Auto-Remediation — LIVE EXECUTION");
+            sections.push("=".repeat(50));
+            sections.push(`Session ID: ${sessionId}\n`);
+
+            for (const f of findings) {
+              session.summary.total++;
+
+              // Only execute safe remediations
+              if (f.risk_level !== "safe") {
+                session.actions.push({
+                  finding_id: f.finding_id,
+                  description: f.description,
+                  remediation_command: f.remediation_command,
+                  remediation_args: f.remediation_args,
+                  rollback_command: f.rollback_command,
+                  rollback_args: f.rollback_args,
+                  before_state: "",
+                  after_state: "",
+                  status: "skipped",
+                  error: `risk_level is ${f.risk_level} (only safe actions auto-executed)`,
+                  timestamp: new Date().toISOString(),
+                });
+                session.summary.skipped++;
+                sections.push(`  ⏭️  ${f.finding_id}: SKIPPED (${f.risk_level} risk)`);
+                continue;
+              }
+
+              // Verify command is in our remediation allowlist
+              if (!REMEDIATION_ALLOWLIST.has(f.remediation_command)) {
+                session.actions.push({
+                  finding_id: f.finding_id,
+                  description: f.description,
+                  remediation_command: f.remediation_command,
+                  remediation_args: f.remediation_args,
+                  rollback_command: f.rollback_command,
+                  rollback_args: f.rollback_args,
+                  before_state: "",
+                  after_state: "",
+                  status: "skipped",
+                  error: `Command '${f.remediation_command}' not in remediation allowlist`,
+                  timestamp: new Date().toISOString(),
+                });
+                session.summary.skipped++;
+                sections.push(`  ⏭️  ${f.finding_id}: SKIPPED (command not in remediation allowlist)`);
+                continue;
+              }
+
+              // Capture before state
+              let beforeState = "";
+              const setArg = f.remediation_args.find(a => a.includes("="));
+              if (setArg && f.remediation_command === "sysctl") {
+                const key = setArg.substring(0, setArg.indexOf("="));
+                const beforeResult = await runRemediateCmd("sysctl", ["-n", key]);
+                beforeState = beforeResult.stdout.trim();
+              }
+
+              // Execute remediation
+              const result = await runRemediateCmd(f.remediation_command, f.remediation_args);
+
+              // Capture after state
+              let afterState = "";
+              if (setArg && f.remediation_command === "sysctl") {
+                const key = setArg.substring(0, setArg.indexOf("="));
+                const afterResult = await runRemediateCmd("sysctl", ["-n", key]);
+                afterState = afterResult.stdout.trim();
+              }
+
+              if (result.exitCode === 0) {
+                session.actions.push({
+                  finding_id: f.finding_id,
+                  description: f.description,
+                  remediation_command: f.remediation_command,
+                  remediation_args: f.remediation_args,
+                  rollback_command: f.rollback_command,
+                  rollback_args: f.rollback_args,
+                  before_state: beforeState,
+                  after_state: afterState,
+                  status: "success",
+                  timestamp: new Date().toISOString(),
+                });
+                session.summary.successful++;
+                sections.push(`  ✅ ${f.finding_id}: ${f.description}`);
+              } else {
+                session.actions.push({
+                  finding_id: f.finding_id,
+                  description: f.description,
+                  remediation_command: f.remediation_command,
+                  remediation_args: f.remediation_args,
+                  rollback_command: f.rollback_command,
+                  rollback_args: f.rollback_args,
+                  before_state: beforeState,
+                  after_state: afterState,
+                  status: "failed",
+                  error: result.stderr.substring(0, 200),
+                  timestamp: new Date().toISOString(),
+                });
+                session.summary.failed++;
+                sections.push(`  ❌ ${f.finding_id}: FAILED — ${result.stderr.substring(0, 100)}`);
+              }
+            }
+
+            // Determine final session status
+            if (session.summary.failed === 0 && session.summary.skipped === 0) {
+              session.status = "completed";
+            } else if (session.summary.successful > 0) {
+              session.status = "partial";
+            } else {
+              session.status = "completed";
+            }
+
+            // Save session file
+            try {
+              const sessionPath = join(REMEDIATION_SESSIONS_DIR, `${sessionId}.json`);
+              secureWriteFileSync(sessionPath, JSON.stringify(session, null, 2), "utf-8");
+              sections.push(`\nSession saved: ${sessionPath}`);
+            } catch (writeErr: unknown) {
+              const msg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+              sections.push(`\n⚠️ Failed to save session: ${msg}`);
+            }
+
+            sections.push("\n── Summary ──");
+            sections.push(`  Total: ${session.summary.total} | Success: ${session.summary.successful} | Failed: ${session.summary.failed} | Skipped: ${session.summary.skipped}`);
+            sections.push(`  Session ID: ${sessionId} (use with rollback_session to undo)`);
+
+            if (output_format === "json") {
+              return { content: [formatToolOutput(session)] };
+            }
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Remediation apply failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── rollback_session ──────────────────────────────────────────────
+        case "rollback_session": {
+          try {
+            if (!session_id) {
+              return { content: [createErrorContent("session_id is required for rollback_session action")], isError: true };
+            }
+
+            const sessionPath = join(REMEDIATION_SESSIONS_DIR, `${session_id}.json`);
+            if (!existsSync(sessionPath)) {
+              return { content: [createErrorContent(`Session not found: ${session_id}`)], isError: true };
+            }
+
+            let session: RemediationSession;
+            try {
+              session = JSON.parse(readFileSync(sessionPath, "utf-8"));
+            } catch {
+              return { content: [createErrorContent(`Failed to parse session file: ${sessionPath}`)], isError: true };
+            }
+
+            const sections: string[] = [];
+            sections.push("⏪ Rollback Session");
+            sections.push("=".repeat(50));
+            sections.push(`Session: ${session_id}`);
+
+            // Get successful actions to rollback (in reverse order)
+            const actionsToRollback = session.actions
+              .filter(a => a.status === "success")
+              .reverse();
+
+            if (actionsToRollback.length === 0) {
+              sections.push("\nNo successful actions to roll back.");
+              if (output_format === "json") {
+                return { content: [formatToolOutput({ session_id, actions_rolled_back: 0, message: "No successful actions to roll back" })] };
+              }
+              return { content: [createTextContent(sections.join("\n"))] };
+            }
+
+            let rolledBack = 0;
+            let errors = 0;
+
+            for (const action of actionsToRollback) {
+              const result = await runRemediateCmd(action.rollback_command, action.rollback_args);
+              if (result.exitCode === 0) {
+                action.status = "rolled_back";
+                rolledBack++;
+                sections.push(`  ✅ Rolled back: ${action.finding_id} — ${action.description}`);
+              } else {
+                errors++;
+                sections.push(`  ❌ Rollback failed: ${action.finding_id} — ${result.stderr.substring(0, 100)}`);
+              }
+            }
+
+            // Update session status and save
+            session.status = "rolled_back";
+            session.summary.rolled_back = rolledBack;
+            try {
+              secureWriteFileSync(sessionPath, JSON.stringify(session, null, 2), "utf-8");
+            } catch { /* best effort */ }
+
+            sections.push(`\n── Rollback Summary ──`);
+            sections.push(`  Rolled back: ${rolledBack} | Errors: ${errors}`);
+
+            if (output_format === "json") {
+              return { content: [formatToolOutput({ session_id, actions_rolled_back: rolledBack, errors, session })] };
+            }
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Rollback failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── status ────────────────────────────────────────────────────────
+        case "status": {
+          try {
+            // Specific session detail
+            if (session_id) {
+              const sessionPath = join(REMEDIATION_SESSIONS_DIR, `${session_id}.json`);
+              if (!existsSync(sessionPath)) {
+                return { content: [createErrorContent(`Session not found: ${session_id}`)], isError: true };
+              }
+
+              let session: RemediationSession;
+              try {
+                session = JSON.parse(readFileSync(sessionPath, "utf-8"));
+              } catch {
+                return { content: [createErrorContent(`Failed to parse session file: ${sessionPath}`)], isError: true };
+              }
+
+              if (output_format === "json") {
+                return { content: [formatToolOutput(session)] };
+              }
+
+              const sections: string[] = [];
+              sections.push("📊 Remediation Session Detail");
+              sections.push("=".repeat(50));
+              sections.push(`Session: ${session.session_id}`);
+              sections.push(`Created: ${session.created_at}`);
+              sections.push(`Status: ${session.status}`);
+              sections.push(`Total: ${session.summary.total} | Success: ${session.summary.successful} | Failed: ${session.summary.failed} | Skipped: ${session.summary.skipped} | Rolled back: ${session.summary.rolled_back}`);
+
+              for (const a of session.actions) {
+                sections.push(`\n  ${a.finding_id}: ${a.description}`);
+                sections.push(`    Status: ${a.status}`);
+                if (a.error) sections.push(`    Error: ${a.error}`);
+                if (a.before_state) sections.push(`    Before: ${a.before_state}`);
+                if (a.after_state) sections.push(`    After: ${a.after_state}`);
+              }
+
+              return { content: [createTextContent(sections.join("\n"))] };
+            }
+
+            // List all sessions
+            if (!existsSync(REMEDIATION_SESSIONS_DIR)) {
+              const msg = "No remediation sessions found. Run auto_remediate action=apply first.";
+              if (output_format === "json") {
+                return { content: [formatToolOutput({ sessions: [], message: msg })] };
+              }
+              return { content: [createTextContent(msg)] };
+            }
+
+            const files = readdirSync(REMEDIATION_SESSIONS_DIR).filter((f: string) => f.endsWith(".json"));
+            if (files.length === 0) {
+              const msg = "No remediation sessions found.";
+              if (output_format === "json") {
+                return { content: [formatToolOutput({ sessions: [], message: msg })] };
+              }
+              return { content: [createTextContent(msg)] };
+            }
+
+            const sessionSummaries: Array<{
+              session_id: string;
+              created_at: string;
+              status: string;
+              total: number;
+              successful: number;
+              failed: number;
+              rolled_back: number;
+            }> = [];
+
+            for (const file of files) {
+              try {
+                const data = JSON.parse(readFileSync(join(REMEDIATION_SESSIONS_DIR, file), "utf-8")) as RemediationSession;
+                sessionSummaries.push({
+                  session_id: data.session_id,
+                  created_at: data.created_at,
+                  status: data.status,
+                  total: data.summary.total,
+                  successful: data.summary.successful,
+                  failed: data.summary.failed,
+                  rolled_back: data.summary.rolled_back,
+                });
+              } catch { /* skip unparseable files */ }
+            }
+
+            if (output_format === "json") {
+              return { content: [formatToolOutput({ total_sessions: sessionSummaries.length, sessions: sessionSummaries })] };
+            }
+
+            const sections: string[] = [];
+            sections.push("📊 Remediation Sessions");
+            sections.push("=".repeat(50));
+            sections.push(`Total sessions: ${sessionSummaries.length}\n`);
+
+            for (const s of sessionSummaries) {
+              sections.push(`  ${s.session_id}`);
+              sections.push(`    Created: ${s.created_at} | Status: ${s.status}`);
+              sections.push(`    Actions: ${s.total} total, ${s.successful} success, ${s.failed} failed, ${s.rolled_back} rolled back`);
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Status check failed: ${msg}`)], isError: true };
+          }
+        }
+
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
+      }
+    },
   );
 }
