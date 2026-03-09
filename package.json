@@ -70,6 +70,7 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
+    "kali-defense-mcp-server": "^0.5.2",
     "zod": "3.25.76"
   },
   "devDependencies": {
