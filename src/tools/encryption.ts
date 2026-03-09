@@ -23,6 +23,8 @@ import {
 } from "../core/sanitizer.js";
 
 import { validateToolPath } from "../core/sanitizer.js";
+import { spawnSafe } from "../core/spawn-safe.js";
+import type { ChildProcess } from "node:child_process";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -100,6 +102,77 @@ function checkWeakProtocols(output: string): string[] {
     }
   }
   return found;
+}
+
+// ── Certificate lifecycle command runner ────────────────────────────────────
+
+interface CertCommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
+ * Run a command via spawnSafe and collect output as a promise.
+ * Handles errors gracefully — returns error info instead of throwing.
+ */
+async function runCertCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 30_000,
+  stdinData?: string,
+): Promise<CertCommandResult> {
+  return new Promise((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawnSafe(command, args);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resolve({ stdout: "", stderr: msg, exitCode: -1 });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let resolved = false;
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        child.kill("SIGTERM");
+        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
+      }
+    }, timeoutMs);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on("close", (code: number | null) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code ?? -1 });
+      }
+    });
+
+    child.on("error", (err: Error) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr: err.message, exitCode: -1 });
+      }
+    });
+
+    // Write stdin data if provided, then close
+    if (stdinData !== undefined && child.stdin) {
+      child.stdin.write(stdinData);
+      child.stdin.end();
+    }
+  });
 }
 
 // ── Registration entry point ───────────────────────────────────────────────
@@ -1264,6 +1337,742 @@ export function registerEncryptionTools(server: McpServer): void {
         return { content: [createErrorContent(msg)], isError: true };
       }
     }
+  );
+
+  // ── 5. certificate_lifecycle ──────────────────────────────────────────────
+
+  server.tool(
+    "certificate_lifecycle",
+    "Certificate lifecycle management: inventory system certificates, check auto-renewal, audit CA trust store, verify OCSP revocation status, and monitor Certificate Transparency logs.",
+    {
+      action: z
+        .enum(["inventory", "auto_renew_check", "ca_audit", "ocsp_check", "ct_log_monitor"])
+        .describe(
+          "Action: inventory=scan system certs, auto_renew_check=check certbot/ACME renewal, ca_audit=audit CA trust store, ocsp_check=check OCSP revocation, ct_log_monitor=check CT logs",
+        ),
+      domain: z
+        .string()
+        .optional()
+        .describe("Domain for OCSP/CT checks"),
+      cert_path: z
+        .string()
+        .optional()
+        .describe("Path to specific certificate file"),
+      search_paths: z
+        .array(z.string())
+        .optional()
+        .describe("Additional paths to search for certificates"),
+      output_format: z
+        .enum(["text", "json"])
+        .optional()
+        .default("text")
+        .describe("Output format (default text)"),
+    },
+    async (params) => {
+      const { action } = params;
+
+      switch (action) {
+        // ── inventory ──────────────────────────────────────────────────
+        case "inventory": {
+          try {
+            const defaultPaths = [
+              "/etc/ssl/certs/",
+              "/etc/pki/tls/certs/",
+              "/etc/letsencrypt/live/",
+              "/usr/local/share/ca-certificates/",
+            ];
+            const searchPaths = [...defaultPaths, ...(params.search_paths ?? [])];
+
+            for (const p of searchPaths) {
+              assertNoTraversal(p);
+            }
+
+            const allCerts: string[] = [];
+
+            for (const searchPath of searchPaths) {
+              const findResult = await runCertCommand("find", [
+                searchPath, "-name", "*.pem", "-o", "-name", "*.crt", "-o", "-name", "*.cer",
+              ], 15_000);
+
+              if (findResult.exitCode === 0 && findResult.stdout.trim()) {
+                const certs = findResult.stdout.trim().split("\n").filter((c) => c.trim());
+                allCerts.push(...certs);
+              }
+            }
+
+            interface CertInfo {
+              path: string;
+              subject: string;
+              issuer: string;
+              notBefore: string;
+              notAfter: string;
+              serial: string;
+              status: "valid" | "expiring_soon" | "expired";
+              daysLeft: number;
+            }
+
+            const certDetails: CertInfo[] = [];
+            let expiredCount = 0;
+            let expiringSoonCount = 0;
+            let validCount = 0;
+
+            const certsToCheck = allCerts.slice(0, 100);
+            for (const certFile of certsToCheck) {
+              const certResult = await runCertCommand("openssl", [
+                "x509", "-in", certFile.trim(), "-noout",
+                "-subject", "-issuer", "-dates", "-serial",
+              ], 5_000);
+
+              if (certResult.exitCode === 0) {
+                const out = certResult.stdout;
+                const subjectMatch = out.match(/subject=(.+)/);
+                const issuerMatch = out.match(/issuer=(.+)/);
+                const notBeforeMatch = out.match(/notBefore=(.+)/);
+                const notAfterMatch = out.match(/notAfter=(.+)/);
+                const serialMatch = out.match(/serial=(.+)/);
+
+                const notAfter = notAfterMatch ? notAfterMatch[1].trim() : "";
+                let daysLeft = 0;
+                let status: "valid" | "expiring_soon" | "expired" = "valid";
+
+                if (notAfter) {
+                  const expiryDate = new Date(notAfter);
+                  const now = new Date();
+                  daysLeft = Math.floor(
+                    (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+                  );
+
+                  if (daysLeft < 0) {
+                    status = "expired";
+                    expiredCount++;
+                  } else if (daysLeft < 30) {
+                    status = "expiring_soon";
+                    expiringSoonCount++;
+                  } else {
+                    validCount++;
+                  }
+                }
+
+                certDetails.push({
+                  path: certFile.trim(),
+                  subject: subjectMatch ? subjectMatch[1].trim() : "unknown",
+                  issuer: issuerMatch ? issuerMatch[1].trim() : "unknown",
+                  notBefore: notBeforeMatch ? notBeforeMatch[1].trim() : "unknown",
+                  notAfter: notAfter || "unknown",
+                  serial: serialMatch ? serialMatch[1].trim() : "unknown",
+                  status,
+                  daysLeft,
+                });
+              }
+            }
+
+            const output = {
+              action: "inventory",
+              totalCerts: certDetails.length,
+              expired: expiredCount,
+              expiringSoon: expiringSoonCount,
+              valid: validCount,
+              certificates: certDetails,
+              searchPaths,
+            };
+
+            if (params.output_format === "json") {
+              return { content: [formatToolOutput(output)] };
+            }
+
+            const sections: string[] = [];
+            sections.push("📜 Certificate Inventory");
+            sections.push("=".repeat(50));
+            sections.push(`\nTotal certificates found: ${certDetails.length}`);
+            sections.push(`  ✅ Valid: ${validCount}`);
+            sections.push(`  ⚠️ Expiring soon (< 30 days): ${expiringSoonCount}`);
+            sections.push(`  ⛔ Expired: ${expiredCount}`);
+
+            if (expiredCount > 0) {
+              sections.push("\n── Expired Certificates ──");
+              for (const cert of certDetails.filter((c) => c.status === "expired")) {
+                sections.push(`  ${cert.path}`);
+                sections.push(`    Subject: ${cert.subject}`);
+                sections.push(`    Expired: ${Math.abs(cert.daysLeft)} days ago`);
+              }
+            }
+
+            if (expiringSoonCount > 0) {
+              sections.push("\n── Expiring Soon ──");
+              for (const cert of certDetails.filter((c) => c.status === "expiring_soon")) {
+                sections.push(`  ${cert.path}`);
+                sections.push(`    Subject: ${cert.subject}`);
+                sections.push(`    Expires in: ${cert.daysLeft} days`);
+              }
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`inventory failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── auto_renew_check ───────────────────────────────────────────
+        case "auto_renew_check": {
+          try {
+            const findings: Record<string, unknown> = { action: "auto_renew_check" };
+
+            const certbotCheck = await runCertCommand("which", ["certbot"], 5_000);
+            const certbotInstalled = certbotCheck.exitCode === 0;
+            findings.certbotInstalled = certbotInstalled;
+
+            if (!certbotInstalled) {
+              findings.status = "certbot_not_found";
+              findings.recommendations = [
+                "Certbot is not installed. Install with: apt install certbot",
+              ];
+
+              if (params.output_format === "json") {
+                return { content: [formatToolOutput(findings)] };
+              }
+
+              const sections: string[] = [];
+              sections.push("🔄 Auto-Renewal Check");
+              sections.push("=".repeat(50));
+              sections.push("\n⚠️ Certbot is not installed.");
+              sections.push("  Install with: apt install certbot");
+              return { content: [createTextContent(sections.join("\n"))] };
+            }
+
+            // Check certbot timer
+            const timerResult = await runCertCommand(
+              "systemctl", ["status", "certbot.timer"], 10_000,
+            );
+            const timerActive =
+              timerResult.exitCode === 0 &&
+              timerResult.stdout.includes("active");
+            findings.timerActive = timerActive;
+            findings.timerOutput = timerResult.stdout.trim();
+
+            // List certbot certificates
+            const certsResult = await runCertCommand(
+              "certbot", ["certificates"], 15_000,
+            );
+            findings.certificates = certsResult.stdout.trim();
+            findings.certbotExitCode = certsResult.exitCode;
+
+            // Check renewal configs
+            const renewalResult = await runCertCommand("find", [
+              "/etc/letsencrypt/renewal/", "-name", "*.conf",
+            ], 5_000);
+            const renewalConfigs =
+              renewalResult.exitCode === 0 && renewalResult.stdout.trim()
+                ? renewalResult.stdout.trim().split("\n").filter((l) => l.trim())
+                : [];
+            findings.renewalConfigs = renewalConfigs;
+
+            // Check cron for renewal jobs
+            const cronResult = await runCertCommand("grep", [
+              "-r", "certbot", "/etc/cron.d/", "/etc/cron.daily/", "/etc/crontab",
+            ], 5_000);
+            const cronJobs =
+              cronResult.exitCode === 0 && cronResult.stdout.trim()
+                ? cronResult.stdout.trim().split("\n").filter((l) => l.trim())
+                : [];
+            findings.cronJobs = cronJobs;
+            findings.status = "checked";
+
+            if (params.output_format === "json") {
+              return { content: [formatToolOutput(findings)] };
+            }
+
+            const sections: string[] = [];
+            sections.push("🔄 Auto-Renewal Check");
+            sections.push("=".repeat(50));
+            sections.push(
+              `\nCertbot: installed at ${certbotCheck.stdout.trim()}`,
+            );
+            sections.push(
+              `Timer: ${timerActive ? "✅ Active" : "⚠️ Not active"}`,
+            );
+            sections.push("\nManaged Certificates:");
+            sections.push(certsResult.stdout.trim() || "  No certificates found");
+            sections.push(`\nRenewal Configs (${renewalConfigs.length}):`);
+            for (const conf of renewalConfigs) {
+              sections.push(`  ${conf}`);
+            }
+            if (cronJobs.length > 0) {
+              sections.push("\nCron Jobs:");
+              for (const job of cronJobs) {
+                sections.push(`  ${job}`);
+              }
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return {
+              content: [createErrorContent(`auto_renew_check failed: ${msg}`)],
+              isError: true,
+            };
+          }
+        }
+
+        // ── ca_audit ───────────────────────────────────────────────────
+        case "ca_audit": {
+          try {
+            const findings: Record<string, unknown> = { action: "ca_audit" };
+
+            let trustStorePath = "/etc/ssl/certs/";
+            const sslCheck = await runCertCommand(
+              "ls", ["/etc/ssl/certs/"], 5_000,
+            );
+            if (sslCheck.exitCode !== 0) {
+              const pkiCheck = await runCertCommand(
+                "ls", ["/etc/pki/tls/certs/"], 5_000,
+              );
+              if (pkiCheck.exitCode === 0) {
+                trustStorePath = "/etc/pki/tls/certs/";
+              }
+            }
+            findings.trustStorePath = trustStorePath;
+
+            const caListResult = await runCertCommand("find", [
+              trustStorePath,
+              "-name", "*.pem", "-o", "-name", "*.crt",
+            ], 10_000);
+            const caFiles =
+              caListResult.exitCode === 0 && caListResult.stdout.trim()
+                ? caListResult.stdout.trim().split("\n").filter((l) => l.trim())
+                : [];
+            findings.totalCAs = caFiles.length;
+
+            const recentResult = await runCertCommand("find", [
+              trustStorePath,
+              "-mtime", "-30",
+              "-name", "*.pem",
+              "-o",
+              "-mtime", "-30",
+              "-name", "*.crt",
+            ], 10_000);
+            const recentlyAdded =
+              recentResult.exitCode === 0 && recentResult.stdout.trim()
+                ? recentResult.stdout.trim().split("\n").filter((l) => l.trim())
+                : [];
+            findings.recentlyAdded = recentlyAdded;
+            findings.recentlyAddedCount = recentlyAdded.length;
+
+            const suspiciousPatterns = [
+              "test", "debug", "fake", "temporary", "tmp",
+              "self-signed", "localhost", "example",
+            ];
+            const suspiciousFindings: string[] = [];
+
+            for (const caFile of caFiles.slice(0, 200)) {
+              const lower = caFile.toLowerCase();
+              for (const pattern of suspiciousPatterns) {
+                if (lower.includes(pattern)) {
+                  suspiciousFindings.push(caFile);
+                  break;
+                }
+              }
+            }
+            findings.suspiciousFindings = suspiciousFindings;
+            findings.suspiciousCount = suspiciousFindings.length;
+
+            const updateCheck = await runCertCommand(
+              "which", ["update-ca-certificates"], 5_000,
+            );
+            findings.updateCaCertificatesAvailable =
+              updateCheck.exitCode === 0;
+
+            if (params.output_format === "json") {
+              return { content: [formatToolOutput(findings)] };
+            }
+
+            const sections: string[] = [];
+            sections.push("🏛️ CA Trust Store Audit");
+            sections.push("=".repeat(50));
+            sections.push(`\nTrust store path: ${trustStorePath}`);
+            sections.push(`Total trusted CAs: ${caFiles.length}`);
+            sections.push(
+              `Recently added (last 30 days): ${recentlyAdded.length}`,
+            );
+
+            if (recentlyAdded.length > 0) {
+              sections.push("\n── Recently Added CAs ──");
+              for (const ca of recentlyAdded.slice(0, 20)) {
+                sections.push(`  ${ca}`);
+              }
+            }
+
+            if (suspiciousFindings.length > 0) {
+              sections.push(
+                `\n⚠️ Suspicious CAs Found (${suspiciousFindings.length}):`,
+              );
+              for (const ca of suspiciousFindings.slice(0, 20)) {
+                sections.push(`  ${ca}`);
+              }
+            } else {
+              sections.push("\n✅ No suspicious CA names detected.");
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return {
+              content: [createErrorContent(`ca_audit failed: ${msg}`)],
+              isError: true,
+            };
+          }
+        }
+
+        // ── ocsp_check ─────────────────────────────────────────────────
+        case "ocsp_check": {
+          try {
+            if (!params.domain && !params.cert_path) {
+              return {
+                content: [
+                  createErrorContent(
+                    "domain or cert_path is required for ocsp_check",
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const findings: Record<string, unknown> = {
+              action: "ocsp_check",
+            };
+            let certPem = "";
+
+            if (params.domain) {
+              const validDomain = validateTarget(params.domain);
+              findings.domain = validDomain;
+
+              // Get certificate chain from domain
+              const sClientResult = await runCertCommand(
+                "openssl",
+                [
+                  "s_client", "-connect", `${validDomain}:443`,
+                  "-servername", validDomain, "-showcerts",
+                ],
+                10_000,
+                "",
+              );
+
+              const fullOutput =
+                sClientResult.stdout + "\n" + sClientResult.stderr;
+              const certMatches = fullOutput.match(
+                /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g,
+              );
+
+              if (!certMatches || certMatches.length === 0) {
+                findings.error =
+                  "Could not retrieve certificate from domain";
+                if (params.output_format === "json") {
+                  return { content: [formatToolOutput(findings)] };
+                }
+                return {
+                  content: [
+                    createErrorContent(
+                      `Could not retrieve certificate from ${validDomain}`,
+                    ),
+                  ],
+                  isError: true,
+                };
+              }
+
+              certPem = certMatches[0];
+            } else if (params.cert_path) {
+              assertNoTraversal(params.cert_path);
+              const validPath = validateCertPath(params.cert_path);
+              findings.certPath = validPath;
+
+              const readResult = await runCertCommand(
+                "openssl",
+                ["x509", "-in", validPath],
+                5_000,
+              );
+              if (readResult.exitCode !== 0) {
+                return {
+                  content: [
+                    createErrorContent(
+                      `Failed to read certificate: ${readResult.stderr}`,
+                    ),
+                  ],
+                  isError: true,
+                };
+              }
+              certPem = readResult.stdout;
+            }
+
+            // Extract OCSP URI from certificate via stdin
+            const ocspUriResult = await runCertCommand(
+              "openssl",
+              ["x509", "-noout", "-ocsp_uri"],
+              5_000,
+              certPem,
+            );
+            const ocspUri = ocspUriResult.stdout.trim();
+            findings.ocspUri = ocspUri || "not found";
+
+            if (!ocspUri) {
+              findings.status = "no_ocsp_uri";
+              findings.message =
+                "Certificate does not contain an OCSP responder URI";
+
+              if (params.output_format === "json") {
+                return { content: [formatToolOutput(findings)] };
+              }
+
+              return {
+                content: [
+                  createTextContent(
+                    "🔍 OCSP Check\n" +
+                      "=".repeat(50) +
+                      "\n\n⚠️ Certificate does not contain an OCSP responder URI.",
+                  ),
+                ],
+              };
+            }
+
+            // Check OCSP stapling via s_client -status
+            if (params.domain) {
+              const validDomain = validateTarget(params.domain);
+              const staplingResult = await runCertCommand(
+                "openssl",
+                [
+                  "s_client", "-connect", `${validDomain}:443`,
+                  "-servername", validDomain, "-status",
+                ],
+                10_000,
+                "",
+              );
+
+              const staplingOutput =
+                staplingResult.stdout + staplingResult.stderr;
+              const hasStapling = staplingOutput.includes(
+                "OCSP Response Status: successful",
+              );
+              findings.ocspStapling = hasStapling;
+
+              if (hasStapling) {
+                if (staplingOutput.includes("Cert Status: good")) {
+                  findings.revocationStatus = "good";
+                } else if (staplingOutput.includes("Cert Status: revoked")) {
+                  findings.revocationStatus = "revoked";
+                } else {
+                  findings.revocationStatus = "unknown";
+                }
+              } else {
+                findings.revocationStatus = "unknown";
+                findings.message =
+                  "OCSP stapling not available; direct OCSP query may be needed";
+              }
+            } else {
+              findings.revocationStatus = "unknown";
+              findings.message =
+                "Direct OCSP query requires domain; use domain parameter for full check";
+            }
+
+            if (params.output_format === "json") {
+              return { content: [formatToolOutput(findings)] };
+            }
+
+            const sections: string[] = [];
+            sections.push("🔍 OCSP Check");
+            sections.push("=".repeat(50));
+            sections.push(`\nOCSP Responder: ${ocspUri}`);
+            sections.push(
+              `Revocation Status: ${String(findings.revocationStatus)}`,
+            );
+            if (findings.ocspStapling !== undefined) {
+              sections.push(
+                `OCSP Stapling: ${findings.ocspStapling ? "✅ Supported" : "⚠️ Not supported"}`,
+              );
+            }
+            if (findings.message) {
+              sections.push(`\nNote: ${String(findings.message)}`);
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return {
+              content: [createErrorContent(`ocsp_check failed: ${msg}`)],
+              isError: true,
+            };
+          }
+        }
+
+        // ── ct_log_monitor ─────────────────────────────────────────────
+        case "ct_log_monitor": {
+          try {
+            if (!params.domain) {
+              return {
+                content: [
+                  createErrorContent(
+                    "domain is required for ct_log_monitor",
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const validDomain = validateTarget(params.domain);
+            const findings: Record<string, unknown> = {
+              action: "ct_log_monitor",
+              domain: validDomain,
+            };
+
+            // Query crt.sh for certificates
+            const crtshResult = await runCertCommand("curl", [
+              "-s", "-m", "15",
+              `https://crt.sh/?q=${encodeURIComponent(validDomain)}&output=json`,
+            ], 20_000);
+
+            if (crtshResult.exitCode !== 0 || !crtshResult.stdout.trim()) {
+              findings.error = "Failed to query crt.sh";
+              findings.stderr = crtshResult.stderr;
+
+              if (params.output_format === "json") {
+                return { content: [formatToolOutput(findings)] };
+              }
+
+              return {
+                content: [
+                  createTextContent(
+                    "🔍 CT Log Monitor\n" +
+                      "=".repeat(50) +
+                      `\n\n⚠️ Failed to query crt.sh for ${validDomain}.\n` +
+                      `Error: ${crtshResult.stderr}`,
+                  ),
+                ],
+              };
+            }
+
+            let ctEntries: Array<Record<string, unknown>> = [];
+            try {
+              ctEntries = JSON.parse(crtshResult.stdout);
+            } catch {
+              findings.error = "Failed to parse crt.sh response";
+              if (params.output_format === "json") {
+                return { content: [formatToolOutput(findings)] };
+              }
+              return {
+                content: [
+                  createErrorContent("Failed to parse crt.sh JSON response"),
+                ],
+                isError: true,
+              };
+            }
+
+            findings.totalCerts = ctEntries.length;
+
+            // Analyze certificates
+            const issuers = new Set<string>();
+            const wildcardCerts: Array<Record<string, unknown>> = [];
+            const recentCerts: Array<Record<string, unknown>> = [];
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+            for (const entry of ctEntries.slice(0, 200)) {
+              const issuerName = String(entry.issuer_name ?? "unknown");
+              issuers.add(issuerName);
+
+              const commonName = String(entry.common_name ?? "");
+              if (commonName.startsWith("*.")) {
+                wildcardCerts.push(entry);
+              }
+
+              const notBefore = entry.not_before
+                ? new Date(String(entry.not_before))
+                : null;
+              if (notBefore && notBefore > thirtyDaysAgo) {
+                recentCerts.push(entry);
+              }
+            }
+
+            findings.issuers = [...issuers];
+            findings.wildcardCount = wildcardCerts.length;
+            findings.recentCount = recentCerts.length;
+            findings.recentCerts = recentCerts.slice(0, 20).map((e) => ({
+              commonName: e.common_name,
+              issuer: e.issuer_name,
+              notBefore: e.not_before,
+              notAfter: e.not_after,
+            }));
+
+            // Flag unexpected issuers
+            const unexpectedFindings: string[] = [];
+            if (issuers.size > 3) {
+              unexpectedFindings.push(
+                `Multiple issuers detected (${issuers.size}) — review for unauthorized certificate issuance`,
+              );
+            }
+            if (wildcardCerts.length > 0) {
+              unexpectedFindings.push(
+                `${wildcardCerts.length} wildcard certificate(s) found`,
+              );
+            }
+            findings.unexpectedFindings = unexpectedFindings;
+
+            if (params.output_format === "json") {
+              return { content: [formatToolOutput(findings)] };
+            }
+
+            const sections: string[] = [];
+            sections.push("🔍 CT Log Monitor");
+            sections.push("=".repeat(50));
+            sections.push(`\nDomain: ${validDomain}`);
+            sections.push(
+              `Total certificates in CT logs: ${ctEntries.length}`,
+            );
+            sections.push(`Unique issuers: ${issuers.size}`);
+            sections.push(
+              `Wildcard certificates: ${wildcardCerts.length}`,
+            );
+            sections.push(
+              `Recently issued (last 30 days): ${recentCerts.length}`,
+            );
+
+            if (issuers.size > 0) {
+              sections.push("\n── Issuers ──");
+              for (const issuer of issuers) {
+                sections.push(`  ${issuer}`);
+              }
+            }
+
+            if (recentCerts.length > 0) {
+              sections.push("\n── Recently Issued ──");
+              for (const cert of recentCerts.slice(0, 10)) {
+                sections.push(
+                  `  ${cert.common_name} (issued: ${cert.not_before}, by: ${cert.issuer_name})`,
+                );
+              }
+            }
+
+            if (unexpectedFindings.length > 0) {
+              sections.push("\n⚠️ Findings:");
+              for (const finding of unexpectedFindings) {
+                sections.push(`  ${finding}`);
+              }
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return {
+              content: [createErrorContent(`ct_log_monitor failed: ${msg}`)],
+              isError: true,
+            };
+          }
+        }
+
+        default:
+          return {
+            content: [createErrorContent(`Unknown action: ${action}`)],
+            isError: true,
+          };
+      }
+    },
   );
 
 }

@@ -32,6 +32,9 @@ import {
 import { SafeguardRegistry } from "../core/safeguards.js";
 import { readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnSafe } from "../core/spawn-safe.js";
+import { secureWriteFileSync } from "../core/secure-fs.js";
 
 // ── TOOL-019 remediation: privilege check helper ───────────────────────────
 
@@ -211,6 +214,104 @@ const PERMISSION_CHECKS: PermissionCheck[] = [
   { path: "/etc/sudoers.d", expectedMode: "750", expectedOwner: "root", expectedGroup: "root", scope: "critical", description: "Sudoers drop-in directory" },
   { path: "/boot/grub/grub.cfg", expectedMode: "600", expectedOwner: "root", expectedGroup: "root", scope: "critical", description: "GRUB configuration" },
 ];
+
+// ── USB device control constants and helpers ───────────────────────────────
+
+/** Path to USB device whitelist file */
+const USB_WHITELIST_PATH = "/var/lib/kali-defense/usb/whitelist.json";
+
+interface UsbCommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
+ * Run a command via spawnSafe and collect output as a promise.
+ * Handles errors gracefully — returns error info instead of throwing.
+ */
+async function runUsbCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 30_000,
+): Promise<UsbCommandResult> {
+  return new Promise((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawnSafe(command, args);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resolve({ stdout: "", stderr: msg, exitCode: -1 });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let resolved = false;
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        child.kill("SIGTERM");
+        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
+      }
+    }, timeoutMs);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on("close", (code: number | null) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code ?? -1 });
+      }
+    });
+
+    child.on("error", (err: Error) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr: err.message, exitCode: -1 });
+      }
+    });
+  });
+}
+
+interface UsbWhitelistEntry {
+  device_id: string;
+  description: string;
+  added_date: string;
+}
+
+/**
+ * Load USB device whitelist from disk.
+ * Returns empty array if file doesn't exist or is invalid.
+ */
+function loadUsbWhitelist(): UsbWhitelistEntry[] {
+  try {
+    if (existsSync(USB_WHITELIST_PATH)) {
+      const data = readFileSync(USB_WHITELIST_PATH, "utf-8");
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) return parsed as UsbWhitelistEntry[];
+      if (parsed && Array.isArray(parsed.devices)) return parsed.devices as UsbWhitelistEntry[];
+    }
+  } catch {
+    // Fall through to default
+  }
+  return [];
+}
+
+/**
+ * Save USB device whitelist to disk using secure file write.
+ */
+function saveUsbWhitelist(entries: UsbWhitelistEntry[]): void {
+  secureWriteFileSync(USB_WHITELIST_PATH, JSON.stringify({ devices: entries }, null, 2));
+}
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -2491,5 +2592,468 @@ export function registerHardeningTools(server: McpServer): void {
           return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
+  );
+
+  // ── 9. usb_device_control ────────────────────────────────────────────────
+
+  server.tool(
+    "usb_device_control",
+    "USB device security control. Actions: audit_devices=audit connected USB devices, block_storage=block USB mass storage, whitelist=manage USB device whitelist, monitor=check recent USB events",
+    {
+      action: z
+        .enum(["audit_devices", "block_storage", "whitelist", "monitor"])
+        .describe("Action: audit_devices=list/audit USB, block_storage=block USB storage, whitelist=manage allowed devices, monitor=check USB events"),
+      device_id: z
+        .string()
+        .optional()
+        .describe("USB device ID in vendor:product format (for whitelist action)"),
+      block_method: z
+        .enum(["modprobe", "udev"])
+        .optional()
+        .default("modprobe")
+        .describe("Method to block USB storage: modprobe=blacklist kernel module, udev=udev rule (default modprobe)"),
+      output_format: z
+        .enum(["text", "json"])
+        .optional()
+        .default("text")
+        .describe("Output format (default text)"),
+    },
+    async (params) => {
+      const { action } = params;
+      const outputFormat = params.output_format ?? "text";
+
+      switch (action) {
+        // ── audit_devices ────────────────────────────────────────────
+        case "audit_devices": {
+          try {
+            const findings: Record<string, unknown> = {};
+
+            // List connected USB devices via lsusb
+            const lsusbResult = await runUsbCommand("lsusb", [], 10_000);
+            if (lsusbResult.exitCode === 0 && lsusbResult.stdout.trim().length > 0) {
+              const devices = lsusbResult.stdout.trim().split("\n").filter((l) => l.trim().length > 0);
+              findings.connectedDevices = devices;
+              findings.connectedDeviceCount = devices.length;
+            } else if (lsusbResult.stderr.includes("not found") || lsusbResult.exitCode === -1) {
+              findings.connectedDevices = [];
+              findings.connectedDeviceCount = 0;
+              findings.lsusbAvailable = false;
+              findings.lsusbNote = "lsusb not found — install usbutils package to audit USB devices";
+            } else {
+              findings.connectedDevices = [];
+              findings.connectedDeviceCount = 0;
+              findings.lsusbError = lsusbResult.stderr;
+            }
+
+            // Check for USB storage devices via lsblk
+            const lsblkResult = await runUsbCommand("lsblk", ["-S", "-o", "NAME,TRAN,TYPE"], 10_000);
+            if (lsblkResult.exitCode === 0) {
+              const lines = lsblkResult.stdout.trim().split("\n").filter((l) => l.toLowerCase().includes("usb"));
+              findings.storageDevices = lines;
+              findings.storageDeviceCount = lines.length;
+            } else {
+              findings.storageDevices = [];
+              findings.storageDeviceCount = 0;
+            }
+
+            // Check if usb_storage kernel module is loaded
+            const lsmodResult = await runUsbCommand("lsmod", [], 10_000);
+            if (lsmodResult.exitCode === 0) {
+              const moduleLoaded = lsmodResult.stdout.split("\n").some((l) => l.startsWith("usb_storage"));
+              findings.usbStorageModuleLoaded = moduleLoaded;
+            } else {
+              findings.usbStorageModuleLoaded = "unknown";
+            }
+
+            // Check existing udev rules for USB
+            const udevLsResult = await runUsbCommand("ls", ["/etc/udev/rules.d/"], 5_000);
+            if (udevLsResult.exitCode === 0) {
+              const usbRuleFiles = udevLsResult.stdout.trim().split("\n").filter((f) => f.toLowerCase().includes("usb"));
+              findings.existingUdevRules = [];
+              for (const ruleFile of usbRuleFiles) {
+                if (ruleFile.trim().length > 0) {
+                  const catResult = await runUsbCommand("cat", [`/etc/udev/rules.d/${ruleFile.trim()}`], 5_000);
+                  if (catResult.exitCode === 0) {
+                    (findings.existingUdevRules as string[]).push(`${ruleFile}: ${catResult.stdout.trim()}`);
+                  }
+                }
+              }
+            } else {
+              findings.existingUdevRules = [];
+            }
+
+            // Check if USBGuard is installed and running
+            const usbguardResult = await runUsbCommand("systemctl", ["status", "usbguard"], 10_000);
+            if (usbguardResult.exitCode === 0 || usbguardResult.exitCode === 3) {
+              findings.usbguardInstalled = true;
+              findings.usbguardRunning = usbguardResult.stdout.includes("active (running)");
+              findings.usbguardStatus = usbguardResult.stdout.trim().split("\n").slice(0, 5).join("\n");
+            } else {
+              findings.usbguardInstalled = false;
+              findings.usbguardRunning = false;
+            }
+
+            const output = {
+              action: "audit_devices",
+              ...findings,
+            };
+
+            if (outputFormat === "json") {
+              return { content: [formatToolOutput(output)] };
+            }
+
+            let text = "USB Device Control — Audit Devices\n\n";
+            text += `Connected USB Devices: ${findings.connectedDeviceCount ?? 0}\n`;
+            if (Array.isArray(findings.connectedDevices) && findings.connectedDevices.length > 0) {
+              for (const dev of findings.connectedDevices as string[]) {
+                text += `  • ${dev}\n`;
+              }
+            }
+            if (findings.lsusbNote) {
+              text += `\n⚠ ${findings.lsusbNote}\n`;
+            }
+            text += `\nUSB Storage Devices: ${findings.storageDeviceCount ?? 0}\n`;
+            if (Array.isArray(findings.storageDevices) && (findings.storageDevices as string[]).length > 0) {
+              for (const dev of findings.storageDevices as string[]) {
+                text += `  • ${dev}\n`;
+              }
+            }
+            text += `\nUSB Storage Kernel Module Loaded: ${findings.usbStorageModuleLoaded}\n`;
+            text += `USBGuard Installed: ${findings.usbguardInstalled ? "yes" : "no"}\n`;
+            text += `USBGuard Running: ${findings.usbguardRunning ? "yes" : "no"}\n`;
+            if (Array.isArray(findings.existingUdevRules) && (findings.existingUdevRules as string[]).length > 0) {
+              text += `\nExisting USB udev Rules:\n`;
+              for (const rule of findings.existingUdevRules as string[]) {
+                text += `  • ${rule}\n`;
+              }
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`audit_devices failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── block_storage ────────────────────────────────────────────
+        case "block_storage": {
+          try {
+            const method = params.block_method ?? "modprobe";
+            const results: Array<{ target: string; action: string; status: string }> = [];
+
+            // Privilege check
+            const privCheck = checkPrivileges();
+            if (!privCheck.ok) {
+              return { content: [createErrorContent(`Cannot block USB storage: ${privCheck.message}`)], isError: true };
+            }
+
+            if (method === "modprobe") {
+              // Blacklist usb-storage module via modprobe config
+              const modprobeConfPath = "/etc/modprobe.d/usb-storage-block.conf";
+              const modprobeContent = 'blacklist usb-storage\ninstall usb-storage /bin/true\n';
+
+              try {
+                secureWriteFileSync(modprobeConfPath, modprobeContent);
+                results.push({ target: modprobeConfPath, action: "Created modprobe blacklist config", status: "applied" });
+              } catch (writeErr: unknown) {
+                const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+                results.push({ target: modprobeConfPath, action: `Failed to write: ${writeMsg}`, status: "error" });
+              }
+
+              // Attempt to unload the module
+              const rmmodResult = await runUsbCommand("modprobe", ["-r", "usb-storage"], 10_000);
+              if (rmmodResult.exitCode === 0) {
+                results.push({ target: "usb-storage module", action: "Module unloaded successfully", status: "applied" });
+              } else {
+                results.push({ target: "usb-storage module", action: `Module unload: ${rmmodResult.stderr || "may not be loaded"}`, status: "info" });
+              }
+
+              // Verify module status after
+              const lsmodAfter = await runUsbCommand("lsmod", [], 10_000);
+              const moduleStillLoaded = lsmodAfter.stdout.split("\n").some((l) => l.startsWith("usb_storage"));
+
+              const output = {
+                action: "block_storage",
+                method: "modprobe",
+                filesCreated: [modprobeConfPath],
+                moduleLoadedAfter: moduleStillLoaded,
+                cisBenchmark: "CIS Benchmark 1.1.10 — Disable USB Storage",
+                results,
+              };
+
+              if (outputFormat === "json") {
+                return { content: [formatToolOutput(output)] };
+              }
+
+              let text = "USB Device Control — Block Storage (modprobe method)\n\n";
+              text += `CIS Reference: CIS Benchmark 1.1.10\n\n`;
+              for (const r of results) {
+                text += `  • ${r.target}: ${r.action} [${r.status}]\n`;
+              }
+              text += `\nUSB Storage Module Still Loaded: ${moduleStillLoaded ? "yes ⚠" : "no ✓"}\n`;
+
+              return { content: [createTextContent(text)] };
+            } else {
+              // udev method
+              const udevRulePath = "/etc/udev/rules.d/99-usb-storage-block.rules";
+              const udevContent = 'ACTION=="add", SUBSYSTEMS=="usb", DRIVERS=="usb-storage", ATTR{authorized}="0"\n';
+
+              try {
+                secureWriteFileSync(udevRulePath, udevContent);
+                results.push({ target: udevRulePath, action: "Created udev rule to block USB storage", status: "applied" });
+              } catch (writeErr: unknown) {
+                const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+                results.push({ target: udevRulePath, action: `Failed to write: ${writeMsg}`, status: "error" });
+              }
+
+              // Reload udev rules
+              const reloadResult = await runUsbCommand("udevadm", ["control", "--reload-rules"], 10_000);
+              if (reloadResult.exitCode === 0) {
+                results.push({ target: "udev", action: "Rules reloaded successfully", status: "applied" });
+              } else {
+                results.push({ target: "udev", action: `Reload failed: ${reloadResult.stderr}`, status: "error" });
+              }
+
+              const output = {
+                action: "block_storage",
+                method: "udev",
+                filesCreated: [udevRulePath],
+                cisBenchmark: "CIS Benchmark 1.1.10 — Disable USB Storage",
+                results,
+              };
+
+              if (outputFormat === "json") {
+                return { content: [formatToolOutput(output)] };
+              }
+
+              let text = "USB Device Control — Block Storage (udev method)\n\n";
+              text += `CIS Reference: CIS Benchmark 1.1.10\n\n`;
+              for (const r of results) {
+                text += `  • ${r.target}: ${r.action} [${r.status}]\n`;
+              }
+
+              return { content: [createTextContent(text)] };
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`block_storage failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── whitelist ────────────────────────────────────────────────
+        case "whitelist": {
+          try {
+            const whitelist = loadUsbWhitelist();
+
+            if (params.device_id) {
+              // Validate device_id format (vendor:product)
+              if (!/^[0-9a-fA-F]{4}:[0-9a-fA-F]{4}$/.test(params.device_id)) {
+                return { content: [createErrorContent("Invalid device_id format. Expected vendor:product format (e.g., 1234:5678)")], isError: true };
+              }
+
+              // Check for duplicate
+              const existing = whitelist.find((e) => e.device_id === params.device_id);
+              if (existing) {
+                const output = {
+                  action: "whitelist",
+                  status: "duplicate",
+                  message: `Device ${params.device_id} is already whitelisted`,
+                  device: existing,
+                  totalDevices: whitelist.length,
+                };
+                if (outputFormat === "json") {
+                  return { content: [formatToolOutput(output)] };
+                }
+                return { content: [createTextContent(`Device ${params.device_id} is already in the whitelist (added ${existing.added_date})`)] };
+              }
+
+              // Get description from lsusb
+              let description = "Unknown device";
+              const lsusbResult = await runUsbCommand("lsusb", [], 10_000);
+              if (lsusbResult.exitCode === 0) {
+                const vendorProduct = params.device_id.toLowerCase();
+                const matchLine = lsusbResult.stdout.split("\n").find(
+                  (l) => l.toLowerCase().includes(vendorProduct),
+                );
+                if (matchLine) {
+                  // Extract description after the ID
+                  const idIdx = matchLine.toLowerCase().indexOf(vendorProduct);
+                  if (idIdx >= 0) {
+                    description = matchLine.substring(idIdx + vendorProduct.length).trim() || description;
+                  }
+                }
+              }
+
+              const newEntry: UsbWhitelistEntry = {
+                device_id: params.device_id,
+                description,
+                added_date: new Date().toISOString(),
+              };
+
+              whitelist.push(newEntry);
+              saveUsbWhitelist(whitelist);
+
+              const output = {
+                action: "whitelist",
+                status: "added",
+                device: newEntry,
+                totalDevices: whitelist.length,
+              };
+
+              if (outputFormat === "json") {
+                return { content: [formatToolOutput(output)] };
+              }
+
+              let text = "USB Device Control — Whitelist\n\n";
+              text += `Added device: ${newEntry.device_id}\n`;
+              text += `Description: ${newEntry.description}\n`;
+              text += `Added: ${newEntry.added_date}\n`;
+              text += `Total whitelisted devices: ${whitelist.length}\n`;
+
+              return { content: [createTextContent(text)] };
+            } else {
+              // List current whitelist
+              const output = {
+                action: "whitelist",
+                status: "list",
+                totalDevices: whitelist.length,
+                devices: whitelist,
+              };
+
+              if (outputFormat === "json") {
+                return { content: [formatToolOutput(output)] };
+              }
+
+              let text = "USB Device Control — Whitelist\n\n";
+              if (whitelist.length === 0) {
+                text += "No devices in whitelist.\n";
+                text += `\nWhitelist file: ${USB_WHITELIST_PATH}\n`;
+                text += "Use device_id parameter to add devices (e.g., device_id: \"1234:5678\")\n";
+              } else {
+                text += `Total whitelisted devices: ${whitelist.length}\n\n`;
+                for (const entry of whitelist) {
+                  text += `  • ${entry.device_id} — ${entry.description} (added ${entry.added_date})\n`;
+                }
+              }
+
+              return { content: [createTextContent(text)] };
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`whitelist failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── monitor ──────────────────────────────────────────────────
+        case "monitor": {
+          try {
+            const events: Record<string, unknown> = {};
+
+            // Read dmesg for USB events
+            const dmesgResult = await runUsbCommand("dmesg", [], 15_000);
+            if (dmesgResult.exitCode === 0) {
+              const usbLines = dmesgResult.stdout.split("\n").filter((l) => l.toLowerCase().includes("usb"));
+              // Take last 50 lines to avoid overwhelming output
+              events.dmesgEvents = usbLines.slice(-50);
+              events.dmesgEventCount = usbLines.length;
+            } else {
+              events.dmesgEvents = [];
+              events.dmesgEventCount = 0;
+              events.dmesgError = dmesgResult.stderr;
+            }
+
+            // Check journalctl for USB events
+            const journalResult = await runUsbCommand(
+              "journalctl", ["-k", "--grep=usb", "--since=1 hour ago", "--no-pager"],
+              15_000,
+            );
+            if (journalResult.exitCode === 0) {
+              const journalLines = journalResult.stdout.trim().split("\n").filter((l) => l.trim().length > 0);
+              events.journalctlEvents = journalLines.slice(-50);
+              events.journalctlEventCount = journalLines.length;
+            } else {
+              events.journalctlEvents = [];
+              events.journalctlEventCount = 0;
+            }
+
+            // Check audit log for USB events
+            const auditResult = await runUsbCommand("grep", ["-i", "usb", "/var/log/audit/audit.log"], 10_000);
+            if (auditResult.exitCode === 0 && auditResult.stdout.trim().length > 0) {
+              const auditLines = auditResult.stdout.trim().split("\n");
+              events.auditEvents = auditLines.slice(-20);
+              events.auditEventCount = auditLines.length;
+            } else {
+              events.auditEvents = [];
+              events.auditEventCount = 0;
+            }
+
+            // List recently connected USB devices
+            const lsusbResult = await runUsbCommand("lsusb", [], 10_000);
+            if (lsusbResult.exitCode === 0 && lsusbResult.stdout.trim().length > 0) {
+              events.currentDevices = lsusbResult.stdout.trim().split("\n").filter((l) => l.trim().length > 0);
+            } else {
+              events.currentDevices = [];
+            }
+
+            const totalEvents = (events.dmesgEventCount as number ?? 0) +
+              (events.journalctlEventCount as number ?? 0) +
+              (events.auditEventCount as number ?? 0);
+
+            const output = {
+              action: "monitor",
+              totalUsbEvents: totalEvents,
+              ...events,
+            };
+
+            if (outputFormat === "json") {
+              return { content: [formatToolOutput(output)] };
+            }
+
+            let text = "USB Device Control — Monitor\n\n";
+            text += `Total USB Events Found: ${totalEvents}\n\n`;
+
+            text += `dmesg USB Events: ${events.dmesgEventCount}\n`;
+            if (Array.isArray(events.dmesgEvents) && events.dmesgEvents.length > 0) {
+              const recentDmesg = (events.dmesgEvents as string[]).slice(-10);
+              for (const line of recentDmesg) {
+                text += `  ${line}\n`;
+              }
+              if ((events.dmesgEventCount as number) > 10) {
+                text += `  ... and ${(events.dmesgEventCount as number) - 10} more\n`;
+              }
+            }
+
+            text += `\njournalctl USB Events (last hour): ${events.journalctlEventCount}\n`;
+            if (Array.isArray(events.journalctlEvents) && events.journalctlEvents.length > 0) {
+              const recentJournal = (events.journalctlEvents as string[]).slice(-10);
+              for (const line of recentJournal) {
+                text += `  ${line}\n`;
+              }
+            }
+
+            text += `\nAudit Log USB Events: ${events.auditEventCount}\n`;
+
+            if (Array.isArray(events.currentDevices) && events.currentDevices.length > 0) {
+              text += `\nCurrently Connected USB Devices:\n`;
+              for (const dev of events.currentDevices as string[]) {
+                text += `  • ${dev}\n`;
+              }
+            }
+
+            if (totalEvents === 0) {
+              text += "\nNo recent USB events found.\n";
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`monitor failed: ${msg}`)], isError: true };
+          }
+        }
+
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
+      }
+    },
   );
 }

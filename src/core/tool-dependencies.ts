@@ -464,6 +464,118 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
     requiredBinaries: [],
     optionalBinaries: ["ps", "ss", "systemctl", "iptables"],
   },
+
+  // ── Reporting Tools (1) ───────────────────────────────────────────────────
+  {
+    toolName: "report_export",
+    requiredBinaries: [],
+    optionalBinaries: ["lynis", "aide", "fail2ban-client", "iptables", "ss", "pandoc", "wkhtmltopdf"],
+  },
+
+  // ── DNS Security Tools (1) ────────────────────────────────────────────────
+  {
+    toolName: "dns_security",
+    requiredBinaries: [],
+    optionalBinaries: ["dig", "systemd-resolve", "resolvectl", "tcpdump", "cat", "grep"],
+  },
+
+  // ── Vulnerability Management Tools (1) ────────────────────────────────────
+  {
+    toolName: "vuln_manage",
+    requiredBinaries: ["nmap"],
+    optionalBinaries: ["nikto", "searchsploit"],
+  },
+
+  // ── Forensics Tools (1) ───────────────────────────────────────────────────
+  {
+    toolName: "ir_forensics",
+    requiredBinaries: [],
+    optionalBinaries: ["avml", "dd", "sha256sum", "tcpdump", "fdisk"],
+  },
+
+  // ── Process Security Tools (1) ────────────────────────────────────────────
+  {
+    toolName: "process_security",
+    requiredBinaries: ["ps"],
+    optionalBinaries: ["getpcaps", "capsh", "lsns", "ss"],
+  },
+
+  // ── Network Segmentation Tools (1) ────────────────────────────────────────
+  {
+    toolName: "network_segmentation_audit",
+    requiredBinaries: ["ip", "iptables"],
+    optionalBinaries: ["traceroute", "nmap", "bridge"],
+  },
+
+  // ── WAF Management Tools (1) ──────────────────────────────────────────────
+  {
+    toolName: "waf_manage",
+    requiredBinaries: [],
+    optionalBinaries: ["cat", "grep", "sed", "dpkg", "apache2ctl"],
+  },
+
+  // ── Threat Intelligence Tools (1) ─────────────────────────────────────────
+  {
+    toolName: "threat_intel",
+    requiredBinaries: ["curl"],
+    optionalBinaries: ["wget", "fail2ban-client", "iptables", "grep", "whois", "dig"],
+  },
+
+  // ── Auto-Remediation Tools (1) ────────────────────────────────────────────
+  {
+    toolName: "auto_remediate",
+    requiredBinaries: [],
+    optionalBinaries: ["sysctl", "iptables", "sed", "grep", "lynis"],
+  },
+
+  // ── Cloud Security Tools (1) ──────────────────────────────────────────────
+  {
+    toolName: "cloud_security",
+    requiredBinaries: ["curl"],
+    optionalBinaries: ["cat", "stat", "aws", "gsutil", "az", "cloud-init"],
+  },
+
+  // ── API Security Tools (1) ────────────────────────────────────────────────
+  {
+    toolName: "api_security",
+    requiredBinaries: ["curl"],
+    optionalBinaries: ["openssl", "ss"],
+  },
+
+  // ── Deception / Honeypot Tools (1) ────────────────────────────────────────
+  {
+    toolName: "honeypot_manage",
+    requiredBinaries: [],
+    optionalBinaries: ["ncat", "inotifywait", "iptables", "stat"],
+  },
+
+  // ── Wireless Security Tools (1) ───────────────────────────────────────────
+  {
+    toolName: "wireless_security",
+    requiredBinaries: [],
+    optionalBinaries: ["hciconfig", "bluetoothctl", "iw", "nmcli", "rfkill", "lsmod"],
+  },
+
+  // ── Certificate Lifecycle Tools (1) ───────────────────────────────────────
+  {
+    toolName: "certificate_lifecycle",
+    requiredBinaries: ["openssl"],
+    optionalBinaries: ["certbot", "find", "curl"],
+  },
+
+  // ── SIEM Integration Tools (1) ────────────────────────────────────────────
+  {
+    toolName: "siem_export",
+    requiredBinaries: [],
+    optionalBinaries: ["cat", "grep", "nc", "openssl", "logger", "filebeat"],
+  },
+
+  // ── USB Device Control Tools (1) ──────────────────────────────────────────
+  {
+    toolName: "usb_device_control",
+    requiredBinaries: [],
+    optionalBinaries: ["lsusb", "lsblk", "lsmod", "modprobe", "udevadm"],
+  },
 ];
 
 // ── Lookup helpers ───────────────────────────────────────────────────────────

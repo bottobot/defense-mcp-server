@@ -1,7 +1,9 @@
 /**
  * Incident response tools for Kali Defense MCP Server.
  *
- * Registers 1 tool: incident_response (actions: collect, ioc_scan, timeline).
+ * Registers 2 tools:
+ *   - incident_response (actions: collect, ioc_scan, timeline)
+ *   - ir_forensics (actions: memory_dump, disk_image, network_capture_forensic, evidence_bag, chain_of_custody)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -12,6 +14,10 @@ import {
   createTextContent,
   createErrorContent,
 } from "../core/parsers.js";
+import { spawnSafe } from "../core/spawn-safe.js";
+import { secureWriteFileSync } from "../core/secure-fs.js";
+import type { ChildProcess } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 
 // ── Suspicious port list for IOC scanning ──────────────────────────────────
 
@@ -21,6 +27,74 @@ const CRYPTO_MINER_NAMES = [
   "xmrig", "minerd", "minergate", "cpuminer", "cgminer",
   "bfgminer", "ethminer", "claymore", "nicehash", "kthreaddi",
 ];
+
+// ── Forensics constants ────────────────────────────────────────────────────
+
+const DEFAULT_FORENSICS_DIR = "/var/lib/kali-defense/forensics/";
+
+// ── Forensics helper ───────────────────────────────────────────────────────
+
+interface ForensicCommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
+ * Run a command via spawnSafe and collect output as a promise.
+ * Similar to the helper in reporting.ts — returns error info instead of throwing.
+ */
+async function runForensicCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 30_000,
+): Promise<ForensicCommandResult> {
+  return new Promise((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawnSafe(command, args);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resolve({ stdout: "", stderr: msg, exitCode: -1 });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let resolved = false;
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        child.kill("SIGTERM");
+        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
+      }
+    }, timeoutMs);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on("close", (code: number | null) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code ?? -1 });
+      }
+    });
+
+    child.on("error", (err: Error) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr: err.message, exitCode: -1 });
+      }
+    });
+  });
+}
 
 // ── Registration entry point ───────────────────────────────────────────────
 
@@ -762,5 +836,574 @@ export function registerIncidentResponseTools(server: McpServer): void {
           return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
+  );
+
+  // ── ir_forensics tool ──────────────────────────────────────────────────
+
+  server.tool(
+    "ir_forensics",
+    "Digital forensics: acquire memory dumps, create forensic disk images, capture network traffic, bag evidence, and manage chain-of-custody logs.",
+    {
+      action: z
+        .enum([
+          "memory_dump",
+          "disk_image",
+          "network_capture_forensic",
+          "evidence_bag",
+          "chain_of_custody",
+        ])
+        .describe(
+          "Action: memory_dump=acquire RAM, disk_image=forensic disk copy, network_capture_forensic=full packet capture, evidence_bag=bag+hash artifact, chain_of_custody=manage custody log",
+        ),
+      output_dir: z
+        .string()
+        .optional()
+        .default(DEFAULT_FORENSICS_DIR)
+        .describe("Directory to store forensic artifacts"),
+      case_id: z
+        .string()
+        .optional()
+        .describe("Case identifier for chain-of-custody tracking"),
+      device: z
+        .string()
+        .optional()
+        .describe("Device path for disk imaging (e.g. /dev/sda1)"),
+      interface: z
+        .string()
+        .optional()
+        .default("any")
+        .describe("Network interface for capture (default: any)"),
+      duration: z
+        .number()
+        .optional()
+        .default(60)
+        .describe("Capture duration in seconds (default 60, max 300)"),
+      evidence_path: z
+        .string()
+        .optional()
+        .describe("Path to evidence file (used with evidence_bag, chain_of_custody)"),
+      description: z
+        .string()
+        .optional()
+        .describe("Description of the evidence item"),
+      examiner: z
+        .string()
+        .optional()
+        .describe("Name of the forensic examiner"),
+      custody_action: z
+        .enum(["add", "view", "verify"])
+        .optional()
+        .default("view")
+        .describe("Chain-of-custody sub-action: add, view, or verify"),
+    },
+    async (params) => {
+      const { action } = params;
+
+      switch (action) {
+        // ── memory_dump ────────────────────────────────────────────────
+        case "memory_dump": {
+          const { output_dir } = params;
+          try {
+            // Create output directory
+            const mkdirResult = await runForensicCommand("mkdir", ["-p", output_dir]);
+            if (mkdirResult.exitCode !== 0) {
+              return {
+                content: [createErrorContent(`Failed to create output directory: ${mkdirResult.stderr}`)],
+                isError: true,
+              };
+            }
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const dumpPath = `${output_dir}/memory-dump-${timestamp}.raw`;
+
+            // Try avml first (preferred)
+            const avmlResult = await runForensicCommand("avml", [dumpPath], 120_000);
+
+            let toolUsed: string;
+            if (avmlResult.exitCode === 0) {
+              toolUsed = "avml";
+            } else {
+              // Fallback to dd from /proc/kcore
+              const ddResult = await runForensicCommand(
+                "dd",
+                ["if=/proc/kcore", `of=${dumpPath}`, "bs=1M", "status=progress"],
+                120_000,
+              );
+              if (ddResult.exitCode !== 0) {
+                return {
+                  content: [createErrorContent(`Memory dump failed: avml: ${avmlResult.stderr}; dd: ${ddResult.stderr}`)],
+                  isError: true,
+                };
+              }
+              toolUsed = "dd (fallback from /proc/kcore)";
+            }
+
+            // Calculate SHA-256 hash
+            const hashResult = await runForensicCommand("sha256sum", [dumpPath]);
+            const hash = hashResult.exitCode === 0
+              ? hashResult.stdout.trim().split(/\s+/)[0]
+              : "hash-calculation-failed";
+
+            // Get file size
+            const statResult = await runForensicCommand("stat", ["-c", "%s", dumpPath]);
+            const size = statResult.exitCode === 0 ? statResult.stdout.trim() : "unknown";
+
+            const lines = [
+              `=== Memory Dump Acquisition ===`,
+              `Tool Used: ${toolUsed}`,
+              `Dump Path: ${dumpPath}`,
+              `Size: ${size} bytes`,
+              `SHA-256: ${hash}`,
+              `Timestamp: ${new Date().toISOString()}`,
+            ];
+
+            return { content: [createTextContent(lines.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── disk_image ─────────────────────────────────────────────────
+        case "disk_image": {
+          const { output_dir, device } = params;
+          try {
+            if (!device) {
+              return {
+                content: [createErrorContent("device parameter is required for disk_image action")],
+                isError: true,
+              };
+            }
+
+            // Validate device path
+            if (!device.startsWith("/dev/")) {
+              return {
+                content: [createErrorContent(`Invalid device path: ${device}. Must start with /dev/`)],
+                isError: true,
+              };
+            }
+
+            // Block root device imaging
+            if (device === "/dev/sda" || device === "/dev/vda" || device === "/dev/nvme0n1" || device === "/dev/xvda") {
+              return {
+                content: [createErrorContent(`Refusing to image root device: ${device}. Specify a partition (e.g. /dev/sda1)`)],
+                isError: true,
+              };
+            }
+
+            // Create output directory
+            const mkdirResult = await runForensicCommand("mkdir", ["-p", output_dir]);
+            if (mkdirResult.exitCode !== 0) {
+              return {
+                content: [createErrorContent(`Failed to create output directory: ${mkdirResult.stderr}`)],
+                isError: true,
+              };
+            }
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const imagePath = `${output_dir}/disk-image-${timestamp}.raw`;
+
+            // Create forensic disk image
+            const ddResult = await runForensicCommand(
+              "dd",
+              [`if=${device}`, `of=${imagePath}`, "bs=4M", "conv=noerror,sync", "status=progress"],
+              600_000,
+            );
+
+            if (ddResult.exitCode !== 0) {
+              return {
+                content: [createErrorContent(`Disk imaging failed: ${ddResult.stderr}`)],
+                isError: true,
+              };
+            }
+
+            // Calculate SHA-256 hash
+            const hashResult = await runForensicCommand("sha256sum", [imagePath], 300_000);
+            const hash = hashResult.exitCode === 0
+              ? hashResult.stdout.trim().split(/\s+/)[0]
+              : "hash-calculation-failed";
+
+            // Get file size
+            const statResult = await runForensicCommand("stat", ["-c", "%s", imagePath]);
+            const size = statResult.exitCode === 0 ? statResult.stdout.trim() : "unknown";
+
+            // Capture partition info
+            const fdiskResult = await runForensicCommand("fdisk", ["-l", device]);
+            const partitionInfo = fdiskResult.exitCode === 0
+              ? fdiskResult.stdout.trim()
+              : `fdisk failed: ${fdiskResult.stderr}`;
+
+            const lines = [
+              `=== Forensic Disk Image ===`,
+              `Source Device: ${device}`,
+              `Image Path: ${imagePath}`,
+              `Size: ${size} bytes`,
+              `SHA-256: ${hash}`,
+              `Timestamp: ${new Date().toISOString()}`,
+              ``,
+              `── Partition Info ──`,
+              partitionInfo,
+            ];
+
+            return { content: [createTextContent(lines.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── network_capture_forensic ───────────────────────────────────
+        case "network_capture_forensic": {
+          const { output_dir, duration } = params;
+          const iface = params.interface ?? "any";
+          try {
+            // Cap duration at 300 seconds
+            const cappedDuration = Math.min(duration ?? 60, 300);
+
+            // Create output directory
+            const mkdirResult = await runForensicCommand("mkdir", ["-p", output_dir]);
+            if (mkdirResult.exitCode !== 0) {
+              return {
+                content: [createErrorContent(`Failed to create output directory: ${mkdirResult.stderr}`)],
+                isError: true,
+              };
+            }
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const capturePath = `${output_dir}/capture-${timestamp}.pcap`;
+            const startTime = new Date().toISOString();
+
+            // Full packet capture with tcpdump
+            const tcpdumpResult = await runForensicCommand(
+              "tcpdump",
+              [
+                "-i", iface,
+                "-s", "0",
+                "-w", capturePath,
+                "-c", "0",
+                "-G", String(cappedDuration),
+                "-W", "1",
+              ],
+              (cappedDuration + 10) * 1000,
+            );
+
+            const endTime = new Date().toISOString();
+
+            // Even if tcpdump exits non-zero (e.g. due to timeout/signal), the file may exist
+            // Calculate SHA-256 hash
+            const hashResult = await runForensicCommand("sha256sum", [capturePath]);
+            const hash = hashResult.exitCode === 0
+              ? hashResult.stdout.trim().split(/\s+/)[0]
+              : "hash-calculation-failed";
+
+            // Get file size
+            const statResult = await runForensicCommand("stat", ["-c", "%s", capturePath]);
+            const size = statResult.exitCode === 0 ? statResult.stdout.trim() : "unknown";
+
+            // Get packet count using tcpdump -r
+            const countResult = await runForensicCommand(
+              "tcpdump",
+              ["-r", capturePath, "--count"],
+              30_000,
+            );
+            // tcpdump --count outputs like "N packets" on stderr
+            const packetCountMatch = (countResult.stdout + countResult.stderr).match(/(\d+)\s+packet/);
+            const packetCount = packetCountMatch ? packetCountMatch[1] : "unknown";
+
+            const lines = [
+              `=== Forensic Network Capture ===`,
+              `Interface: ${iface}`,
+              `Capture Path: ${capturePath}`,
+              `Duration: ${cappedDuration}s`,
+              `Start Time: ${startTime}`,
+              `End Time: ${endTime}`,
+              `Packets Captured: ${packetCount}`,
+              `Size: ${size} bytes`,
+              `SHA-256: ${hash}`,
+            ];
+
+            return { content: [createTextContent(lines.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── evidence_bag ───────────────────────────────────────────────
+        case "evidence_bag": {
+          const { output_dir, case_id, evidence_path, description, examiner } = params;
+          try {
+            if (!evidence_path) {
+              return {
+                content: [createErrorContent("evidence_path parameter is required for evidence_bag action")],
+                isError: true,
+              };
+            }
+
+            const effectiveCaseId = case_id ?? "default";
+            const evidenceDir = `${output_dir}/${effectiveCaseId}/evidence`;
+
+            // Create evidence directory
+            const mkdirResult = await runForensicCommand("mkdir", ["-p", evidenceDir]);
+            if (mkdirResult.exitCode !== 0) {
+              return {
+                content: [createErrorContent(`Failed to create evidence directory: ${mkdirResult.stderr}`)],
+                isError: true,
+              };
+            }
+
+            // Copy file to evidence directory
+            const basename = evidence_path.split("/").pop() ?? "evidence";
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const destPath = `${evidenceDir}/${timestamp}-${basename}`;
+
+            const cpResult = await runForensicCommand("cp", ["-p", evidence_path, destPath]);
+            if (cpResult.exitCode !== 0) {
+              return {
+                content: [createErrorContent(`Failed to copy evidence: ${cpResult.stderr}`)],
+                isError: true,
+              };
+            }
+
+            // Calculate SHA-256 hash
+            const hashResult = await runForensicCommand("sha256sum", [destPath]);
+            const hash = hashResult.exitCode === 0
+              ? hashResult.stdout.trim().split(/\s+/)[0]
+              : "hash-calculation-failed";
+
+            // Get file size
+            const statResult = await runForensicCommand("stat", ["-c", "%s", destPath]);
+            const fileSize = statResult.exitCode === 0 ? statResult.stdout.trim() : "unknown";
+
+            // Create metadata sidecar file
+            const metadata = {
+              original_path: evidence_path,
+              hash,
+              timestamp: new Date().toISOString(),
+              case_id: effectiveCaseId,
+              description: description ?? "",
+              examiner: examiner ?? "unknown",
+              file_size: fileSize,
+            };
+
+            const metadataPath = `${destPath}.metadata.json`;
+            secureWriteFileSync(metadataPath, JSON.stringify(metadata, null, 2), "utf-8");
+
+            const lines = [
+              `=== Evidence Bagged ===`,
+              `Original Path: ${evidence_path}`,
+              `Evidence Path: ${destPath}`,
+              `Metadata: ${metadataPath}`,
+              `Case ID: ${effectiveCaseId}`,
+              `SHA-256: ${hash}`,
+              `Size: ${fileSize} bytes`,
+              `Description: ${description ?? "N/A"}`,
+              `Examiner: ${examiner ?? "unknown"}`,
+              `Timestamp: ${metadata.timestamp}`,
+            ];
+
+            return { content: [createTextContent(lines.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── chain_of_custody ───────────────────────────────────────────
+        case "chain_of_custody": {
+          const { output_dir, case_id, evidence_path, description, examiner, custody_action } = params;
+          try {
+            if (!case_id) {
+              return {
+                content: [createErrorContent("case_id parameter is required for chain_of_custody action")],
+                isError: true,
+              };
+            }
+
+            const caseDir = `${output_dir}/${case_id}`;
+            const custodyLogPath = `${caseDir}/custody-log.json`;
+
+            // Ensure case directory exists
+            const mkdirResult = await runForensicCommand("mkdir", ["-p", caseDir]);
+            if (mkdirResult.exitCode !== 0) {
+              return {
+                content: [createErrorContent(`Failed to create case directory: ${mkdirResult.stderr}`)],
+                isError: true,
+              };
+            }
+
+            const effectiveAction = custody_action ?? "view";
+
+            switch (effectiveAction) {
+              case "add": {
+                // Read existing log or create new
+                let custodyLog: Array<Record<string, unknown>> = [];
+                if (existsSync(custodyLogPath)) {
+                  try {
+                    const raw = readFileSync(custodyLogPath, "utf-8");
+                    custodyLog = JSON.parse(raw);
+                  } catch {
+                    custodyLog = [];
+                  }
+                }
+
+                // Calculate hash if evidence_path provided
+                let evidenceHash = "N/A";
+                if (evidence_path) {
+                  const hashResult = await runForensicCommand("sha256sum", [evidence_path]);
+                  evidenceHash = hashResult.exitCode === 0
+                    ? hashResult.stdout.trim().split(/\s+/)[0]
+                    : "hash-calculation-failed";
+                }
+
+                const entry = {
+                  timestamp: new Date().toISOString(),
+                  action: "collected",
+                  examiner: examiner ?? "unknown",
+                  description: description ?? "",
+                  evidence_hash: evidenceHash,
+                  evidence_path: evidence_path ?? "N/A",
+                };
+
+                custodyLog.push(entry);
+
+                // Write log using secureFsWrite
+                secureWriteFileSync(custodyLogPath, JSON.stringify(custodyLog, null, 2), "utf-8");
+
+                const lines = [
+                  `=== Chain of Custody — Entry Added ===`,
+                  `Case ID: ${case_id}`,
+                  `Log Path: ${custodyLogPath}`,
+                  `Entry #${custodyLog.length}:`,
+                  `  Timestamp: ${entry.timestamp}`,
+                  `  Action: ${entry.action}`,
+                  `  Examiner: ${entry.examiner}`,
+                  `  Description: ${entry.description}`,
+                  `  Evidence Hash: ${entry.evidence_hash}`,
+                  `  Evidence Path: ${entry.evidence_path}`,
+                  `Total Entries: ${custodyLog.length}`,
+                ];
+
+                return { content: [createTextContent(lines.join("\n"))] };
+              }
+
+              case "view": {
+                if (!existsSync(custodyLogPath)) {
+                  return {
+                    content: [createTextContent(`=== Chain of Custody — ${case_id} ===\nNo custody log found for case ${case_id}.\nLog path: ${custodyLogPath}`)],
+                  };
+                }
+
+                let custodyLog: Array<Record<string, unknown>> = [];
+                try {
+                  const raw = readFileSync(custodyLogPath, "utf-8");
+                  custodyLog = JSON.parse(raw);
+                } catch {
+                  return {
+                    content: [createErrorContent(`Failed to parse custody log at ${custodyLogPath}`)],
+                    isError: true,
+                  };
+                }
+
+                const lines = [
+                  `=== Chain of Custody — ${case_id} ===`,
+                  `Log Path: ${custodyLogPath}`,
+                  `Total Entries: ${custodyLog.length}`,
+                  ``,
+                ];
+
+                for (let i = 0; i < custodyLog.length; i++) {
+                  const entry = custodyLog[i];
+                  lines.push(`── Entry #${i + 1} ──`);
+                  lines.push(`  Timestamp: ${entry.timestamp ?? "N/A"}`);
+                  lines.push(`  Action: ${entry.action ?? "N/A"}`);
+                  lines.push(`  Examiner: ${entry.examiner ?? "N/A"}`);
+                  lines.push(`  Description: ${entry.description ?? "N/A"}`);
+                  lines.push(`  Evidence Hash: ${entry.evidence_hash ?? "N/A"}`);
+                  lines.push(`  Evidence Path: ${entry.evidence_path ?? "N/A"}`);
+                  lines.push(``);
+                }
+
+                return { content: [createTextContent(lines.join("\n"))] };
+              }
+
+              case "verify": {
+                if (!evidence_path) {
+                  return {
+                    content: [createErrorContent("evidence_path parameter is required for chain_of_custody verify action")],
+                    isError: true,
+                  };
+                }
+
+                if (!existsSync(custodyLogPath)) {
+                  return {
+                    content: [createErrorContent(`No custody log found for case ${case_id}`)],
+                    isError: true,
+                  };
+                }
+
+                let custodyLog: Array<Record<string, unknown>> = [];
+                try {
+                  const raw = readFileSync(custodyLogPath, "utf-8");
+                  custodyLog = JSON.parse(raw);
+                } catch {
+                  return {
+                    content: [createErrorContent(`Failed to parse custody log at ${custodyLogPath}`)],
+                    isError: true,
+                  };
+                }
+
+                // Re-hash evidence
+                const hashResult = await runForensicCommand("sha256sum", [evidence_path]);
+                const currentHash = hashResult.exitCode === 0
+                  ? hashResult.stdout.trim().split(/\s+/)[0]
+                  : null;
+
+                if (!currentHash) {
+                  return {
+                    content: [createErrorContent(`Failed to hash evidence file: ${hashResult.stderr}`)],
+                    isError: true,
+                  };
+                }
+
+                // Find matching entry in custody log
+                const matchingEntry = custodyLog.find(
+                  (entry) => entry.evidence_path === evidence_path || entry.evidence_hash === currentHash,
+                );
+
+                const recordedHash = matchingEntry?.evidence_hash as string | undefined;
+                const hashMatch = recordedHash === currentHash;
+
+                const lines = [
+                  `=== Chain of Custody — Verification ===`,
+                  `Case ID: ${case_id}`,
+                  `Evidence Path: ${evidence_path}`,
+                  `Current SHA-256: ${currentHash}`,
+                  `Recorded SHA-256: ${recordedHash ?? "NOT FOUND"}`,
+                  `Integrity: ${hashMatch ? "✓ VERIFIED — hashes match" : "✗ MISMATCH — evidence may be tampered"}`,
+                ];
+
+                return { content: [createTextContent(lines.join("\n"))] };
+              }
+
+              default:
+                return {
+                  content: [createErrorContent(`Unknown custody_action: ${effectiveAction}`)],
+                  isError: true,
+                };
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        default:
+          return {
+            content: [createErrorContent(`Unknown ir_forensics action: ${action}`)],
+            isError: true,
+          };
+      }
+    },
   );
 }
