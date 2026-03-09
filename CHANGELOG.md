@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.5.2] — 2026-03-09
+
+### Security
+- Upgraded `@modelcontextprotocol/sdk` from 1.12.3 to 1.27.1 (fixes 3 high-severity CVEs: ReDoS, cross-client data leak, DNS rebinding)
+- Removed accidental self-referential dependency
+- `npm audit` now reports 0 vulnerabilities
+
+---
+
 ## [0.5.1] — 2026-03-09
 
 ### Stable Release
