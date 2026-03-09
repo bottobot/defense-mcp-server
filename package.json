@@ -1,6 +1,6 @@
 {
   "name": "kali-defense-mcp-server",
-  "version": "0.5.0-beta.6",
+  "version": "0.5.1",
   "description": "Ultimate Kali Defensive Security & System Hardening MCP Server — 78 defensive security tools for firewall management, CIS benchmarks, intrusion detection, malware scanning, container security, zero-trust networking, and more.",
   "type": "module",
   "main": "build/index.js",

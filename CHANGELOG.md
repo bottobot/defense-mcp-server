@@ -6,11 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.5.0-beta.6] — 2026-03-08
+## [0.5.1] — 2026-03-09
 
-### Build Verification
-- **Clean build verified:** Fresh `npm run build` completes with zero TypeScript errors
-- **TypeScript error fix:** Resolved compilation issues for clean production build
+### Stable Release
+First stable release incorporating complete security audit remediation.
+
+- **78 security findings resolved** (12 Critical, 22 High, 29 Medium, 15 Low)
+- **1054 tests** across 49 test files (71.66% line coverage)
+- **78 defensive security tools** across 21 modules
+- Clean TypeScript build with zero errors
+- Pinned runtime dependencies for reproducible builds
+- Published to npm as stable release
+
+See [CHANGELOG for 0.5.0-beta.3 through 0.5.0-beta.6](CHANGELOG.md) for detailed remediation history.
 
 ---
 
