@@ -1,11 +1,11 @@
 # Defense MCP Server — Architecture Document
 
 > **Project**: `defense-mcp-server`
-> **Version**: 0.5.0
+> **Version**: 0.6.0
 > **Purpose**: Standalone MCP server for defensive security, system hardening, and blue team operations
-> **SDK**: `@modelcontextprotocol/sdk` v1.12.1 · `zod` v3.25.0
+> **SDK**: `@modelcontextprotocol/sdk` v1.27.1 · `zod` v3.25.76
 > **Transport**: StdioServerTransport
-> **Runtime**: Node.js ≥ 20 · TypeScript 5.8+
+> **Runtime**: Node.js ≥ 18 · TypeScript 5.9+
 
 ---
 
@@ -60,7 +60,12 @@ defense-mcp-server/
 ├── package.json
 ├── tsconfig.json
 ├── README.md
-├── ARCHITECTURE.md              ← this file
+├── docs/
+│   ├── ARCHITECTURE.md          ← this file
+│   ├── TOOLS-REFERENCE.md       ← complete tool reference
+│   ├── SAFEGUARDS.md            ← safeguards & rollback reference
+│   ├── SPECIFICATION.md         ← server specification
+│   └── STANDARDS.md             ← compliance standards mapping
 ├── src/
 │   ├── index.ts                 ← entry point: creates McpServer, wraps with pre-flight, connects stdio
 │   ├── core/
@@ -70,26 +75,60 @@ defense-mcp-server/
 │   │   ├── parsers.ts           ← output parsing (text, key-value, table, JSON, XML)
 │   │   ├── changelog.ts         ← audit trail with backup/restore
 │   │   ├── distro.ts            ← Linux distribution detection
+│   │   ├── distro-adapter.ts    ← cross-distro command adaptation
 │   │   ├── installer.ts         ← defensive tool auto-installation
 │   │   ├── policy-engine.ts     ← policy evaluation engine for compliance checks
-│   │   ├── tool-registry.ts     ← enhanced tool manifest registry (78 tools, sudo/capability declarations)
+│   │   ├── tool-registry.ts     ← tool manifest registry (94 tools, sudo/capability declarations)
 │   │   ├── privilege-manager.ts ← privilege detection (UID/EUID, Linux capabilities, sudo status)
-│   │   ├── auto-installer.ts   ← multi-package-manager auto-dependency resolution
+│   │   ├── auto-installer.ts    ← multi-package-manager auto-dependency resolution
 │   │   ├── preflight.ts         ← pre-flight orchestration engine with caching
-│   │   └── tool-wrapper.ts      ← Proxy-based middleware wrapping McpServer for pre-flight injection
+│   │   ├── tool-wrapper.ts      ← Proxy-based middleware wrapping McpServer for pre-flight injection
+│   │   ├── rate-limiter.ts      ← per-tool and global invocation rate limiting
+│   │   ├── logger.ts            ← structured JSON logging with security event level
+│   │   ├── encrypted-state.ts   ← AES-256-GCM encrypted state storage with PBKDF2 key derivation
+│   │   ├── secure-fs.ts         ← atomic file writes with audit trail and permission hardening
+│   │   ├── spawn-safe.ts        ← safe subprocess execution helper
+│   │   ├── sudo-session.ts      ← sudo credential management with Buffer zeroing
+│   │   ├── sudo-guard.ts        ← sudo access control
+│   │   ├── command-allowlist.ts ← 190-entry binary allowlist with integrity verification
+│   │   ├── backup-manager.ts    ← file backup manager with manifest tracking
+│   │   ├── rollback.ts          ← change rollback manager
+│   │   ├── safeguards.ts        ← running application detection and safety checks
+│   │   ├── dependency-validator.ts ← startup dependency validation
+│   │   └── tool-dependencies.ts ← per-tool binary dependency declarations
 │   └── tools/
-│       ├── firewall.ts          ← iptables, nftables, ufw, firewalld management
-│       ├── hardening.ts         ← sysctl, kernel params, services, file perms, GRUB, login.defs
+│       ├── firewall.ts          ← iptables, nftables, ufw management + USB device control
+│       ├── hardening.ts         ← sysctl, kernel params, services, file perms, GRUB, banners
 │       ├── ids.ts               ← AIDE, rkhunter, chkrootkit, file integrity monitoring
-│       ├── logging.ts           ← auditd, journalctl, fail2ban, logwatch, syslog analysis
-│       ├── network-defense.ts   ← snort/suricata, tcpdump, connection monitoring, port scan detection
+│       ├── logging.ts           ← auditd, journalctl, fail2ban, syslog analysis
+│       ├── network-defense.ts   ← tcpdump, connection monitoring, port scan detection, segmentation
 │       ├── compliance.ts        ← lynis, OpenSCAP, CIS benchmarks, compliance reporting
 │       ├── malware.ts           ← ClamAV, YARA, suspicious file analysis, quarantine
 │       ├── backup.ts            ← config backup, system state snapshot, restore, verification
 │       ├── access-control.ts    ← SSH hardening, sudo audit, PAM, user audit, password policy
-│       ├── encryption.ts        ← SSL/TLS audit, GPG, LUKS, file encryption, cert monitoring
+│       ├── encryption.ts        ← SSL/TLS audit, GPG, LUKS, cert lifecycle monitoring
 │       ├── container-security.ts ← Docker audit, AppArmor, SELinux, namespaces, container vuln scan
-│       └── meta.ts              ← check_defensive_tools, suggest_workflow, run_workflow, posture, history
+│       ├── meta.ts              ← check_tools, suggest_workflow, posture, history, auto-remediation
+│       ├── patch-management.ts  ← update auditing, integrity checks, CVE intelligence
+│       ├── secrets.ts           ← secrets scanning, env audit, SSH key sprawl, git history scan
+│       ├── incident-response.ts ← volatile data collection, IOC scan, timeline + forensics
+│       ├── sudo-management.ts   ← sudo elevation, session management
+│       ├── supply-chain-security.ts ← SBOM, cosign signing, SLSA verification
+│       ├── drift-detection.ts   ← configuration drift baselines and comparison
+│       ├── zero-trust-network.ts ← WireGuard VPN, mTLS certs, microsegmentation
+│       ├── ebpf-security.ts     ← Falco runtime security, eBPF program listing
+│       ├── app-hardening.ts     ← per-app hardening (nginx, sshd, postgresql, redis, etc.)
+│       ├── reporting.ts         ← consolidated security reports (Markdown/HTML/JSON/CSV)
+│       ├── dns-security.ts      ← DNSSEC, tunneling detection, domain blocklists, query log audit
+│       ├── vulnerability-management.ts ← nmap/nikto scanning, vuln tracking, risk prioritization
+│       ├── process-security.ts  ← process audit, Linux capabilities, namespace isolation, anomaly detection
+│       ├── waf.ts               ← ModSecurity audit/rules, OWASP CRS, rate limiting, WAF log analysis
+│       ├── threat-intel.ts      ← IP/hash/domain threat feeds, blocklist application
+│       ├── cloud-security.ts    ← AWS/GCP/Azure detection, IMDS security, IAM credential scanning
+│       ├── api-security.ts      ← API discovery, auth auditing, rate-limit testing, CORS checking
+│       ├── deception.ts         ← canary tokens, honeyport listeners, trigger monitoring
+│       ├── wireless-security.ts ← Bluetooth/WiFi audit, rogue AP detection, interface disabling
+│       └── siem-integration.ts  ← rsyslog/Filebeat forwarding, log audit, connectivity testing
 └── build/                       ← compiled JS output (tsc)
 ```
 
@@ -104,7 +143,7 @@ graph TB
     end
 
     subgraph Server_Core
-        MCP[McpServer - defense-mcp-server v0.5.0]
+        MCP[McpServer - defense-mcp-server v0.6.0]
     end
 
     subgraph Core_Modules
@@ -116,6 +155,8 @@ graph TB
         DST[distro.ts - distro detection]
         INS[installer.ts - tool auto-install]
         POL[policy-engine.ts - compliance policies]
+        RL[rate-limiter.ts - rate limiting]
+        LOG2[logger.ts - structured JSON logging]
     end
 
     subgraph Tool_Modules
@@ -123,23 +164,48 @@ graph TB
         HD[hardening.ts - 8 tools]
         IDS[ids.ts - 3 tools]
         LOG[logging.ts - 4 tools]
-        ND[network-defense.ts - 3 tools]
+        ND[network-defense.ts - 4 tools]
         CMP[compliance.ts - 7 tools]
         MAL[malware.ts - 4 tools]
         BKP[backup.ts - 1 tool]
         ACC[access-control.ts - 6 tools]
-        ENC[encryption.ts - 4 tools]
+        ENC[encryption.ts - 5 tools]
         CTR[container-security.ts - 6 tools]
-        META[meta.ts - 5 tools]
+        META[meta.ts - 6 tools]
+        PM[patch-management.ts - 5 tools]
+        SEC[secrets.ts - 4 tools]
+        IR[incident-response.ts - 2 tools]
+        SUDO[sudo-management.ts - 6 tools]
+        SC[supply-chain-security.ts - 1 tool]
+        DD[drift-detection.ts - 1 tool]
+        ZT[zero-trust-network.ts - 1 tool]
+        EBPF[ebpf-security.ts - 2 tools]
+        APP[app-hardening.ts - 1 tool]
+        REP[reporting.ts - 1 tool]
+        DNS[dns-security.ts - 1 tool]
+        VM[vulnerability-management.ts - 1 tool]
+        PS[process-security.ts - 1 tool]
+        WAF[waf.ts - 1 tool]
+        TI[threat-intel.ts - 1 tool]
+        CS[cloud-security.ts - 1 tool]
+        API[api-security.ts - 1 tool]
+        DEC[deception.ts - 1 tool]
+        WS[wireless-security.ts - 1 tool]
+        SIEM[siem-integration.ts - 1 tool]
     end
 
     STDIO <--> MCP
     MCP --> FW & HD & IDS & LOG & ND & CMP & MAL & BKP & ACC & ENC & CTR & META
+    MCP --> PM & SEC & IR & SUDO & SC & DD & ZT & EBPF & APP
+    MCP --> REP & DNS & VM & PS & WAF & TI & CS & API & DEC & WS & SIEM
     FW & HD & IDS & LOG & ND & CMP & MAL & BKP & ACC & ENC & CTR & META --> EXE & SAN & PAR & CHL
+    PM & SEC & IR & SC & DD & ZT & EBPF & APP --> EXE & SAN & PAR & CHL
+    REP & DNS & VM & PS & WAF & TI & CS & API & DEC & WS & SIEM --> EXE & SAN & PAR & CHL
     EXE --> CFG
     EXE --> DST
     INS --> DST
     CMP --> POL
+    EXE --> RL
 ```
 
 ---
@@ -152,7 +218,7 @@ The pre-flight validation system is a transparent middleware layer that sits bet
 
 | Module | File | Responsibility |
 |--------|------|----------------|
-| **Tool Registry** | [`tool-registry.ts`](src/core/tool-registry.ts) | Enhanced manifest registry for all 78 tools. Each `ToolManifest` declares required/optional binaries, Python modules, npm packages, system libraries, required files, sudo level (`never`/`always`/`conditional`), Linux capabilities, and category metadata. Singleton with O(1) lookup by tool name. |
+| **Tool Registry** | [`tool-registry.ts`](src/core/tool-registry.ts) | Enhanced manifest registry for all 94 tools. Each `ToolManifest` declares required/optional binaries, Python modules, npm packages, system libraries, required files, sudo level (`never`/`always`/`conditional`), Linux capabilities, and category metadata. Singleton with O(1) lookup by tool name. |
 | **Privilege Manager** | [`privilege-manager.ts`](src/core/privilege-manager.ts) | Detects current privilege level by querying UID/EUID, parsing Linux capabilities from `/proc/self/status` CapEff bitmask (41 capability names mapped), testing passwordless sudo via `sudo -n true`, checking `SudoSession` cached credentials, and reading group memberships via `id -Gn`. Results cached for 30 seconds. |
 | **Auto-Installer** | [`auto-installer.ts`](src/core/auto-installer.ts) | Multi-package-manager dependency resolver supporting 8 package managers: apt, dnf, yum, pacman, apk, zypper, brew, pip, and npm. Resolves distro-specific package names from the `DEFENSIVE_TOOLS` catalog. Tries user-site installs before sudo. Verifies installation after each attempt. |
 | **Pre-flight Engine** | [`preflight.ts`](src/core/preflight.ts) | Orchestration engine that runs the full validation pipeline: manifest resolution → dependency checking → auto-installation → privilege validation → pass/fail determination. Returns a structured `PreflightResult` with human-readable summaries. Results cached for 60 seconds (passing results only). |
@@ -1653,42 +1719,29 @@ All configuration is via environment variables with defensive defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEFENSE_TIMEOUT_DEFAULT` | `120` (seconds) | Default command timeout |
-| `DEFENSE_MAX_OUTPUT_SIZE` | `10485760` (10MB) | Max stdout/stderr buffer |
-| `DEFENSE_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
-| `DEFENSE_RATE_LIMIT` | `0` | Max executions per minute (0=unlimited) |
-| `DEFENSE_TOOL_PATH_PREFIX` | `""` | Prefix for tool binary paths |
-| `DEFENSE_TIMEOUT_<TOOL>` | — | Per-tool timeout override (e.g., `DEFENSE_TIMEOUT_LYNIS=300`) |
+| `KALI_DEFENSE_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
 
 ### Filesystem Safety
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log,/etc` | Allowed filesystem directories |
-| `DEFENSE_PROTECTED_PATHS` | `/boot,/usr/lib/systemd` | Paths that must never be modified |
+| `KALI_DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log` | Allowed filesystem directories |
 
 ### Defensive OPSec
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEFOPSEC_DRY_RUN` | `true` | Dry-run mode — no actual changes unless `false` |
-| `DEFOPSEC_CHANGELOG_PATH` | `~/.kali-defense/changelog.json` | Changelog file location |
-| `DEFOPSEC_BACKUP_DIR` | `~/.kali-defense/backups` | Backup directory |
-| `DEFOPSEC_AUTO_INSTALL` | `false` | Auto-install missing tools |
-| `DEFOPSEC_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
+| `KALI_DEFENSE_DRY_RUN` | `true` | Dry-run mode — no actual changes unless `false` |
+| `KALI_DEFENSE_AUTO_INSTALL` | `true` | Auto-install missing tools via package manager |
+| `KALI_DEFENSE_BACKUP_ENABLED` | `true` | Auto-backup before system changes |
+| `KALI_DEFENSE_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
 
-### Policy & Compliance
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DEFENSE_POLICY_DIR` | `~/.kali-defense/policies` | Custom policy files directory |
-| `DEFENSE_COMPLIANCE_PROFILE` | `cis-level1` | Default compliance profile |
-
-### Quarantine
+### Pre-flight Validation
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEFENSE_QUARANTINE_DIR` | `~/.kali-defense/quarantine` | Malware quarantine directory |
+| `KALI_DEFENSE_PREFLIGHT` | `true` | Enable pre-flight dependency checks |
+| `KALI_DEFENSE_PREFLIGHT_BANNERS` | `true` | Show pre-flight status banners in tool output |
 
 ---
 
@@ -1998,19 +2051,19 @@ registerBackupTools(server);            // 1 tool
 registerAccessControlTools(server);     // 6 tools
 registerEncryptionTools(server);        // 4 tools
 registerContainerSecurityTools(server); // 6 tools
-registerMetaTools(server);              // 5 tools
+registerMetaTools(server);              // 6 tools
 // + patch-management, secrets, incident-response, supply-chain,
-//   drift-detection, zero-trust, ebpf, app-hardening, sudo-management
-                                        // TOTAL: 78 tools across 21 modules
+//   drift-detection, zero-trust, ebpf, app-hardening, sudo-management,
+//   reporting, dns-security, vulnerability-management, process-security,
+//   waf, threat-intel, cloud-security, api-security, deception,
+//   wireless-security, siem-integration
+                                        // TOTAL: 94 tools across 32 modules
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Defense MCP Server v0.5.0 running on stdio");
-  console.error(
-    "Registered: firewall, hardening, ids, logging, network-defense, " +
-    "compliance, malware, backup, access-control, encryption, container-security, meta"
-  );
+  console.error("Defense MCP Server v0.6.0 running on stdio");
+  console.error("Registered 32 tool modules with ~94 defensive security tools");
 }
 
 main().catch((err) => {
@@ -2024,8 +2077,8 @@ main().catch((err) => {
 ```json
 {
   "name": "defense-mcp-server",
-  "version": "0.5.0",
-  "description": "Defensive security, system hardening, and blue team operations MCP server",
+  "version": "0.6.0",
+  "description": "Defense MCP Server — 94 defensive security tools for system hardening and threat detection",
   "type": "module",
   "main": "build/index.js",
   "scripts": {
@@ -2034,13 +2087,14 @@ main().catch((err) => {
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "zod": "^3.25.0"
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "zod": "3.25.76"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "tsx": "^4.19.4",
-    "@types/node": "^22.15.0"
+    "typescript": "~5.9.3",
+    "tsx": "~4.21.0",
+    "@types/node": "~22.19.11",
+    "vitest": "~4.0.18"
   }
 }
 ```
@@ -2050,24 +2104,35 @@ main().catch((err) => {
 | Module | File | Tools |
 |--------|------|:-----:|
 | Firewall Management | `firewall.ts` | 5 |
-| System Hardening | `hardening.ts` | 8 |
+| System Hardening | `hardening.ts` | 9 |
 | Intrusion Detection | `ids.ts` | 3 |
 | Log Analysis & Monitoring | `logging.ts` | 4 |
-| Network Defense | `network-defense.ts` | 3 |
+| Network Defense | `network-defense.ts` | 4 |
 | Compliance & Benchmarking | `compliance.ts` | 7 |
 | Malware Analysis | `malware.ts` | 4 |
 | Backup & Recovery | `backup.ts` | 1 |
 | Access Control | `access-control.ts` | 6 |
-| Encryption & PKI | `encryption.ts` | 4 |
+| Encryption & PKI | `encryption.ts` | 5 |
 | Container & MAC Security | `container-security.ts` | 6 |
-| Meta Tools | `meta.ts` | 5 |
+| Meta Tools | `meta.ts` | 6 |
 | Patch Management | `patch-management.ts` | 5 |
 | Secrets Management | `secrets.ts` | 4 |
-| Incident Response | `incident-response.ts` | 1 |
+| Incident Response & Forensics | `incident-response.ts` | 2 |
 | Supply Chain Security | `supply-chain-security.ts` | 1 |
 | Drift Detection | `drift-detection.ts` | 1 |
 | Zero-Trust Network | `zero-trust-network.ts` | 1 |
 | eBPF Security | `ebpf-security.ts` | 2 |
 | App Hardening | `app-hardening.ts` | 1 |
 | Sudo Management | `sudo-management.ts` | 6 |
-| **Total** | **21 modules** | **78** |
+| Reporting | `reporting.ts` | 1 |
+| DNS Security | `dns-security.ts` | 1 |
+| Vulnerability Management | `vulnerability-management.ts` | 1 |
+| Process Security | `process-security.ts` | 1 |
+| WAF Management | `waf.ts` | 1 |
+| Threat Intelligence | `threat-intel.ts` | 1 |
+| Cloud Security | `cloud-security.ts` | 1 |
+| API Security | `api-security.ts` | 1 |
+| Deception / Honeypots | `deception.ts` | 1 |
+| Wireless Security | `wireless-security.ts` | 1 |
+| SIEM Integration | `siem-integration.ts` | 1 |
+| **Total** | **32 modules** | **94** |

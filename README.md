@@ -1,17 +1,17 @@
 # Defense MCP Server
 
-A Model Context Protocol (MCP) server that gives AI assistants access to 78 defensive security tools on Kali Linux. Connect it to Claude Desktop, Cursor, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
+A Model Context Protocol (MCP) server that gives AI assistants access to **94 defensive security tools** on Linux. Connect it to Claude Desktop, Cursor, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
 
 ## What It Does
 
 This server exposes Linux security tools as MCP tools that an AI assistant can invoke on your behalf. Instead of memorizing command syntax for dozens of security utilities, you describe what you want in plain English and the assistant calls the right tool with the right parameters.
 
-The 78 tools are organized into 21 modules:
+The 94 tools are organized into 32 modules:
 
 | Module | What It Does |
 |--------|-------------|
 | **Firewall** | Manage iptables, nftables, and UFW rules |
-| **Hardening** | Apply sysctl settings, file permissions, kernel security |
+| **Hardening** | Apply sysctl settings, file permissions, kernel security, USB device control |
 | **Compliance** | Run CIS benchmarks, HIPAA/SOC2/ISO27001 checks |
 | **Patch Management** | Check for updates, apply patches, track CVEs |
 | **Access Control** | Configure SSH, PAM, user account policies |
@@ -19,18 +19,32 @@ The 78 tools are organized into 21 modules:
 | **IDS** | Configure AIDE, Falco, rootkit detection |
 | **Logging** | Set up auditd rules, log rotation, fail2ban |
 | **Encryption** | Manage TLS certificates, LUKS volumes, GPG keys |
+| **Certificate Lifecycle** | Inventory certs, check renewal, audit CA trust store, OCSP, CT logs |
 | **Backup** | Create and restore system state snapshots |
 | **Container Security** | AppArmor profiles, seccomp policies, image scanning |
 | **Network Defense** | Packet capture, connection monitoring, port scanning |
+| **Network Segmentation** | Map zones, verify isolation, test paths, audit VLANs |
 | **Secrets** | Scan for leaked credentials, audit SSH keys |
-| **Incident Response** | Collect forensic evidence, timeline analysis |
+| **Incident Response** | Collect volatile evidence, IOC scan, filesystem timeline |
+| **Forensics** | Memory dumps, disk imaging, evidence chain of custody |
 | **eBPF Security** | Deploy Falco rules, list eBPF programs |
 | **Drift Detection** | Track configuration changes against baselines |
 | **Supply Chain** | SBOM generation, package integrity verification |
 | **Zero Trust Network** | WireGuard tunnels, mTLS, microsegmentation |
 | **App Hardening** | Harden Apache, Nginx, MySQL, PostgreSQL, Docker |
 | **Sudo Management** | Manage sudo elevation, session tracking |
-| **Meta/Workflow** | Security posture assessment, defense workflows |
+| **Meta/Workflow** | Security posture assessment, defense workflows, auto-remediation |
+| **Reporting** | Generate consolidated security reports (Markdown/HTML/JSON/CSV) |
+| **DNS Security** | DNSSEC validation, tunneling detection, domain blocklists, query log analysis |
+| **Vulnerability Management** | nmap/nikto scanning, vulnerability lifecycle tracking, risk prioritization |
+| **Process Security** | Capability auditing, namespace isolation, anomaly detection |
+| **WAF Management** | ModSecurity audit/rules, OWASP CRS deployment, rate limiting |
+| **Threat Intelligence** | IP/hash/domain checks against feeds, blocklist application |
+| **Cloud Security** | AWS/GCP/Azure detection, IMDS security, IAM credential scanning |
+| **API Security** | Local API discovery, auth auditing, rate-limit testing, CORS checking |
+| **Deception/Honeypots** | Canary token deployment, honeyport listeners, trigger monitoring |
+| **Wireless Security** | Bluetooth/WiFi auditing, rogue AP detection, interface disabling |
+| **SIEM Integration** | rsyslog/Filebeat configuration, log forwarding audit, connectivity testing |
 
 Every tool runs with safety guardrails:
 - **Dry-run by default** — tools preview what they would do before making changes
@@ -45,7 +59,7 @@ You don't need to pre-install every security tool. The server automatically dete
 
 **How it works:**
 
-1. Each tool declares which system binaries it requires (e.g., `firewall_status` needs `iptables` or `ufw`)
+1. Each tool declares which system binaries it requires (e.g., `firewall_iptables` needs `iptables` or `ufw`)
 2. Before executing a tool, the server checks if the required binary is installed
 3. If it's missing, the server installs it using your system's package manager (`apt` on Kali/Debian, `dnf` on RHEL, `pacman` on Arch)
 4. The tool then runs normally
@@ -61,20 +75,28 @@ You don't need to pre-install every security tool. The server automatically dete
 
 To disable auto-installation entirely, run with:
 ```bash
-KALI_DEFENSE_AUTO_INSTALL=false node dist/index.js
+KALI_DEFENSE_AUTO_INSTALL=false node build/index.js
 ```
 
 ## Requirements
 
-- **Kali Linux** (or Debian-based Linux with security tools installed)
-- **Node.js 20+**
+- **Linux** (Kali, Debian, Ubuntu, RHEL, Arch, or any systemd-based distro)
+- **Node.js 18+**
 - **npm 9+**
 
 ## Installation
 
+### Option A: npm (recommended)
+
+```bash
+npm install -g defense-mcp-server
+```
+
+### Option B: Clone and build
+
 1. Clone the repository:
    ```bash
-   git clone https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server.git
+   git clone https://github.com/bottobot/defense-mcp-server.git
    cd defense-mcp-server
    ```
 
@@ -92,12 +114,24 @@ KALI_DEFENSE_AUTO_INSTALL=false node dist/index.js
 
 Add this to your Claude Desktop configuration file (`~/.config/claude/claude_desktop_config.json` on Linux):
 
+**If installed globally via npm:**
+```json
+{
+  "mcpServers": {
+    "defense-mcp-server": {
+      "command": "defense-mcp-server"
+    }
+  }
+}
+```
+
+**If cloned and built locally:**
 ```json
 {
   "mcpServers": {
     "defense-mcp-server": {
       "command": "node",
-      "args": ["/path/to/defense-mcp-server/dist/index.js"]
+      "args": ["/path/to/defense-mcp-server/build/index.js"]
     }
   }
 }
@@ -112,22 +146,36 @@ Restart Claude Desktop. The server will appear in the MCP tools panel.
 Any MCP client that supports stdio transport can connect. The server communicates over stdin/stdout using the MCP protocol. Launch it with:
 
 ```bash
-node dist/index.js
+node build/index.js
 ```
 
 ## Usage Examples
 
 Once connected, talk to your AI assistant naturally:
 
-- **"Check my firewall status"** → calls `firewall_status`
-- **"Harden SSH to disable root login and password auth"** → calls `access_ssh` with appropriate settings
+- **"Check my firewall status"** → calls `firewall_iptables` with `action: list`
+- **"Harden SSH to disable root login and password auth"** → calls `access_ssh` with harden action and appropriate settings
 - **"Run a CIS benchmark on this system"** → calls `compliance_check` with CIS framework
-- **"Scan /var/www for malware"** → calls `malware_scan` on the specified path
-- **"Show me what patches are available"** → calls `patch_check`
-- **"Create a backup before I make changes"** → calls `backup_state_snapshot`
+- **"Scan /var/www for malware"** → calls `malware_clamav` on the specified path
+- **"Show me what patches are available"** → calls `patch_update_audit`
+- **"Create a backup before I make changes"** → calls `backup` with state action
 - **"Set up fail2ban for SSH"** → calls `log_fail2ban` to configure jail
+- **"Check if any cloud credentials are exposed"** → calls `cloud_security` with `check_iam_creds`
+- **"Detect rogue access points on the network"** → calls `wireless_security` with `rogue_ap_detect`
+- **"Generate a security report"** → calls `report_export` with generate action
 
 The assistant handles parameter construction, error interpretation, and follow-up actions automatically.
+
+## Sudo Elevation
+
+Many tools require elevated privileges. The server provides a secure sudo management system:
+
+- **`sudo_elevate`** — provide your password once; it's stored in a zeroable Buffer (never logged)
+- **`sudo_elevate_gui`** — use a native GUI dialog (zenity/kdialog) so the password is never visible to the AI
+- **`sudo_status`** — check if the session is currently elevated
+- **`sudo_drop`** — immediately zero the cached password and drop elevation
+- **`sudo_extend`** — extend the session timeout without re-entering the password
+- **`preflight_batch_check`** — check multiple tools' sudo requirements before running them
 
 ## Configuration
 
@@ -141,10 +189,12 @@ Configuration is via environment variables. All have secure defaults:
 | `KALI_DEFENSE_LOG_LEVEL` | `info` | Log verbosity (debug/info/warn/error) |
 | `KALI_DEFENSE_BACKUP_ENABLED` | `true` | Auto-backup before system changes |
 | `KALI_DEFENSE_AUTO_INSTALL` | `true` | Auto-install missing tool dependencies |
+| `KALI_DEFENSE_PREFLIGHT` | `true` | Enable pre-flight dependency checks |
+| `KALI_DEFENSE_PREFLIGHT_BANNERS` | `true` | Show pre-flight status in tool output |
 
 To apply changes for real (not just preview), set:
 ```bash
-KALI_DEFENSE_DRY_RUN=false node dist/index.js
+KALI_DEFENSE_DRY_RUN=false node build/index.js
 ```
 
 ## Security
@@ -152,11 +202,13 @@ KALI_DEFENSE_DRY_RUN=false node dist/index.js
 This server is designed to be safe by default:
 
 - Commands execute with `shell: false` — no shell interpretation
-- All binaries resolved against a 153-entry allowlist at startup
+- All binaries resolved against a 190-entry allowlist at startup
 - Input validated with Zod schemas before execution
 - Passwords handled as Buffers (zeroed after use, never logged)
 - Rate limited to prevent abuse (30/tool/min, 100 global/min)
 - All file writes go through secure-fs with audit trail
+- Encrypted state storage (AES-256-GCM) for sensitive runtime data
+- Atomic file writes (write-to-temp-then-rename) to prevent corruption
 
 For the full security architecture, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -167,14 +219,23 @@ For the full security architecture, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 npm test
 
 # Run with coverage
-npm run test -- --coverage
+npm run test:coverage
 
 # Type check
 npm run build:verify
 
 # Security lint
 npm run lint:security
+
+# Security audit
+npm run audit:security
 ```
+
+## Test Coverage
+
+- **1,801+ tests** across 60+ test files
+- Every source module (core + tools) has a corresponding test file
+- Coverage enforced in CI pipeline
 
 ## License
 

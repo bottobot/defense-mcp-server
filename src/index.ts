@@ -293,7 +293,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`Defense MCP Server v${VERSION} running on stdio`);
-  console.error(`Registered ${registered} of ${registered + failed} tool modules with ~78 defensive security tools${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`);
+  console.error(`Registered ${registered} of ${registered + failed} tool modules with ~94 defensive security tools${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`);
   console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "defense-mcp-server",
   "version": "0.6.0",
-  "description": "Defense MCP Server — 78 defensive security tools for system hardening and threat detection",
+  "description": "Defense MCP Server — 94 defensive security tools for system hardening and threat detection",
   "type": "module",
   "main": "build/index.js",
   "bin": {
@@ -56,12 +56,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server.git"
+    "url": "git+https://github.com/bottobot/defense-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server/issues"
+    "url": "https://github.com/bottobot/defense-mcp-server/issues"
   },
-  "homepage": "https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server#readme",
+  "homepage": "https://github.com/bottobot/defense-mcp-server#readme",
   "engines": {
     "node": ">=18.0.0"
   },

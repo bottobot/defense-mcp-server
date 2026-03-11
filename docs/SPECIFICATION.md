@@ -5,13 +5,13 @@
 | Field | Value |
 |-------|-------|
 | **Name** | defense-mcp-server |
-| **Version** | 0.5.0 |
-| **Language** | TypeScript 5.8+ |
+| **Version** | 0.6.0 |
+| **Language** | TypeScript 5.9+ |
 | **Target** | ES2022 |
 | **Module System** | Node16 (ESM with `.js` extensions in imports) |
-| **Runtime** | Node.js ≥ 18 (recommended ≥ 20) |
-| **Framework** | `@modelcontextprotocol/sdk` ~1.12.1 |
-| **Validation** | `zod` ~3.25.0 |
+| **Runtime** | Node.js ≥ 18 |
+| **Framework** | `@modelcontextprotocol/sdk` 1.27.1 |
+| **Validation** | `zod` 3.25.76 |
 | **Runtime Dependencies** | 2 (`@modelcontextprotocol/sdk`, `zod`) |
 | **Transport** | stdio (StdioServerTransport) |
 | **OS** | Linux only |
@@ -22,7 +22,7 @@
 
 ## 1. Overview
 
-The defense-mcp-server is a Model Context Protocol (MCP) server that exposes **78 defensive security tools** across **21 modules**, backed by **26 core modules**. It enables AI agents (Claude, Roo Code, etc.) to perform system hardening, compliance auditing, intrusion detection, malware scanning, firewall management, container security, secrets scanning, drift detection, zero-trust networking, eBPF security monitoring, and incident response on Linux systems.
+The defense-mcp-server is a Model Context Protocol (MCP) server that exposes **94 defensive security tools** across **32 modules**, backed by **26 core modules**. It enables AI agents (Claude, Roo Code, etc.) to perform system hardening, compliance auditing, intrusion detection, malware scanning, firewall management, container security, secrets scanning, drift detection, zero-trust networking, eBPF security monitoring, cloud security, API security, threat intelligence, WAF management, wireless security, and incident response on Linux systems.
 
 The server runs as a child process communicating over stdio JSON-RPC. It wraps Linux security binaries (iptables, lynis, aide, rkhunter, ClamAV, etc.) with input validation, command allowlist enforcement, privilege management, rate limiting, structured logging, and audit trails.
 
@@ -78,7 +78,7 @@ src/
 │   ├── tool-dependencies.ts    — Tool-to-binary dependency mappings
 │   ├── rate-limiter.ts         — Sliding-window rate limiter (per-tool + global)
 │   └── logger.ts               — Structured JSON logging with security level
-└── tools/                      — 21 tool modules
+└── tools/                      — 32 tool modules
     ├── access-control.ts       — 6 tools: SSH, sudo, users, passwords, PAM, shell
     ├── app-hardening.ts        — 1 tool: audit/recommend/firewall/systemd
     ├── backup.ts               — 1 tool: unified backup (config/state/restore/verify/list)
@@ -502,7 +502,7 @@ export function registerXxxTools(server: McpServer): void {
 }
 ```
 
-**Action parameter pattern**: Most tools use a single `action` enum parameter to consolidate related operations. This pattern reduced the tool count from 157 (pre-v0.5.0) to 78.
+**Action parameter pattern**: Most tools use a single `action` enum parameter to consolidate related operations. This pattern reduced the tool count from 157 (pre-v0.5.0) to 78, then grew to 94 with v0.6.0 additions.
 
 ### 5.2 Tool Naming Convention
 
@@ -532,31 +532,42 @@ All tools use a `prefix_subject` snake_case pattern. Prefixes match module names
 | `ebpf_` | eBPF Security | `ebpf_list_programs`, `ebpf_falco` |
 | `app_` | App Hardening | `app_harden` |
 
-### 5.3 Tool Modules (21 files, 78 tools)
+### 5.3 Tool Modules (32 files, 94 tools)
 
 | # | Module | File | Tools | Tool Names |
 |---|--------|------|:-----:|------------|
 | 1 | Sudo Management | `sudo-management.ts` | 6 | `sudo_elevate`, `sudo_elevate_gui`, `sudo_status`, `sudo_drop`, `sudo_extend`, `preflight_batch_check` |
 | 2 | Firewall | `firewall.ts` | 5 | `firewall_iptables`, `firewall_ufw`, `firewall_persist`, `firewall_nftables_list`, `firewall_policy_audit` |
-| 3 | Hardening | `hardening.ts` | 8 | `harden_sysctl`, `harden_service`, `harden_permissions`, `harden_systemd`, `harden_kernel`, `harden_bootloader`, `harden_misc`, `harden_memory` |
+| 3 | Hardening | `hardening.ts` | 9 | `harden_sysctl`, `harden_service`, `harden_permissions`, `harden_systemd`, `harden_kernel`, `harden_bootloader`, `harden_misc`, `harden_memory`, `usb_device_control` |
 | 4 | IDS | `ids.ts` | 3 | `ids_aide_manage`, `ids_rootkit_scan`, `ids_file_integrity_check` |
 | 5 | Logging | `logging.ts` | 4 | `log_auditd`, `log_journalctl_query`, `log_fail2ban`, `log_system` |
-| 6 | Network Defense | `network-defense.ts` | 3 | `netdef_connections`, `netdef_capture`, `netdef_security_audit` |
+| 6 | Network Defense | `network-defense.ts` | 4 | `netdef_connections`, `netdef_capture`, `netdef_security_audit`, `network_segmentation_audit` |
 | 7 | Compliance | `compliance.ts` | 7 | `compliance_lynis_audit`, `compliance_oscap_scan`, `compliance_check`, `compliance_policy_evaluate`, `compliance_report`, `compliance_cron_restrict`, `compliance_tmp_hardening` |
 | 8 | Malware | `malware.ts` | 4 | `malware_clamav`, `malware_yara_scan`, `malware_file_scan`, `malware_quarantine_manage` |
 | 9 | Backup | `backup.ts` | 1 | `backup` |
 | 10 | Access Control | `access-control.ts` | 6 | `access_ssh`, `access_sudo_audit`, `access_user_audit`, `access_password_policy`, `access_pam`, `access_restrict_shell` |
-| 11 | Encryption | `encryption.ts` | 4 | `crypto_tls`, `crypto_gpg_keys`, `crypto_luks_manage`, `crypto_file_hash` |
+| 11 | Encryption | `encryption.ts` | 5 | `crypto_tls`, `crypto_gpg_keys`, `crypto_luks_manage`, `crypto_file_hash`, `certificate_lifecycle` |
 | 12 | Container Security | `container-security.ts` | 6 | `container_docker`, `container_apparmor`, `container_selinux_manage`, `container_namespace_check`, `container_image_scan`, `container_security_config` |
-| 13 | Meta | `meta.ts` | 5 | `defense_check_tools`, `defense_workflow`, `defense_change_history`, `defense_security_posture`, `defense_scheduled_audit` |
+| 13 | Meta | `meta.ts` | 6 | `defense_check_tools`, `defense_workflow`, `defense_change_history`, `defense_security_posture`, `defense_scheduled_audit`, `auto_remediate` |
 | 14 | Patch Management | `patch-management.ts` | 5 | `patch_update_audit`, `patch_unattended_audit`, `patch_integrity_check`, `patch_kernel_audit`, `patch_vulnerability_intel` |
 | 15 | Secrets | `secrets.ts` | 4 | `secrets_scan`, `secrets_env_audit`, `secrets_ssh_key_sprawl`, `secrets_git_history_scan` |
-| 16 | Incident Response | `incident-response.ts` | 1 | `incident_response` |
+| 16 | Incident Response | `incident-response.ts` | 2 | `incident_response`, `ir_forensics` |
 | 17 | Supply Chain | `supply-chain-security.ts` | 1 | `supply_chain` |
 | 18 | Drift Detection | `drift-detection.ts` | 1 | `drift_baseline` |
 | 19 | Zero Trust | `zero-trust-network.ts` | 1 | `zero_trust` |
 | 20 | eBPF Security | `ebpf-security.ts` | 2 | `ebpf_list_programs`, `ebpf_falco` |
 | 21 | App Hardening | `app-hardening.ts` | 1 | `app_harden` |
+| 22 | Reporting | `reporting.ts` | 1 | `report_export` |
+| 23 | DNS Security | `dns-security.ts` | 1 | `dns_security` |
+| 24 | Vulnerability Management | `vulnerability-management.ts` | 1 | `vuln_manage` |
+| 25 | Process Security | `process-security.ts` | 1 | `process_security` |
+| 26 | WAF Management | `waf.ts` | 1 | `waf_manage` |
+| 27 | Threat Intelligence | `threat-intel.ts` | 1 | `threat_intel` |
+| 28 | Cloud Security | `cloud-security.ts` | 1 | `cloud_security` |
+| 29 | API Security | `api-security.ts` | 1 | `api_security` |
+| 30 | Deception/Honeypots | `deception.ts` | 1 | `honeypot_manage` |
+| 31 | Wireless Security | `wireless-security.ts` | 1 | `wireless_security` |
+| 32 | SIEM Integration | `siem-integration.ts` | 1 | `siem_export` |
 
 ---
 
@@ -823,8 +834,8 @@ Per-tool timeout overrides support: `LYNIS`, `AIDE`, `CLAMAV`, `OSCAP`, `SNORT`,
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `@modelcontextprotocol/sdk` | ~1.12.1 | MCP server framework (McpServer, StdioServerTransport) |
-| `zod` | ~3.25.0 | Schema validation for tool parameters |
+| `@modelcontextprotocol/sdk` | 1.27.1 | MCP server framework (McpServer, StdioServerTransport) |
+| `zod` | 3.25.76 | Schema validation for tool parameters |
 
 ### 10.2 Development
 

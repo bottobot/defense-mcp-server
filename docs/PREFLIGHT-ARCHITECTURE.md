@@ -1,14 +1,14 @@
 # Pre-flight Validation System — Architecture Document
 
-> **Status**: Implemented (v0.3.0+, updated in v0.5.0)
-> **Scope**: defense-mcp-server v0.5.0
+> **Status**: Implemented (v0.3.0+, updated in v0.6.0)
+> **Scope**: defense-mcp-server v0.6.0
 > **Author**: Architecture session 2026-03-03
 
 ---
 
 ## 1. Problem Statement
 
-The defense-mcp-server has 78 MCP tools across 21 tool modules. Rich infrastructure already exists for dependency checking (`dependency-validator.ts`), cross-distro installation (`installer.ts`), privilege management (`sudo-session.ts`), and application safety detection (`safeguards.ts`) — but originally **none of it was wired into tool invocations**. Tools would execute blindly and fail with raw shell errors when:
+The defense-mcp-server has 94 MCP tools across 32 tool modules. Rich infrastructure already exists for dependency checking (`dependency-validator.ts`), cross-distro installation (`installer.ts`), privilege management (`sudo-session.ts`), and application safety detection (`safeguards.ts`) — but originally **none of it was wired into tool invocations**. Tools would execute blindly and fail with raw shell errors when:
 
 - A required binary is missing (e.g., `rkhunter`, `lynis`, `nmap`)
 - Sudo credentials haven't been provided via `sudo_elevate`
@@ -21,7 +21,7 @@ The result: cryptic `spawn ENOENT` or `sudo: a password is required` errors retu
 
 ## 2. Design Goals
 
-1. **Zero tool-file modifications** — The 29 existing tool files must not change
+1. **Zero tool-file modifications** — The 32 existing tool files must not change
 2. **Automatic pre-flight** — Every tool invocation validates dependencies and privileges before the handler runs
 3. **Actionable errors** — When pre-flight fails, return structured messages explaining what's missing and how to fix it
 4. **Auto-remediation** — Missing binaries are installed silently when `KALI_DEFENSE_AUTO_INSTALL=true`
