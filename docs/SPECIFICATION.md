@@ -16,7 +16,7 @@
 | **Transport** | stdio (StdioServerTransport) |
 | **OS** | Linux only |
 | **License** | MIT |
-| **Repository** | `github.com/YOUR_GITHUB_USERNAME/defense-mcp-server` |
+| **Repository** | `github.com/bottobot/defense-mcp-server` |
 
 ---
 

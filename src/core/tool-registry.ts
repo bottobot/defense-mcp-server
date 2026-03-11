@@ -5,8 +5,9 @@
  * including privilege requirements, Python/npm packages, system libraries,
  * required files, and Linux capabilities.
  *
- * After the v0.5.0 tool consolidation (157 → 78 tools), each entry represents
- * a consolidated action-based tool.
+ * v0.5.0: Tool consolidation (157 → 78 tools), each entry represents a
+ * consolidated action-based tool.
+ * v0.6.0: Extended to 94 tools across 32 modules with 16 new security tools.
  *
  * @module tool-registry
  */

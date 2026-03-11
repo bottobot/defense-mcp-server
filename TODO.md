@@ -24,43 +24,26 @@
 
 ## 🔴 Section 1: High Priority Fixes
 
-### Fix 1: Stale `package.json` metadata
+### ~~Fix 1: Stale `package.json` metadata~~ ✅ DONE
 
 **File:** [`package.json`](package.json)
 
-The `repository`, `bugs`, and `homepage` fields in [`package.json`](package.json) still point to the old `bottobot` GitHub repository. These must be updated before any public release or npm publish, as they direct users and tooling (e.g., `npm bugs`, `npm repo`) to the wrong location.
+~~The `repository`, `bugs`, and `homepage` fields in [`package.json`](package.json) still point to the old `bottobot` GitHub repository.~~
 
-**Current values (to be replaced):**
-
-```json
-{
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server.git"
-  },
-  "bugs": {
-    "url": "https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server/issues"
-  },
-  "homepage": "https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server#readme"
-}
-```
-
-**Replace with:**
+**Resolved:** The `repository`, `bugs`, and `homepage` fields now correctly point to `https://github.com/bottobot/defense-mcp-server`. The `YOUR_GITHUB_USERNAME` placeholders have been replaced and the `kali-defense-mcp-server` self-dependency has been removed.
 
 ```json
 {
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server.git"
+    "url": "git+https://github.com/bottobot/defense-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server/issues"
+    "url": "https://github.com/bottobot/defense-mcp-server/issues"
   },
-  "homepage": "https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server#readme"
+  "homepage": "https://github.com/bottobot/defense-mcp-server#readme"
 }
 ```
-
-Replace `YOUR_GITHUB_USERNAME` with the actual GitHub username or organization that owns the new repository.
 
 ---
 

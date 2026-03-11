@@ -1,15 +1,16 @@
 /**
- * Tool-to-dependency mapping for Kali Defense MCP Server.
+ * Tool-to-dependency mapping for Defense MCP Server.
  *
  * Maps each registered MCP tool name to the system binaries it requires.
  * Used by the dependency validator to ensure all required tools are
  * installed before execution — either at server startup or on-demand.
  *
- * After the v0.5.0 tool consolidation (157 → 78 tools), each entry here
- * represents a consolidated tool whose dependencies are the UNION of all
- * the individual tools it absorbed.  Action-specific binaries are listed
- * as `optionalBinaries` because the tool handles missing ones gracefully
- * based on which `action` the caller selects.
+ * After the v0.5.0 tool consolidation (157 → 78 tools), extended to 94
+ * tools across 32 modules in v0.6.0. Each entry represents a consolidated
+ * tool whose dependencies are the UNION of all the individual tools it
+ * absorbed.  Action-specific binaries are listed as `optionalBinaries`
+ * because the tool handles missing ones gracefully based on which `action`
+ * the caller selects.
  */
 
 import { DEFENSIVE_TOOLS, type ToolRequirement } from "./installer.js";
