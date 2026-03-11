@@ -1,10 +1,10 @@
-# kali-defense-mcp-server — Technical Specification
+# defense-mcp-server — Technical Specification
 
 ## Metadata
 
 | Field | Value |
 |-------|-------|
-| **Name** | kali-defense-mcp-server |
+| **Name** | defense-mcp-server |
 | **Version** | 0.5.0 |
 | **Language** | TypeScript 5.8+ |
 | **Target** | ES2022 |
@@ -16,13 +16,13 @@
 | **Transport** | stdio (StdioServerTransport) |
 | **OS** | Linux only |
 | **License** | MIT |
-| **Repository** | `github.com/bottobot/kali-defense-mcp-server` |
+| **Repository** | `github.com/YOUR_GITHUB_USERNAME/defense-mcp-server` |
 
 ---
 
 ## 1. Overview
 
-The kali-defense-mcp-server is a Model Context Protocol (MCP) server that exposes **78 defensive security tools** across **21 modules**, backed by **26 core modules**. It enables AI agents (Claude, Roo Code, etc.) to perform system hardening, compliance auditing, intrusion detection, malware scanning, firewall management, container security, secrets scanning, drift detection, zero-trust networking, eBPF security monitoring, and incident response on Linux systems.
+The defense-mcp-server is a Model Context Protocol (MCP) server that exposes **78 defensive security tools** across **21 modules**, backed by **26 core modules**. It enables AI agents (Claude, Roo Code, etc.) to perform system hardening, compliance auditing, intrusion detection, malware scanning, firewall management, container security, secrets scanning, drift detection, zero-trust networking, eBPF security monitoring, and incident response on Linux systems.
 
 The server runs as a child process communicating over stdio JSON-RPC. It wraps Linux security binaries (iptables, lynis, aide, rkhunter, ClamAV, etc.) with input validation, command allowlist enforcement, privilege management, rate limiting, structured logging, and audit trails.
 

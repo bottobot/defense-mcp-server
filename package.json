@@ -1,11 +1,11 @@
 {
-  "name": "kali-defense-mcp-server",
+  "name": "defense-mcp-server",
   "version": "0.6.0",
-  "description": "Ultimate Kali Defensive Security & System Hardening MCP Server — 78 defensive security tools for firewall management, CIS benchmarks, intrusion detection, malware scanning, container security, zero-trust networking, and more.",
+  "description": "Defense MCP Server — 78 defensive security tools for system hardening and threat detection",
   "type": "module",
   "main": "build/index.js",
   "bin": {
-    "kali-defense-mcp": "build/index.js"
+    "defense-mcp-server": "build/index.js"
   },
   "files": [
     "build/",
@@ -56,12 +56,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bottobot/kali-defense-mcp-server.git"
+    "url": "git+https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/bottobot/kali-defense-mcp-server/issues"
+    "url": "https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server/issues"
   },
-  "homepage": "https://github.com/bottobot/kali-defense-mcp-server#readme",
+  "homepage": "https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server#readme",
   "engines": {
     "node": ">=18.0.0"
   },
@@ -70,7 +70,6 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
-    "kali-defense-mcp-server": "^0.5.2",
     "zod": "3.25.76"
   },
   "devDependencies": {

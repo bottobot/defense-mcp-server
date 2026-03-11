@@ -1,6 +1,6 @@
-# Security Audit Report — kali-defense-mcp-server
+# Security Audit Report — defense-mcp-server
 
-**Project:** kali-defense-mcp-server v0.5.0-beta.2  
+**Project:** defense-mcp-server v0.5.0-beta.2
 **Audit Date:** 2026-03-07  
 **Auditor:** Automated Security Audit Pipeline (6-Phase)  
 **Classification:** CONFIDENTIAL  
@@ -28,7 +28,7 @@
 
 ### Overall Security Posture: 🔴 HIGH RISK
 
-The kali-defense-mcp-server project — a Model Context Protocol server exposing 78 defensive security tools across 21 modules — demonstrates **strong security architecture at the design level** but suffers from **critical implementation gaps** that undermine its defensive posture. The project's core premise of executing privileged system commands makes its attack surface inherently large, and several control bypasses exist that could allow arbitrary command execution.
+The defense-mcp-server project — a Model Context Protocol server exposing 78 defensive security tools across 21 modules — demonstrates **strong security architecture at the design level** but suffers from **critical implementation gaps** that undermine its defensive posture. The project's core premise of executing privileged system commands makes its attack surface inherently large, and several control bypasses exist that could allow arbitrary command execution.
 
 ### Key Metrics
 

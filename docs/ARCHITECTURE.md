@@ -1,6 +1,6 @@
-# Kali Defense MCP Server — Architecture Document
+# Defense MCP Server — Architecture Document
 
-> **Project**: `kali-defense-mcp-server`
+> **Project**: `defense-mcp-server`
 > **Version**: 0.5.0
 > **Purpose**: Standalone MCP server for defensive security, system hardening, and blue team operations
 > **SDK**: `@modelcontextprotocol/sdk` v1.12.1 · `zod` v3.25.0
@@ -56,7 +56,7 @@
 ## Project Structure
 
 ```
-kali-defense-mcp-server/
+defense-mcp-server/
 ├── package.json
 ├── tsconfig.json
 ├── README.md
@@ -104,7 +104,7 @@ graph TB
     end
 
     subgraph Server_Core
-        MCP[McpServer - kali-defense-mcp-server v0.5.0]
+        MCP[McpServer - defense-mcp-server v0.5.0]
     end
 
     subgraph Core_Modules
@@ -197,7 +197,7 @@ The integration uses a JavaScript `Proxy` to intercept the `McpServer.tool()` me
 
 ```typescript
 // src/index.ts — entry point
-const rawServer = new McpServer({ name: 'kali-defense-mcp-server', version: '...' });
+const rawServer = new McpServer({ name: 'defense-mcp-server', version: '...' });
 const server = createPreflightServer(rawServer);  // ← returns Proxy<McpServer>
 
 registerFirewallTools(server);      // tools register on the proxy — handlers auto-wrapped
@@ -1983,7 +1983,7 @@ import { registerContainerSecurityTools } from "./tools/container-security.js";
 import { registerMetaTools } from "./tools/meta.js";
 
 const server = new McpServer({
-  name: "kali-defense-mcp-server",
+  name: "defense-mcp-server",
   version: "0.5.0",
 });
 
@@ -2006,7 +2006,7 @@ registerMetaTools(server);              // 5 tools
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Kali Defense MCP Server v0.5.0 running on stdio");
+  console.error("Defense MCP Server v0.5.0 running on stdio");
   console.error(
     "Registered: firewall, hardening, ids, logging, network-defense, " +
     "compliance, malware, backup, access-control, encryption, container-security, meta"
@@ -2014,7 +2014,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("Fatal: failed to start kali-defense-mcp-server:", err);
+  console.error("Fatal: failed to start defense-mcp-server:", err);
   process.exit(1);
 });
 ```
@@ -2023,7 +2023,7 @@ main().catch((err) => {
 
 ```json
 {
-  "name": "kali-defense-mcp-server",
+  "name": "defense-mcp-server",
   "version": "0.5.0",
   "description": "Defensive security, system hardening, and blue team operations MCP server",
   "type": "module",

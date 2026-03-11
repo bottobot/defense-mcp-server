@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the kali-defense-mcp-server are documented in this file.
+All notable changes to the defense-mcp-server are documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
@@ -65,7 +65,7 @@ See [CHANGELOG for 0.5.0-beta.3 through 0.5.0-beta.6](CHANGELOG.md) for detailed
 
 ### GA Readiness — Phase 10
 - **Tool naming consistency:** 7 tools renamed to follow `prefix_subject` convention
-- **Specification rewrite:** Complete rewrite of kali-defense-mcp-server-spec.md (12 sections)
+- **Specification rewrite:** Complete rewrite of defense-mcp-server-spec.md (12 sections)
 - **Dependency pinning:** Runtime deps pinned to exact versions, dev deps to tilde ranges
 - **Encrypted state storage:** New `src/core/encrypted-state.ts` — AES-256-GCM with PBKDF2 key derivation
 - **Atomic file writes:** New `atomicWriteFileSync()` in `src/core/secure-fs.ts` with write-to-temp-then-rename

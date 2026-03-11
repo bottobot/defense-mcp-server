@@ -1,5 +1,5 @@
 /**
- * Meta/utility tools for Kali Defense MCP Server.
+ * Meta/utility tools for Defense MCP Server.
  *
  * Registers 6 tools: defense_check_tools, defense_workflow (actions: suggest, run),
  * defense_change_history, security_posture (actions: score, trend, dashboard),

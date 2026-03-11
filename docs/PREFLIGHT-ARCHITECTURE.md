@@ -1,14 +1,14 @@
 # Pre-flight Validation System — Architecture Document
 
 > **Status**: Implemented (v0.3.0+, updated in v0.5.0)
-> **Scope**: kali-defense-mcp-server v0.5.0
+> **Scope**: defense-mcp-server v0.5.0
 > **Author**: Architecture session 2026-03-03
 
 ---
 
 ## 1. Problem Statement
 
-The kali-defense-mcp-server has 78 MCP tools across 21 tool modules. Rich infrastructure already exists for dependency checking (`dependency-validator.ts`), cross-distro installation (`installer.ts`), privilege management (`sudo-session.ts`), and application safety detection (`safeguards.ts`) — but originally **none of it was wired into tool invocations**. Tools would execute blindly and fail with raw shell errors when:
+The defense-mcp-server has 78 MCP tools across 21 tool modules. Rich infrastructure already exists for dependency checking (`dependency-validator.ts`), cross-distro installation (`installer.ts`), privilege management (`sudo-session.ts`), and application safety detection (`safeguards.ts`) — but originally **none of it was wired into tool invocations**. Tools would execute blindly and fail with raw shell errors when:
 
 - A required binary is missing (e.g., `rkhunter`, `lynis`, `nmap`)
 - Sudo credentials haven't been provided via `sudo_elevate`
@@ -876,7 +876,7 @@ The changes to `index.ts` are minimal — **3 lines added**:
 ```typescript
 // ── Before (current) ────────────────────────────────
 const server = new McpServer({
-  name: "kali-defense-mcp-server",
+  name: "defense-mcp-server",
   version: "2.2.0",
 });
 
@@ -890,7 +890,7 @@ registerFirewallTools(server);
 import { createPreflightServer } from "./core/tool-wrapper.js";
 
 const server = new McpServer({
-  name: "kali-defense-mcp-server",
+  name: "defense-mcp-server",
   version: "2.2.0",
 });
 

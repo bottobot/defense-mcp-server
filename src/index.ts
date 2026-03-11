@@ -120,7 +120,7 @@ process.on("unhandledRejection", (reason) => {
 
 async function main() {
   const server = new McpServer({
-    name: "kali-defense-mcp-server",
+    name: "defense-mcp-server",
     version: VERSION,
   });
 
@@ -131,7 +131,7 @@ async function main() {
   // automatically installed via the system package manager.
   //
   const config = getConfig();
-  console.error(`Kali Defense MCP Server v${VERSION} starting...`);
+  console.error(`Defense MCP Server v${VERSION} starting...`);
   console.error(
     `[startup] Auto-install: ${config.autoInstall ? "ENABLED" : "DISABLED"} | ` +
     `Dry-run: ${config.dryRun ? "YES" : "NO"}`
@@ -292,7 +292,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Kali Defense MCP Server v${VERSION} running on stdio`);
+  console.error(`Defense MCP Server v${VERSION} running on stdio`);
   console.error(`Registered ${registered} of ${registered + failed} tool modules with ~78 defensive security tools${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`);
   console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }

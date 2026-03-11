@@ -1,6 +1,6 @@
 # Tools Reference
 
-Complete reference for all 78 tools registered in the kali-defense-mcp-server v0.5.0. The server registers 21 tool modules providing 78 defensive security tools.
+Complete reference for all 78 tools registered in the defense-mcp-server v0.5.0. The server registers 21 tool modules providing 78 defensive security tools.
 
 > **v0.5.0 Consolidation**: Former fine-grained tools have been merged into action-based tools. Each consolidated tool accepts an `action` parameter to select sub-operations. All prior functionality is preserved.
 

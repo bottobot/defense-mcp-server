@@ -1,6 +1,6 @@
 # Security Standards Mapping
 
-This document maps kali-defense-mcp-server tools to recognized security standards and compliance frameworks. Use this reference to identify which tools provide evidence for specific controls during audits, assessments, or self-attestation exercises.
+This document maps defense-mcp-server tools to recognized security standards and compliance frameworks. Use this reference to identify which tools provide evidence for specific controls during audits, assessments, or self-attestation exercises.
 
 ---
 

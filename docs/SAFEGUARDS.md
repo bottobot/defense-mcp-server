@@ -1,6 +1,6 @@
 # Safeguards Reference
 
-This document describes the `SafeguardRegistry` system, application detection logic, operation-level safety checks, dry-run usage, and the backup/rollback subsystem for the kali-defense-mcp-server.
+This document describes the `SafeguardRegistry` system, application detection logic, operation-level safety checks, dry-run usage, and the backup/rollback subsystem for the defense-mcp-server.
 
 ---
 

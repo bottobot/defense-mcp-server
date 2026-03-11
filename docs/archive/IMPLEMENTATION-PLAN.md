@@ -1,4 +1,4 @@
-# Implementation Plan — kali-defense-mcp-server
+# Implementation Plan — defense-mcp-server
 
 > **Living Document** — Updated after every fix. This is the single source of truth for remaining work.
 >

@@ -1,5 +1,5 @@
 /**
- * Low-level safe process spawning for kali-defense-mcp-server.
+ * Low-level safe process spawning for defense-mcp-server.
  *
  * This module provides the foundational child process creation layer.
  * It has NO dependencies on executor.ts, sudo-session.ts, or any module

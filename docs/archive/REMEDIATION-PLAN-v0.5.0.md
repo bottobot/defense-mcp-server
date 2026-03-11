@@ -1,8 +1,8 @@
-# Kali Defense MCP Server — Security Remediation Plan
+# Defense MCP Server — Security Remediation Plan
 
 **Date:** 2026-03-04
 **Version:** 1.0
-**Scope:** All validated findings from security audit of kali-defense-mcp-server v0.4.0-beta.2
+**Scope:** All validated findings from security audit of defense-mcp-server v0.4.0-beta.2
 **Status:** Approved for implementation
 
 ---
@@ -40,7 +40,7 @@
 
 ## 1. Executive Summary
 
-A comprehensive security audit of the **kali-defense-mcp-server** project — a TypeScript/Node.js MCP server providing 157 defensive security tools — identified **10 primary findings** and **5 additional findings** across the codebase. The findings range from HIGH severity (password string leakage, missing command allowlists) to LOW severity (rate limiting, error isolation).
+A comprehensive security audit of the **defense-mcp-server** project — a TypeScript/Node.js MCP server providing 157 defensive security tools — identified **10 primary findings** and **5 additional findings** across the codebase. The findings range from HIGH severity (password string leakage, missing command allowlists) to LOW severity (rate limiting, error isolation).
 
 The most critical issues are:
 
@@ -1039,7 +1039,7 @@ See [Section 6: Tool Consolidation Plan](#6-tool-consolidation-plan) for the com
    );
 
    const server = new McpServer({
-     name: "kali-defense-mcp-server",
+     name: "defense-mcp-server",
      version: pkg.version, // single source of truth
    });
    ```

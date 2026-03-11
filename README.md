@@ -1,4 +1,4 @@
-# Kali Defense MCP Server
+# Defense MCP Server
 
 A Model Context Protocol (MCP) server that gives AI assistants access to 78 defensive security tools on Kali Linux. Connect it to Claude Desktop, Cursor, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
 
@@ -74,8 +74,8 @@ KALI_DEFENSE_AUTO_INSTALL=false node dist/index.js
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/robert-at-pretension-io/kali-defense-mcp-server.git
-   cd kali-defense-mcp-server
+   git clone https://github.com/YOUR_GITHUB_USERNAME/defense-mcp-server.git
+   cd defense-mcp-server
    ```
 
 2. Install dependencies:
@@ -95,9 +95,9 @@ Add this to your Claude Desktop configuration file (`~/.config/claude/claude_des
 ```json
 {
   "mcpServers": {
-    "kali-defense": {
+    "defense-mcp-server": {
       "command": "node",
-      "args": ["/path/to/kali-defense-mcp-server/dist/index.js"]
+      "args": ["/path/to/defense-mcp-server/dist/index.js"]
     }
   }
 }

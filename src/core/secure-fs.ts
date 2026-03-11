@@ -1,5 +1,5 @@
 /**
- * Secure filesystem utilities for the kali-defense-mcp-server.
+ * Secure filesystem utilities for the defense-mcp-server.
  * All state files (changelog, rollback, backups) must use these helpers
  * to ensure restrictive permissions (owner-only read/write).
  */
