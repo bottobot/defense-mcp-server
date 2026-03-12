@@ -1,7 +1,10 @@
 /**
  * Tests for src/tools/reporting.ts
  *
- * Covers: report_export tool with actions generate, list_reports, formats.
+ * reporting.ts is now a re-export stub (registerReportingTools → registerMetaTools).
+ * The registered tool is defense_mgmt with actions:
+ *   report_generate, report_list, report_formats
+ *
  * Tests input validation, error handling, and output format correctness.
  */
 
@@ -9,6 +12,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ── Mock all external dependencies ─────────────────────────────────────────
 
+vi.mock("../../src/core/executor.js", () => ({
+  executeCommand: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+}));
+vi.mock("../../src/core/command-allowlist.js", () => ({
+  resolveCommand: vi.fn((cmd: string) => `/usr/bin/${cmd}`),
+  isAllowlisted: vi.fn().mockReturnValue(true),
+}));
+vi.mock("../../src/core/config.js", () => ({
+  getConfig: vi.fn().mockReturnValue({ dryRun: true }),
+  getToolTimeout: vi.fn().mockReturnValue(30000),
+}));
 vi.mock("../../src/core/spawn-safe.js", () => ({
   spawnSafe: vi.fn(),
 }));
@@ -23,6 +37,25 @@ vi.mock("../../src/core/parsers.js", () => ({
   formatToolOutput: vi.fn((obj: unknown) => ({ type: "text", text: JSON.stringify(obj) })),
 }));
 
+vi.mock("../../src/core/changelog.js", () => ({
+  logChange: vi.fn(),
+  createChangeEntry: vi.fn().mockReturnValue({}),
+  getChangelog: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock("../../src/core/installer.js", () => ({
+  checkAllTools: vi.fn().mockResolvedValue([]),
+  installMissing: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../../src/core/safeguards.js", () => ({
+  SafeguardRegistry: {
+    getInstance: vi.fn().mockReturnValue({
+      checkSafety: vi.fn().mockResolvedValue({ safe: true, warnings: [], blockers: [], impactedApps: [] }),
+    }),
+  },
+}));
+
 vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(false),
   readdirSync: vi.fn().mockReturnValue([]),
@@ -30,7 +63,19 @@ vi.mock("node:fs", () => ({
     size: 1024,
     mtime: new Date("2025-01-01T00:00:00Z"),
   }),
+  readFileSync: vi.fn().mockReturnValue("[]"),
+  writeFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
 }));
+
+vi.mock("node:os", () => ({
+  homedir: vi.fn().mockReturnValue("/tmp/test-home"),
+}));
+
+vi.mock("node:path", async () => {
+  const actual = await vi.importActual("node:path");
+  return actual;
+});
 
 import { registerReportingTools } from "../../src/tools/reporting.js";
 import { spawnSafe } from "../../src/core/spawn-safe.js";
@@ -113,12 +158,12 @@ function setupDefaultSpawnMocks() {
         "Linux testhost 6.1.0-kali9-amd64 #1 SMP x86_64 GNU/Linux",
         "",
         0,
-      );
+      ) as any;
     }
 
     // hostname
     if (command === "hostname") {
-      return createMockChildProcess("testhost", "", 0);
+      return createMockChildProcess("testhost", "", 0) as any;
     }
 
     // uptime
@@ -127,7 +172,7 @@ function setupDefaultSpawnMocks() {
         " 10:30:00 up 5 days, 3:45, 2 users, load average: 0.15, 0.10, 0.05",
         "",
         0,
-      );
+      ) as any;
     }
 
     // iptables
@@ -136,7 +181,7 @@ function setupDefaultSpawnMocks() {
         "Chain INPUT (policy ACCEPT)\nnum  target  prot opt source  destination\n1  DROP  tcp  --  0.0.0.0/0  0.0.0.0/0  tcp dpt:23",
         "",
         0,
-      );
+      ) as any;
     }
 
     // systemctl list-units
@@ -145,7 +190,7 @@ function setupDefaultSpawnMocks() {
         "ssh.service loaded active running OpenSSH server\ncron.service loaded active running Regular background program processing daemon",
         "",
         0,
-      );
+      ) as any;
     }
 
     // ss -tulnp
@@ -154,7 +199,7 @@ function setupDefaultSpawnMocks() {
         "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port\ntcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:*",
         "",
         0,
-      );
+      ) as any;
     }
 
     // journalctl
@@ -163,12 +208,12 @@ function setupDefaultSpawnMocks() {
         "Jan 01 10:00:00 testhost sshd[1234]: Accepted publickey for user1",
         "",
         0,
-      );
+      ) as any;
     }
 
     // grep (for auth.log fallback)
     if (fullCmd.includes("grep") && fullCmd.includes("auth.log")) {
-      return createMockChildProcess("", "", 1);
+      return createMockChildProcess("", "", 1) as any;
     }
 
     // lynis
@@ -177,21 +222,21 @@ function setupDefaultSpawnMocks() {
         "Lynis audit system\nHardening index : 72\nWarning: test warning\nSuggestion: test suggestion",
         "",
         0,
-      );
+      ) as any;
     }
 
     // aide
     if (fullCmd.includes("aide")) {
-      return createMockChildProcess("", "", -1);
+      return createMockChildProcess("", "", -1) as any;
     }
 
     // fail2ban-client
     if (fullCmd.includes("fail2ban")) {
-      return createMockChildProcess("", "", -1);
+      return createMockChildProcess("", "", -1) as any;
     }
 
     // Default: return success with empty output
-    return createMockChildProcess("", "", 0);
+    return createMockChildProcess("", "", 0) as any;
   });
 }
 
@@ -213,8 +258,8 @@ describe("reporting tools", () => {
 
   // ── Registration ────────────────────────────────────────────────────────
 
-  it("should register the report_export tool", () => {
-    expect(tools.has("report_export")).toBe(true);
+  it("should register the defense_mgmt tool (via re-export stub)", () => {
+    expect(tools.has("defense_mgmt")).toBe(true);
   });
 
   it("should register with server.tool called once", () => {
@@ -222,18 +267,18 @@ describe("reporting tools", () => {
     registerReportingTools(mock.server);
     expect(mock.server.tool).toHaveBeenCalledTimes(1);
     expect(mock.server.tool).toHaveBeenCalledWith(
-      "report_export",
+      "defense_mgmt",
       expect.any(String),
       expect.any(Object),
       expect.any(Function),
     );
   });
 
-  // ── formats action ──────────────────────────────────────────────────────
+  // ── report_formats action ────────────────────────────────────────────────
 
-  it("should return supported formats for formats action", async () => {
-    const handler = tools.get("report_export")!.handler;
-    const result = await handler({ action: "formats" });
+  it("should return supported formats for report_formats action", async () => {
+    const handler = tools.get("defense_mgmt")!.handler;
+    const result = await handler({ action: "report_formats" });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("markdown");
     expect(result.content[0].text).toContain("html");
@@ -241,9 +286,9 @@ describe("reporting tools", () => {
     expect(result.content[0].text).toContain("csv");
   });
 
-  it("should return report types in formats action", async () => {
-    const handler = tools.get("report_export")!.handler;
-    const result = await handler({ action: "formats" });
+  it("should return report types in report_formats action", async () => {
+    const handler = tools.get("defense_mgmt")!.handler;
+    const result = await handler({ action: "report_formats" });
     expect(result.content[0].text).toContain("executive_summary");
     expect(result.content[0].text).toContain("technical_detail");
     expect(result.content[0].text).toContain("compliance_evidence");
@@ -251,20 +296,20 @@ describe("reporting tools", () => {
     expect(result.content[0].text).toContain("hardening_status");
   });
 
-  it("should return available sections in formats action", async () => {
-    const handler = tools.get("report_export")!.handler;
-    const result = await handler({ action: "formats" });
+  it("should return available sections in report_formats action", async () => {
+    const handler = tools.get("defense_mgmt")!.handler;
+    const result = await handler({ action: "report_formats" });
     expect(result.content[0].text).toContain("system_overview");
     expect(result.content[0].text).toContain("firewall_status");
     expect(result.content[0].text).toContain("recommendations");
   });
 
-  // ── list_reports action ─────────────────────────────────────────────────
+  // ── report_list action ───────────────────────────────────────────────────
 
-  it("should handle list_reports when directory does not exist", async () => {
+  it("should handle report_list when directory does not exist", async () => {
     vi.mocked(existsSync).mockReturnValue(false);
-    const handler = tools.get("report_export")!.handler;
-    const result = await handler({ action: "list_reports" });
+    const handler = tools.get("defense_mgmt")!.handler;
+    const result = await handler({ action: "report_list" });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("does not exist");
   });
@@ -277,10 +322,9 @@ describe("reporting tools", () => {
       "random.txt" as unknown as ReturnType<typeof readdirSync>[0],
     ]);
 
-    const handler = tools.get("report_export")!.handler;
-    const result = await handler({ action: "list_reports" });
+    const handler = tools.get("defense_mgmt")!.handler;
+    const result = await handler({ action: "report_list" });
     expect(result.isError).toBeUndefined();
-    // Should include .md and .json but not .txt
     expect(result.content[0].text).toContain("report-2025-01-01.md");
     expect(result.content[0].text).toContain("report-2025-01-02.json");
     expect(result.content[0].text).not.toContain("random.txt");
@@ -294,23 +338,22 @@ describe("reporting tools", () => {
       "report-c.csv" as unknown as ReturnType<typeof readdirSync>[0],
     ]);
 
-    const handler = tools.get("report_export")!.handler;
-    const result = await handler({ action: "list_reports" });
+    const handler = tools.get("defense_mgmt")!.handler;
+    const result = await handler({ action: "report_list" });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.totalReports).toBe(3);
   });
 
-  // ── generate action — markdown format ───────────────────────────────────
+  // ── report_generate action — markdown format ─────────────────────────────
 
   it("should generate a markdown report with all sections", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       report_type: "technical_detail",
     });
     expect(result.isError).toBeUndefined();
-    // The first content item should be the markdown report
     expect(result.content[0].text).toContain("# Security Report");
     expect(result.content[0].text).toContain("System Overview");
     expect(result.content[0].text).toContain("Firewall Status");
@@ -318,20 +361,20 @@ describe("reporting tools", () => {
   });
 
   it("should include system info in markdown report", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
     });
     expect(result.content[0].text).toContain("Linux testhost");
   });
 
-  // ── generate action — html format ───────────────────────────────────────
+  // ── report_generate action — html format ────────────────────────────────
 
   it("should generate an HTML report", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "html",
     });
     expect(result.isError).toBeUndefined();
@@ -340,16 +383,15 @@ describe("reporting tools", () => {
     expect(result.content[0].text).toContain("</html>");
   });
 
-  // ── generate action — json format ───────────────────────────────────────
+  // ── report_generate action — json format ────────────────────────────────
 
   it("should generate a JSON report", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "json",
     });
     expect(result.isError).toBeUndefined();
-    // JSON format returns via formatToolOutput with a report field
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.reportType).toBe("technical_detail");
     expect(parsed.format).toBe("json");
@@ -357,12 +399,12 @@ describe("reporting tools", () => {
     expect(parsed.report.sections).toBeInstanceOf(Array);
   });
 
-  // ── generate action — csv format ────────────────────────────────────────
+  // ── report_generate action — csv format ─────────────────────────────────
 
   it("should generate a CSV report", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "csv",
     });
     expect(result.isError).toBeUndefined();
@@ -370,29 +412,28 @@ describe("reporting tools", () => {
     expect(result.content[0].text).toContain("System Overview");
   });
 
-  // ── generate with include_sections filter ───────────────────────────────
+  // ── report_generate with include_sections filter ─────────────────────────
 
   it("should only include specified sections", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       include_sections: ["system_overview", "firewall_status"],
     });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("System Overview");
     expect(result.content[0].text).toContain("Firewall Status");
-    // Should NOT contain other sections since we filtered
     expect(result.content[0].text).not.toContain("Service Audit");
     expect(result.content[0].text).not.toContain("Active Connections");
   });
 
-  // ── generate with output_path (file write) ─────────────────────────────
+  // ── report_generate with output_path (file write) ───────────────────────
 
   it("should write report to file when output_path is provided", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       output_path: "/tmp/test-report.md",
     });
@@ -409,9 +450,9 @@ describe("reporting tools", () => {
       throw new Error("Permission denied");
     });
 
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       output_path: "/root/protected-report.md",
     });
@@ -419,72 +460,60 @@ describe("reporting tools", () => {
     expect(result.content[0].text).toContain("Permission denied");
   });
 
-  // ── generate with since parameter ──────────────────────────────────────
+  // ── report_generate with since parameter ────────────────────────────────
 
   it("should pass since parameter to login gathering", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       since: "2025-01-01",
       include_sections: ["recent_logins"],
     });
     expect(result.isError).toBeUndefined();
-    // Verify spawnSafe was called with --since argument
     expect(mockSpawnSafe).toHaveBeenCalledWith(
       "journalctl",
       expect.arrayContaining(["--since", "2025-01-01"]),
     );
   });
 
-  // ── Error handling ─────────────────────────────────────────────────────
+  // ── Error handling ───────────────────────────────────────────────────────
 
   it("should handle command failures gracefully within sections", async () => {
-    // Override mock to simulate failures
-    mockSpawnSafe.mockImplementation((command: string, args: string[]) => {
-      // All commands fail
-      return createMockChildProcess("", "command not found", 127);
+    mockSpawnSafe.mockImplementation((_command: string, _args: string[]) => {
+      return createMockChildProcess("", "command not found", 127) as any;
     });
 
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       include_sections: ["system_overview", "firewall_status"],
     });
-    // Should still succeed — individual section errors don't fail the whole report
     expect(result.isError).toBeUndefined();
     expect(result.content).toBeDefined();
   });
 
-  it("should report error for unknown action", async () => {
-    const handler = tools.get("report_export")!.handler;
-    const result = await handler({ action: "nonexistent" });
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Unknown action");
-  });
-
-  it("should handle spawnSafe throwing for generate", async () => {
-    mockSpawnSafe.mockImplementation(() => {
+  it("should handle spawnSafe throwing for report_generate", async () => {
+    mockSpawnSafe.mockImplementation((_command?: string, _args?: string[]) => {
       throw new Error("Binary not in allowlist");
     });
 
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "json",
       include_sections: ["system_overview"],
     });
-    // Should still complete — runCommand catches the error
     expect(result.isError).toBeUndefined();
   });
 
-  // ── Report type variations ─────────────────────────────────────────────
+  // ── Report type variations ───────────────────────────────────────────────
 
   it("should accept executive_summary report type", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       report_type: "executive_summary",
     });
@@ -493,9 +522,9 @@ describe("reporting tools", () => {
   });
 
   it("should accept hardening_status report type", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "json",
       report_type: "hardening_status",
     });
@@ -504,12 +533,12 @@ describe("reporting tools", () => {
     expect(parsed.reportType).toBe("hardening_status");
   });
 
-  // ── Recommendations generation ─────────────────────────────────────────
+  // ── Recommendations generation ───────────────────────────────────────────
 
   it("should generate recommendations based on gathered data", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       include_sections: ["firewall_status", "service_audit", "recommendations"],
     });
@@ -525,29 +554,28 @@ describe("reporting tools", () => {
           "Chain INPUT (policy ACCEPT)\nnum target prot\n1 ACCEPT tcp",
           "",
           0,
-        );
+        ) as any;
       }
-      return createMockChildProcess("", "", 0);
+      return createMockChildProcess("", "", 0) as any;
     });
 
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
       include_sections: ["firewall_status", "recommendations"],
     });
     expect(result.content[0].text).toContain("DROP policy");
   });
 
-  // ── Summary metadata ───────────────────────────────────────────────────
+  // ── Summary metadata ─────────────────────────────────────────────────────
 
   it("should include summary metadata for non-json formats", async () => {
-    const handler = tools.get("report_export")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "generate",
+      action: "report_generate",
       format: "markdown",
     });
-    // Second content item should be the summary
     expect(result.content.length).toBeGreaterThanOrEqual(2);
     const summary = JSON.parse(result.content[1].text);
     expect(summary.reportType).toBe("technical_detail");

@@ -8,6 +8,7 @@
  * v0.5.0: Tool consolidation (157 → 78 tools), each entry represents a
  * consolidated action-based tool.
  * v0.6.0: Extended to 94 tools across 32 modules with 16 new security tools.
+ * v0.7.0: Final consolidation to 31 tools across 18 modules.
  *
  * @module tool-registry
  */
@@ -179,31 +180,40 @@ export class ToolRegistry {
 
 /** Prefix → category mapping used by {@link inferCategory}. */
 const CATEGORY_PREFIX_MAP: [string, string][] = [
-  // Exact-match entries (longer/more specific — checked first)
+  // Exact-match entries
   ["supply_chain", "supply-chain"],
-  ["drift_baseline", "drift-detection"],
-  ["zero_trust", "zero-trust"],
   ["incident_response", "incident-response"],
   ["app_harden", "app-hardening"],
   ["backup", "backup"],
+  ["defense_mgmt", "meta"],
+  ["sudo_session", "sudo"],
+  ["integrity", "integrity"],
+  ["log_management", "logging"],
+  ["network_defense", "network"],
+  ["container_docker", "container"],
+  ["container_isolation", "container"],
 
-  // Prefix entries (disjoint prefixes)
-  ["firewall_", "firewall"],
+  // Prefix entries
+  ["firewall", "firewall"],
   ["harden_", "hardening"],
-  ["ids_", "ids"],
-  ["log_", "logging"],
-  ["netdef_", "network"],
-  ["compliance_", "compliance"],
-  ["malware_", "malware"],
-  ["access_", "access"],
-  ["crypto_", "encryption"],
-  ["container_", "container"],
-  ["patch_", "patch-management"],
-  ["secrets_", "secrets"],
-  ["defense_", "meta"],
-  ["ebpf_", "ebpf"],
-  ["sudo_", "sudo"],
-  ["preflight_", "sudo"],
+  ["access_control", "access"],
+  ["compliance", "compliance"],
+  ["malware", "malware"],
+  ["ebpf", "ebpf"],
+  ["crypto", "encryption"],
+  ["patch", "patch-management"],
+  ["secrets", "secrets"],
+  // Solo tools
+  ["api_security", "api-security"],
+  ["cloud_security", "cloud-security"],
+  ["honeypot_manage", "deception"],
+  ["dns_security", "dns-security"],
+  ["process_security", "process-security"],
+  ["threat_intel", "threat-intel"],
+  ["vuln_manage", "vulnerability-management"],
+  ["waf_manage", "waf"],
+  ["wireless_security", "wireless-security"],
+  ["zero_trust", "zero-trust"],
 ];
 
 /**
@@ -256,444 +266,201 @@ interface SudoOverlay {
 }
 
 /**
- * Static sudo requirement data for all 78 consolidated tools.
+ * Static sudo requirement data for all 31 consolidated tools.
  * Each consolidated tool uses action parameters, so sudo is typically
  * "conditional" (depends on which action is selected).
  */
 const SUDO_OVERLAYS: SudoOverlay[] = [
-  // ── Firewall tools ────────────────────────────────────────────────────
+  // ── Firewall ──────────────────────────────────────────────────────────
   {
-    toolName: "firewall_iptables",
+    toolName: "firewall",
     sudo: "conditional",
-    sudoReason: "Read actions may work without sudo; write actions require root to modify netfilter tables",
-  },
-  {
-    toolName: "firewall_ufw",
-    sudo: "conditional",
-    sudoReason: "Status may work without sudo; add/delete rules require root",
-  },
-  {
-    toolName: "firewall_persist",
-    sudo: "always",
-    sudoReason: "Saving/restoring firewall rules requires root",
-  },
-  {
-    toolName: "firewall_nftables_list",
-    sudo: "always",
-    sudoReason: "nftables requires root to list ruleset",
-  },
-  {
-    toolName: "firewall_policy_audit",
-    sudo: "conditional",
-    sudoReason: "May work without sudo but shows limited results",
+    sudoReason: "Read actions may work without sudo; write actions require root to modify netfilter/ufw rules",
   },
 
-  // ── Hardening tools ───────────────────────────────────────────────────
-  {
-    toolName: "harden_sysctl",
-    sudo: "conditional",
-    sudoReason: "get/audit actions may work without sudo; set action requires root",
-  },
-  {
-    toolName: "harden_service",
-    sudo: "conditional",
-    sudoReason: "audit/status may work without sudo; manage actions require root",
-  },
-  {
-    toolName: "harden_permissions",
-    sudo: "conditional",
-    sudoReason: "check/audit actions may work without sudo; fix action requires root",
-  },
-  {
-    toolName: "harden_systemd",
-    sudo: "conditional",
-    sudoReason: "audit may work without sudo; apply action requires root for unit overrides",
-  },
+  // ── Hardening ─────────────────────────────────────────────────────────
   {
     toolName: "harden_kernel",
     sudo: "conditional",
-    sudoReason: "audit action may work without sudo; modules/coredump actions may require root",
+    sudoReason: "get/audit actions may work without sudo; set/coredump actions require root",
   },
   {
-    toolName: "harden_bootloader",
+    toolName: "harden_host",
     sudo: "conditional",
-    sudoReason: "audit may work without sudo; configure action requires root",
-  },
-  {
-    toolName: "harden_misc",
-    sudo: "conditional",
-    sudoReason: "audit actions may work without sudo; set actions require root",
-  },
-  {
-    toolName: "harden_memory",
-    sudo: "conditional",
-    sudoReason: "audit/report actions work without sudo; enforce_aslr requires root",
+    sudoReason: "audit actions may work without sudo; fix/apply/block actions require root",
   },
 
-  // ── IDS tools ─────────────────────────────────────────────────────────
+  // ── Access control ────────────────────────────────────────────────────
   {
-    toolName: "ids_aide_manage",
-    sudo: "always",
-    sudoReason: "AIDE database operations require root",
-  },
-  {
-    toolName: "ids_rootkit_scan",
-    sudo: "always",
-    sudoReason: "Rootkit scanning requires root (delegates to rkhunter/chkrootkit)",
-  },
-  {
-    toolName: "ids_file_integrity_check",
+    toolName: "access_control",
     sudo: "conditional",
-    sudoReason: "Baseline creation may use sudo tee; display/compare modes do not",
+    sudoReason: "audit actions may work without sudo; harden/configure/restrict actions require root",
   },
 
-  // ── Logging tools ─────────────────────────────────────────────────────
+  // ── Compliance ────────────────────────────────────────────────────────
   {
-    toolName: "log_auditd",
+    toolName: "compliance",
     sudo: "always",
-    sudoReason: "Auditd requires root for rule management and log searching",
-  },
-  {
-    toolName: "log_journalctl_query",
-    sudo: "conditional",
-    sudoReason: "May work without sudo but shows limited results",
-  },
-  {
-    toolName: "log_fail2ban",
-    sudo: "conditional",
-    sudoReason: "status may work without sudo; ban/unban/reload actions require root",
-  },
-  {
-    toolName: "log_system",
-    sudo: "conditional",
-    sudoReason: "May need sudo to read restricted log files",
+    sudoReason: "Lynis, OpenSCAP, and CIS checks require root for comprehensive audit",
   },
 
-  // ── Network defense tools ─────────────────────────────────────────────
+  // ── Integrity (AIDE + rootkit + file + drift) ─────────────────────────
   {
-    toolName: "netdef_connections",
-    sudo: "conditional",
-    sudoReason: "May work without sudo but shows limited results",
-  },
-  {
-    toolName: "netdef_capture",
+    toolName: "integrity",
     sudo: "always",
-    sudoReason: "Packet capture requires root",
-    capabilities: ["CAP_NET_RAW"],
-  },
-  {
-    toolName: "netdef_security_audit",
-    sudo: "conditional",
-    sudoReason: "scan_detect may need log access; self_scan requires root for SYN scans",
+    sudoReason: "AIDE, rootkit scanners, and file integrity checks require root",
   },
 
-  // ── Compliance tools ──────────────────────────────────────────────────
+  // ── Logging ───────────────────────────────────────────────────────────
   {
-    toolName: "compliance_lynis_audit",
-    sudo: "always",
-    sudoReason: "Lynis requires root for comprehensive audit",
-  },
-  {
-    toolName: "compliance_oscap_scan",
-    sudo: "always",
-    sudoReason: "OpenSCAP requires root for system scanning",
-  },
-  {
-    toolName: "compliance_check",
+    toolName: "log_management",
     sudo: "conditional",
-    sudoReason: "CIS checks may need root for full results; framework checks vary",
-  },
-  {
-    toolName: "compliance_policy_evaluate",
-    sudo: "never",
-    sudoReason: "Reads files and evaluates policy without privileged operations",
-  },
-  {
-    toolName: "compliance_report",
-    sudo: "conditional",
-    sudoReason: "May invoke Lynis which requires root for comprehensive audit",
-  },
-  {
-    toolName: "compliance_cron_restrict",
-    sudo: "always",
-    sudoReason: "Cron access restriction requires root",
-  },
-  {
-    toolName: "compliance_tmp_hardening",
-    sudo: "always",
-    sudoReason: "Mount operations require root",
+    sudoReason: "Auditd management requires root; journal/fail2ban status may work without sudo",
   },
 
-  // ── Malware tools ─────────────────────────────────────────────────────
+  // ── Malware ───────────────────────────────────────────────────────────
   {
-    toolName: "malware_clamav",
+    toolName: "malware",
     sudo: "conditional",
-    sudoReason: "scan may need root for restricted dirs; update always requires root",
-  },
-  {
-    toolName: "malware_yara_scan",
-    sudo: "never",
-    sudoReason: "YARA scanning runs as current user",
-  },
-  {
-    toolName: "malware_file_scan",
-    sudo: "conditional",
-    sudoReason: "suspicious file scan may need root; webshell detection may need root for web dirs",
-  },
-  {
-    toolName: "malware_quarantine_manage",
-    sudo: "never",
-    sudoReason: "Manages quarantine files without requiring root",
+    sudoReason: "ClamAV scan/update and quarantine management may require root",
   },
 
-  // ── Backup tools ──────────────────────────────────────────────────────
-  {
-    toolName: "backup",
-    sudo: "conditional",
-    sudoReason: "config/restore/verify/list work without sudo; state snapshot may need sudo for firewall/service data",
-  },
-
-  // ── Access control tools ──────────────────────────────────────────────
-  {
-    toolName: "access_ssh",
-    sudo: "conditional",
-    sudoReason: "audit/cipher_audit may work without sudo; harden action requires root",
-  },
-  {
-    toolName: "access_sudo_audit",
-    sudo: "conditional",
-    sudoReason: "May work without sudo but shows limited results",
-  },
-  {
-    toolName: "access_user_audit",
-    sudo: "conditional",
-    sudoReason: "May work without sudo but shows limited results",
-  },
-  {
-    toolName: "access_password_policy",
-    sudo: "conditional",
-    sudoReason: "audit may work without sudo; set action requires root",
-  },
-  {
-    toolName: "access_pam",
-    sudo: "conditional",
-    sudoReason: "audit needs root to read PAM files; configure requires root",
-  },
-  {
-    toolName: "access_restrict_shell",
-    sudo: "always",
-    sudoReason: "Changing user shells requires root",
-  },
-
-  // ── Encryption tools ──────────────────────────────────────────────────
-  {
-    toolName: "crypto_tls",
-    sudo: "conditional",
-    sudoReason: "remote_audit/cert_expiry work without sudo; config_audit may need root for web server configs",
-  },
-  {
-    toolName: "crypto_gpg_keys",
-    sudo: "never",
-    sudoReason: "GPG key operations run as current user",
-  },
-  {
-    toolName: "crypto_luks_manage",
-    sudo: "always",
-    sudoReason: "LUKS operations require root",
-  },
-  {
-    toolName: "crypto_file_hash",
-    sudo: "never",
-    sudoReason: "Hash computation does not require root",
-  },
-
-  // ── Container tools ───────────────────────────────────────────────────
+  // ── Container ─────────────────────────────────────────────────────────
   {
     toolName: "container_docker",
     sudo: "conditional",
-    sudoReason: "Docker commands may require root or docker group membership",
+    sudoReason: "Docker socket access may require root or docker group membership",
   },
   {
-    toolName: "container_apparmor",
+    toolName: "container_isolation",
     sudo: "conditional",
-    sudoReason: "status/list may work without sudo; enforce/complain/install require root",
+    sudoReason: "AppArmor/SELinux management requires root; namespace checks may not",
   },
+
+  // ── eBPF ──────────────────────────────────────────────────────────────
   {
-    toolName: "container_selinux_manage",
+    toolName: "ebpf",
     sudo: "always",
-    sudoReason: "SELinux management requires root",
-  },
-  {
-    toolName: "container_namespace_check",
-    sudo: "conditional",
-    sudoReason: "May fall back to sudo lsns if unprivileged access insufficient",
-  },
-  {
-    toolName: "container_image_scan",
-    sudo: "never",
-    sudoReason: "Trivy/Grype image scanning does not require root",
-  },
-  {
-    toolName: "container_security_config",
-    sudo: "conditional",
-    sudoReason: "seccomp_profile generation does not need root; rootless setup may need root for subuid/subgid",
-  },
-
-  // ── Patch management tools ────────────────────────────────────────────
-  {
-    toolName: "patch_update_audit",
-    sudo: "always",
-    sudoReason: "Package management requires root",
-  },
-  {
-    toolName: "patch_unattended_audit",
-    sudo: "always",
-    sudoReason: "Package management requires root",
-  },
-  {
-    toolName: "patch_integrity_check",
-    sudo: "always",
-    sudoReason: "Package management requires root",
-  },
-  {
-    toolName: "patch_kernel_audit",
-    sudo: "always",
-    sudoReason: "Package management requires root",
-  },
-  {
-    toolName: "patch_vulnerability_intel",
-    sudo: "never",
-    sudoReason: "CVE lookup and package scanning do not require root",
-  },
-
-  // ── Secrets management tools ──────────────────────────────────────────
-  {
-    toolName: "secrets_scan",
-    sudo: "never",
-    sudoReason: "Scans filesystem for secrets using grep/find as current user",
-  },
-  {
-    toolName: "secrets_env_audit",
-    sudo: "never",
-    sudoReason: "Audits environment variables and .env files as current user",
-  },
-  {
-    toolName: "secrets_ssh_key_sprawl",
-    sudo: "never",
-    sudoReason: "Finds SSH keys and checks permissions as current user",
-  },
-  {
-    toolName: "secrets_git_history_scan",
-    sudo: "never",
-    sudoReason: "Scans git repository history as current user",
-  },
-
-  // ── Incident response tools ───────────────────────────────────────────
-  {
-    toolName: "incident_response",
-    sudo: "conditional",
-    sudoReason: "collect action requires root for full system access; ioc_scan benefits from root; timeline works as user",
-  },
-
-  // ── Meta tools ────────────────────────────────────────────────────────
-  {
-    toolName: "defense_check_tools",
-    sudo: "conditional",
-    sudoReason: "Tool checks are unprivileged; install_missing uses sudo",
-  },
-  {
-    toolName: "defense_workflow",
-    sudo: "conditional",
-    sudoReason: "suggest action is unprivileged; run action may include commands that require root",
-  },
-  {
-    toolName: "defense_change_history",
-    sudo: "never",
-    sudoReason: "Reads in-memory changelog without system access",
-  },
-  {
-    toolName: "defense_security_posture",
-    sudo: "conditional",
-    sudoReason: "score/dashboard may invoke checks that benefit from root; trend is unprivileged",
-  },
-  {
-    toolName: "defense_scheduled_audit",
-    sudo: "conditional",
-    sudoReason: "create/remove actions require root for systemd/cron; list/history are unprivileged",
-  },
-
-  // ── Sudo management tools ─────────────────────────────────────────────
-  {
-    toolName: "sudo_elevate",
-    sudo: "never",
-    tags: ["bypass-preflight"],
-  },
-  {
-    toolName: "sudo_elevate_gui",
-    sudo: "never",
-    tags: ["bypass-preflight"],
-  },
-  {
-    toolName: "sudo_status",
-    sudo: "never",
-    tags: ["bypass-preflight"],
-  },
-  {
-    toolName: "sudo_drop",
-    sudo: "never",
-    tags: ["bypass-preflight"],
-  },
-  {
-    toolName: "sudo_extend",
-    sudo: "never",
-    tags: ["bypass-preflight"],
-  },
-  {
-    toolName: "preflight_batch_check",
-    sudo: "never",
-    sudoReason: "Pre-flight checks run without elevation — they only inspect requirements",
-    tags: ["bypass-preflight"],
-  },
-
-  // ── Supply chain security tools ───────────────────────────────────────
-  {
-    toolName: "supply_chain",
-    sudo: "conditional",
-    sudoReason: "sbom/verify actions work without root; sign action may need credentials",
-  },
-
-  // ── Drift detection tools ─────────────────────────────────────────────
-  {
-    toolName: "drift_baseline",
-    sudo: "never",
-    sudoReason: "Hashes files and captures state without root",
-  },
-
-  // ── Zero-trust network tools ──────────────────────────────────────────
-  {
-    toolName: "zero_trust",
-    sudo: "conditional",
-    sudoReason: "wireguard/wg_peers/microsegment require root; mtls cert generation does not",
-  },
-
-  // ── eBPF tools ────────────────────────────────────────────────────────
-  {
-    toolName: "ebpf_list_programs",
-    sudo: "always",
-    sudoReason: "eBPF program listing requires root",
+    sudoReason: "eBPF operations require CAP_SYS_ADMIN or root",
     capabilities: ["CAP_SYS_ADMIN"],
   },
+
+  // ── Crypto ────────────────────────────────────────────────────────────
   {
-    toolName: "ebpf_falco",
+    toolName: "crypto",
     sudo: "conditional",
-    sudoReason: "status/events may work without root; deploy_rules requires root",
+    sudoReason: "LUKS operations require root; TLS audit and file hashing may not",
   },
 
-  // ── Application hardening tools ───────────────────────────────────────
+  // ── Network defense ───────────────────────────────────────────────────
+  {
+    toolName: "network_defense",
+    sudo: "conditional",
+    sudoReason: "Packet capture requires root; connection listing may work without sudo",
+    capabilities: ["CAP_NET_RAW"],
+  },
+
+  // ── Patch management ──────────────────────────────────────────────────
+  {
+    toolName: "patch",
+    sudo: "conditional",
+    sudoReason: "Package installation requires root; audit actions may work without sudo",
+  },
+
+  // ── Secrets ───────────────────────────────────────────────────────────
+  {
+    toolName: "secrets",
+    sudo: "conditional",
+    sudoReason: "May need root to scan restricted paths or git repos",
+  },
+
+  // ── Incident response ─────────────────────────────────────────────────
+  {
+    toolName: "incident_response",
+    sudo: "always",
+    sudoReason: "Forensic collection, memory dumps, and evidence bagging require root",
+  },
+
+  // ── Meta / management ─────────────────────────────────────────────────
+  {
+    toolName: "defense_mgmt",
+    sudo: "conditional",
+    sudoReason: "Tool checks may need sudo; workflow execution depends on actions performed",
+  },
+
+  // ── Sudo session management ───────────────────────────────────────────
+  {
+    toolName: "sudo_session",
+    sudo: "conditional",
+    sudoReason: "elevate/elevate_gui require password; status/drop/extend manage existing session",
+    tags: ["bypass-preflight"],
+  },
+
+  // ── Solo tools ────────────────────────────────────────────────────────
+  {
+    toolName: "api_security",
+    sudo: "conditional",
+    sudoReason: "TLS verification may need elevated access; API discovery works without sudo",
+  },
   {
     toolName: "app_harden",
     sudo: "conditional",
-    sudoReason: "audit/recommend are unprivileged; firewall/systemd actions require root",
+    sudoReason: "Audit works without sudo; apply/firewall/systemd actions require root",
+  },
+  {
+    toolName: "backup",
+    sudo: "conditional",
+    sudoReason: "Backup/restore of system files may require root",
+  },
+  {
+    toolName: "cloud_security",
+    sudo: "never",
+    sudoReason: "Cloud metadata queries do not require local root",
+  },
+  {
+    toolName: "honeypot_manage",
+    sudo: "always",
+    sudoReason: "Deploying honeyports and canaries requires root to bind privileged ports",
+  },
+  {
+    toolName: "dns_security",
+    sudo: "conditional",
+    sudoReason: "DNS audit works without sudo; domain blocking requires root",
+  },
+  {
+    toolName: "process_security",
+    sudo: "conditional",
+    sudoReason: "Process listing works without sudo; capability/cgroup audits may need root",
+  },
+  {
+    toolName: "supply_chain",
+    sudo: "conditional",
+    sudoReason: "SBOM generation and SLSA verification may need elevated access",
+  },
+  {
+    toolName: "threat_intel",
+    sudo: "conditional",
+    sudoReason: "Blocklist application requires root; reputation checks do not",
+  },
+  {
+    toolName: "vuln_manage",
+    sudo: "conditional",
+    sudoReason: "System scanning may require root; web scanning may not",
+  },
+  {
+    toolName: "waf_manage",
+    sudo: "conditional",
+    sudoReason: "ModSecurity config changes require root; audit may not",
+  },
+  {
+    toolName: "wireless_security",
+    sudo: "conditional",
+    sudoReason: "WiFi/BT audit may need root to access hardware interfaces",
+  },
+  {
+    toolName: "zero_trust",
+    sudo: "always",
+    sudoReason: "WireGuard and mTLS setup require root",
   },
 ];
 

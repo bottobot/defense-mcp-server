@@ -78,19 +78,16 @@ describe("container-security tools", () => {
 
   // ── Registration ──────────────────────────────────────────────────────
 
-  it("should register all container security tools", () => {
+  it("should register 2 container security tools", () => {
     expect(tools.has("container_docker")).toBe(true);
-    expect(tools.has("container_apparmor")).toBe(true);
-    expect(tools.has("container_security_config")).toBe(true);
-    expect(tools.has("container_selinux_manage")).toBe(true);
-    expect(tools.has("container_namespace_check")).toBe(true);
-    expect(tools.has("container_image_scan")).toBe(true);
+    expect(tools.has("container_isolation")).toBe(true);
+    expect(tools.size).toBe(2);
   });
 
   // ── TOOL-011: Seccomp profile path restriction ───────────────────────
 
   it("should restrict seccomp profile output to safe directory (TOOL-011)", async () => {
-    const handler = tools.get("container_security_config")!.handler;
+    const handler = tools.get("container_isolation")!.handler;
     const result = await handler({
       action: "seccomp_profile",
       allowedSyscalls: ["read", "write", "exit"],
@@ -104,7 +101,7 @@ describe("container-security tools", () => {
   });
 
   it("should use secureWriteFileSync for seccomp profile writing (TOOL-011)", async () => {
-    const handler = tools.get("container_security_config")!.handler;
+    const handler = tools.get("container_isolation")!.handler;
     await handler({
       action: "seccomp_profile",
       allowedSyscalls: ["read", "write"],
@@ -117,7 +114,7 @@ describe("container-security tools", () => {
   });
 
   it("should produce dry-run output for seccomp profile when dryRun is true", async () => {
-    const handler = tools.get("container_security_config")!.handler;
+    const handler = tools.get("container_isolation")!.handler;
     const result = await handler({
       action: "seccomp_profile",
       allowedSyscalls: ["read", "write", "exit"],
@@ -133,7 +130,7 @@ describe("container-security tools", () => {
   // ── Required params ──────────────────────────────────────────────────
 
   it("should require allowedSyscalls for seccomp_profile", async () => {
-    const handler = tools.get("container_security_config")!.handler;
+    const handler = tools.get("container_isolation")!.handler;
     const result = await handler({
       action: "seccomp_profile",
       defaultAction: "SCMP_ACT_ERRNO",
@@ -143,10 +140,10 @@ describe("container-security tools", () => {
     expect(result.content[0].text).toContain("allowedSyscalls");
   });
 
-  it("should require username for rootless action", async () => {
-    const handler = tools.get("container_security_config")!.handler;
+  it("should require username for rootless_setup action", async () => {
+    const handler = tools.get("container_isolation")!.handler;
     const result = await handler({
-      action: "rootless",
+      action: "rootless_setup",
       dryRun: true,
     });
     expect(result.isError).toBe(true);
@@ -155,16 +152,16 @@ describe("container-security tools", () => {
 
   // ── AppArmor ─────────────────────────────────────────────────────────
 
-  it("should require profile name for enforce action", async () => {
-    const handler = tools.get("container_apparmor")!.handler;
-    const result = await handler({ action: "enforce" });
+  it("should require profile name for apparmor_enforce action", async () => {
+    const handler = tools.get("container_isolation")!.handler;
+    const result = await handler({ action: "apparmor_enforce" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("profile name is required");
   });
 
-  it("should require profileName for apply_container action", async () => {
-    const handler = tools.get("container_apparmor")!.handler;
-    const result = await handler({ action: "apply_container" });
+  it("should require profileName for apparmor_apply_container action", async () => {
+    const handler = tools.get("container_isolation")!.handler;
+    const result = await handler({ action: "apparmor_apply_container" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("profileName");
   });
@@ -176,5 +173,14 @@ describe("container-security tools", () => {
     const result = await handler({ action: "daemon" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("daemon_action");
+  });
+
+  // ── image_scan ───────────────────────────────────────────────────────
+
+  it("should require image for image_scan action", async () => {
+    const handler = tools.get("container_docker")!.handler;
+    const result = await handler({ action: "image_scan" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("image is required");
   });
 });

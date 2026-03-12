@@ -36,9 +36,9 @@ describe("tool-dependencies", () => {
 
   describe("getDependenciesForTool", () => {
     it("should return dependency info for a known tool", () => {
-      const dep = getDependenciesForTool("firewall_iptables");
+      const dep = getDependenciesForTool("firewall");
       expect(dep).toBeDefined();
-      expect(dep!.toolName).toBe("firewall_iptables");
+      expect(dep!.toolName).toBe("firewall");
       expect(dep!.requiredBinaries).toContain("iptables");
     });
 
@@ -48,15 +48,15 @@ describe("tool-dependencies", () => {
     });
 
     it("should return critical flag for critical tools", () => {
-      const dep = getDependenciesForTool("firewall_iptables");
+      const dep = getDependenciesForTool("firewall");
       expect(dep).toBeDefined();
       expect(dep!.critical).toBe(true);
     });
 
     it("should return optional binaries when defined", () => {
-      const dep = getDependenciesForTool("firewall_iptables");
+      const dep = getDependenciesForTool("patch");
       expect(dep).toBeDefined();
-      expect(dep!.optionalBinaries).toContain("ip6tables");
+      expect(dep!.optionalBinaries).toContain("debsums");
     });
   });
 
@@ -88,6 +88,7 @@ describe("tool-dependencies", () => {
 
     it("should include known critical binaries like iptables", () => {
       const binaries = getAllRequiredBinaries();
+      // firewall tool requires iptables
       expect(binaries).toContain("iptables");
     });
   });
@@ -129,10 +130,10 @@ describe("tool-dependencies", () => {
       }
     });
 
-    it("should include firewall_iptables as a critical tool", () => {
+    it("should include firewall as a critical tool", () => {
       const critical = getCriticalDependencies();
       const names = critical.map((d) => d.toolName);
-      expect(names).toContain("firewall_iptables");
+      expect(names).toContain("firewall");
     });
   });
 });

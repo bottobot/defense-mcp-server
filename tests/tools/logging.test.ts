@@ -1,7 +1,7 @@
 /**
  * Tests for src/tools/logging.ts
  *
- * Covers: TOOL-015 log path validation, tool registration,
+ * Covers: TOOL-015 log path validation, tool registration (log_management),
  * action routing, dry_run defaults, and auditd key validation.
  */
 
@@ -43,6 +43,9 @@ vi.mock("../../src/core/distro-adapter.js", () => ({
     paths: { syslog: "/var/log/syslog" },
   }),
 }));
+vi.mock("../../src/core/spawn-safe.js", () => ({
+  spawnSafe: vi.fn(),
+}));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return { ...actual, existsSync: vi.fn().mockReturnValue(true) };
@@ -72,33 +75,30 @@ describe("logging tools", () => {
     tools = mock.tools;
   });
 
-  it("should register all 4 logging tools", () => {
-    expect(tools.has("log_auditd")).toBe(true);
-    expect(tools.has("log_journalctl_query")).toBe(true);
-    expect(tools.has("log_fail2ban")).toBe(true);
-    expect(tools.has("log_system")).toBe(true);
+  it("should register 1 log_management tool", () => {
+    expect(tools.has("log_management")).toBe(true);
   });
 
-  // ── log_auditd ────────────────────────────────────────────────────────
+  // ── auditd_rules ──────────────────────────────────────────────────────
 
-  it("should require rules_action for rules action", async () => {
-    const handler = tools.get("log_auditd")!.handler;
-    const result = await handler({ action: "rules" });
+  it("should require rules_action for auditd_rules action", async () => {
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({ action: "auditd_rules" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("rules_action is required");
   });
 
   it("should require rule string for add action", async () => {
-    const handler = tools.get("log_auditd")!.handler;
-    const result = await handler({ action: "rules", rules_action: "add" });
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({ action: "auditd_rules", rules_action: "add" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("rule string is required");
   });
 
   it("should preview rule add in dry_run mode", async () => {
-    const handler = tools.get("log_auditd")!.handler;
+    const handler = tools.get("log_management")!.handler;
     const result = await handler({
-      action: "rules",
+      action: "auditd_rules",
       rules_action: "add",
       rule: "-w /etc/passwd -p wa -k identity",
       dry_run: true,
@@ -107,26 +107,26 @@ describe("logging tools", () => {
     expect(result.content[0].text).toContain("DRY-RUN");
   });
 
-  // ── log_fail2ban ──────────────────────────────────────────────────────
+  // ── fail2ban actions ──────────────────────────────────────────────────
 
-  it("should require jail for ban action", async () => {
-    const handler = tools.get("log_fail2ban")!.handler;
-    const result = await handler({ action: "ban" });
+  it("should require jail for fail2ban_ban action", async () => {
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({ action: "fail2ban_ban" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Jail name is required");
   });
 
-  it("should require ip for ban action", async () => {
-    const handler = tools.get("log_fail2ban")!.handler;
-    const result = await handler({ action: "ban", jail: "sshd" });
+  it("should require ip for fail2ban_ban action", async () => {
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({ action: "fail2ban_ban", jail: "sshd" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("IP address is required");
   });
 
-  it("should preview ban in dry_run mode", async () => {
-    const handler = tools.get("log_fail2ban")!.handler;
+  it("should preview fail2ban_ban in dry_run mode", async () => {
+    const handler = tools.get("log_management")!.handler;
     const result = await handler({
-      action: "ban",
+      action: "fail2ban_ban",
       jail: "sshd",
       ip: "192.168.1.100",
       dry_run: true,
@@ -135,12 +135,12 @@ describe("logging tools", () => {
     expect(result.content[0].text).toContain("DRY-RUN");
   });
 
-  // ── log_system ────────────────────────────────────────────────────────
+  // ── syslog_analyze ────────────────────────────────────────────────────
 
   it("should reject log_file path with traversal (TOOL-015)", async () => {
-    const handler = tools.get("log_system")!.handler;
+    const handler = tools.get("log_management")!.handler;
     const result = await handler({
-      action: "analyze",
+      action: "syslog_analyze",
       log_file: "/var/log/../../../etc/shadow",
       pattern: "all",
       lines: 100,
@@ -152,7 +152,7 @@ describe("logging tools", () => {
   it("should handle rotation_audit action", async () => {
     const { executeCommand } = await import("../../src/core/executor.js");
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "weekly\nrotate 4\ncompress\n" });
-    const handler = tools.get("log_system")!.handler;
+    const handler = tools.get("log_management")!.handler;
     const result = await handler({ action: "rotation_audit" });
     expect(result.isError).toBeUndefined();
   });

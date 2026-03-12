@@ -78,6 +78,61 @@ export class RateLimiter {
   }
 
   /**
+   * Inspect current rate limit state for `key` WITHOUT recording an invocation.
+   *
+   * Use this to check whether a call would be allowed before deciding to
+   * proceed. Unlike `check()`, this does NOT consume an attempt slot.
+   *
+   * @param key - Identifier to inspect (e.g., a tool name or auth key)
+   * @returns Current limit state: allowed, remaining attempts, and optional
+   *          retryAfterMs (ms until the oldest timestamp expires and a slot opens)
+   */
+  peek(key: string): { allowed: boolean; remaining: number; retryAfterMs?: number } {
+    const now = Date.now();
+    this.pruneTool(key, now);
+    const bucket = this.getToolBucket(key);
+    const count = bucket.timestamps.length;
+
+    if (this.maxPerTool > 0 && count >= this.maxPerTool) {
+      const oldest = bucket.timestamps[0] ?? now;
+      const retryAfterMs = Math.max(0, oldest + this.windowMs - now);
+      return { allowed: false, remaining: 0, retryAfterMs };
+    }
+
+    return {
+      allowed: true,
+      remaining: this.maxPerTool > 0 ? this.maxPerTool - count : Infinity,
+    };
+  }
+
+  /**
+   * Record a failure for `key` without performing a limit check.
+   *
+   * Use this to register a failed attempt (e.g., wrong password) after the
+   * fact. Unlike `check()`, this does NOT gate on the current limit state —
+   * it unconditionally adds a timestamp to the bucket.
+   *
+   * @param key - Identifier to record against
+   */
+  record(key: string): void {
+    const now = Date.now();
+    this.pruneTool(key, now);
+    this.getToolBucket(key).timestamps.push(now);
+  }
+
+  /**
+   * Reset the rate limit counter for a specific `key`.
+   *
+   * Use after a confirmed successful authentication to clear the failed-attempt
+   * counter so a subsequent failure starts from zero.
+   *
+   * @param key - Identifier whose bucket should be cleared
+   */
+  resetKey(key: string): void {
+    this.toolBuckets.delete(key);
+  }
+
+  /**
    * Check whether an invocation of `toolName` is allowed, and if so,
    * record it. Returns a {@link RateLimitResult} indicating whether the
    * call is permitted.

@@ -201,6 +201,7 @@ describe("executor", () => {
                 command: "sudo",
                 args: ["cat", "/dev/null"],
                 skipSudoInjection: true,
+                timeout: 2000, // Short timeout — sudo may hang waiting for password on stdin
             });
             if (result.exitCode !== 0) {
                 // Should NOT be an allowlist failure — both sudo and cat are allowlisted

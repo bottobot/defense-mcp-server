@@ -3,7 +3,7 @@
  *
  * Covers: TOOL-022 network parameter validation (IP, CIDR, port, protocol),
  * BPF filter validation, capture path validation, tool registration, action routing,
- * and network_segmentation_audit (map_zones, verify_isolation, test_paths, audit_vlans).
+ * and segmentation audit (map_zones, verify_isolation, test_paths, audit_vlans).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -50,6 +50,7 @@ import { registerNetworkDefenseTools } from "../../src/tools/network-defense.js"
 import { executeCommand } from "../../src/core/executor.js";
 import { spawnSafe } from "../../src/core/spawn-safe.js";
 import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 
 type ToolHandler = (params: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>;
 
@@ -62,7 +63,7 @@ function createMockChildProcess(
   stdout: string,
   stderr: string,
   exitCode: number,
-) {
+): ChildProcess {
   const cp = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
     stderr: EventEmitter;
@@ -78,7 +79,7 @@ function createMockChildProcess(
     cp.emit("close", exitCode);
   });
 
-  return cp;
+  return cp as unknown as ChildProcess;
 }
 
 function createMockServer() {
@@ -101,34 +102,32 @@ describe("network-defense tools", () => {
     tools = mock.tools;
   });
 
-  it("should register all 4 network defense tools", () => {
-    expect(tools.has("netdef_connections")).toBe(true);
-    expect(tools.has("netdef_capture")).toBe(true);
-    expect(tools.has("netdef_security_audit")).toBe(true);
-    expect(tools.has("network_segmentation_audit")).toBe(true);
+  it("should register 1 network_defense tool", () => {
+    expect(tools.has("network_defense")).toBe(true);
+    expect(tools.size).toBe(1);
   });
 
-  // ── netdef_connections ────────────────────────────────────────────────
+  // ── connections_list ──────────────────────────────────────────────────
 
-  it("should handle list action", async () => {
-    const handler = tools.get("netdef_connections")!.handler;
-    const result = await handler({ action: "list", protocol: "all", listening: false, process: true });
+  it("should handle connections_list action", async () => {
+    const handler = tools.get("network_defense")!.handler;
+    const result = await handler({ action: "connections_list", protocol: "all", listening: false, process: true });
     expect(result.isError).toBeUndefined();
   });
 
-  it("should handle audit action", async () => {
+  it("should handle connections_audit action", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "Netid  State  Recv-Q Send-Q Local Address:Port\n" });
-    const handler = tools.get("netdef_connections")!.handler;
-    const result = await handler({ action: "audit", include_loopback: false });
+    const handler = tools.get("network_defense")!.handler;
+    const result = await handler({ action: "connections_audit", include_loopback: false });
     expect(result.isError).toBeUndefined();
   });
 
-  // ── netdef_capture ────────────────────────────────────────────────────
+  // ── capture_custom ────────────────────────────────────────────────────
 
-  it("should preview custom capture in dry_run mode", async () => {
-    const handler = tools.get("netdef_capture")!.handler;
+  it("should preview capture_custom in dry_run mode", async () => {
+    const handler = tools.get("network_defense")!.handler;
     const result = await handler({
-      action: "custom",
+      action: "capture_custom",
       interface: "any",
       count: 10,
       duration: 5,
@@ -139,9 +138,9 @@ describe("network-defense tools", () => {
   });
 
   it("should reject BPF filter with shell metacharacters (TOOL-022/018)", async () => {
-    const handler = tools.get("netdef_capture")!.handler;
+    const handler = tools.get("network_defense")!.handler;
     const result = await handler({
-      action: "custom",
+      action: "capture_custom",
       interface: "any",
       count: 10,
       duration: 5,
@@ -153,9 +152,9 @@ describe("network-defense tools", () => {
   });
 
   it("should reject output_file path with traversal (TOOL-022)", async () => {
-    const handler = tools.get("netdef_capture")!.handler;
+    const handler = tools.get("network_defense")!.handler;
     const result = await handler({
-      action: "custom",
+      action: "capture_custom",
       interface: "any",
       count: 10,
       duration: 5,
@@ -166,38 +165,34 @@ describe("network-defense tools", () => {
     expect(result.content[0].text).toContain("traversal");
   });
 
-  // ── netdef_security_audit ─────────────────────────────────────────────
+  // ── security_scan_detect ──────────────────────────────────────────────
 
-  it("should handle scan_detect action", async () => {
+  it("should handle security_scan_detect action", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "" });
-    const handler = tools.get("netdef_security_audit")!.handler;
-    const result = await handler({ action: "scan_detect", threshold: 10, timeframe: 60 });
+    const handler = tools.get("network_defense")!.handler;
+    const result = await handler({ action: "security_scan_detect", threshold: 10, timeframe: 60 });
     expect(result.isError).toBeUndefined();
   });
 
-  it("should handle self_scan action", async () => {
+  it("should handle security_self_scan action", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "Nmap scan report" });
-    const handler = tools.get("netdef_security_audit")!.handler;
-    const result = await handler({ action: "self_scan", target: "localhost", scan_type: "quick" });
+    const handler = tools.get("network_defense")!.handler;
+    const result = await handler({ action: "security_self_scan", target: "localhost", scan_type: "quick" });
     expect(result.isError).toBeUndefined();
   });
 
-  // ── network_segmentation_audit ─────────────────────────────────────────
+  // ── segmentation actions ───────────────────────────────────────────────
 
-  describe("network_segmentation_audit", () => {
+  describe("segmentation actions", () => {
     let handler: ToolHandler;
 
     beforeEach(() => {
-      handler = tools.get("network_segmentation_audit")!.handler;
+      handler = tools.get("network_defense")!.handler;
     });
 
-    it("should be registered as network_segmentation_audit", () => {
-      expect(tools.has("network_segmentation_audit")).toBe(true);
-    });
+    // ── segmentation_map_zones ──────────────────────────────────────────
 
-    // ── map_zones ─────────────────────────────────────────────────────────
-
-    describe("map_zones", () => {
+    describe("segmentation_map_zones", () => {
       it("should parse interfaces and subnets", async () => {
         mockSpawnSafe.mockImplementation((command: string, args: string[]) => {
           const fullCmd = `${command} ${args.join(" ")}`;
@@ -216,7 +211,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "map_zones", output_format: "text" });
+        const result = await handler({ action: "segmentation_map_zones", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("eth0");
         expect(result.content[0].text).toContain("192.168.1.10/24");
@@ -239,7 +234,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "map_zones", output_format: "text" });
+        const result = await handler({ action: "segmentation_map_zones", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("192.168.1.1");
       });
@@ -262,7 +257,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "map_zones", output_format: "text" });
+        const result = await handler({ action: "segmentation_map_zones", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("Firewall rules");
       });
@@ -285,7 +280,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "map_zones", output_format: "text" });
+        const result = await handler({ action: "segmentation_map_zones", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("Bridge Interfaces");
         expect(result.content[0].text).toContain("veth0");
@@ -303,7 +298,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "map_zones", output_format: "json" });
+        const result = await handler({ action: "segmentation_map_zones", output_format: "json" });
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.totalZones).toBeDefined();
@@ -311,9 +306,9 @@ describe("network-defense tools", () => {
       });
     });
 
-    // ── verify_isolation ──────────────────────────────────────────────────
+    // ── segmentation_verify_isolation ───────────────────────────────────
 
-    describe("verify_isolation", () => {
+    describe("segmentation_verify_isolation", () => {
       it("should check FORWARD chain default policy", async () => {
         mockSpawnSafe.mockImplementation((command: string, args: string[]) => {
           const fullCmd = `${command} ${args.join(" ")}`;
@@ -329,7 +324,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "verify_isolation", output_format: "text" });
+        const result = await handler({ action: "segmentation_verify_isolation", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("DROP");
         expect(result.content[0].text).toContain("Segmentation Score");
@@ -350,7 +345,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "verify_isolation", output_format: "text" });
+        const result = await handler({ action: "segmentation_verify_isolation", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("Violations");
         expect(result.content[0].text).toContain("ACCEPT");
@@ -360,10 +355,7 @@ describe("network-defense tools", () => {
         mockSpawnSafe.mockImplementation((command: string, args: string[]) => {
           const fullCmd = `${command} ${args.join(" ")}`;
           if (fullCmd.includes("iptables -L FORWARD -n")) {
-            return createMockChildProcess(
-              "Chain FORWARD (policy DROP)\n",
-              "", 0,
-            );
+            return createMockChildProcess("Chain FORWARD (policy DROP)\n", "", 0);
           }
           if (fullCmd.includes("-t nat")) {
             return createMockChildProcess(
@@ -374,7 +366,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "verify_isolation", output_format: "text" });
+        const result = await handler({ action: "segmentation_verify_isolation", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("NAT");
         expect(result.content[0].text).toContain("MASQUERADE");
@@ -395,7 +387,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "verify_isolation", output_format: "json" });
+        const result = await handler({ action: "segmentation_verify_isolation", output_format: "json" });
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.segmentationScore).toBeDefined();
@@ -404,18 +396,18 @@ describe("network-defense tools", () => {
       });
     });
 
-    // ── test_paths ────────────────────────────────────────────────────────
+    // ── segmentation_test_paths ─────────────────────────────────────────
 
-    describe("test_paths", () => {
+    describe("segmentation_test_paths", () => {
       it("should require both source_zone and dest_zone", async () => {
-        const result = await handler({ action: "test_paths", output_format: "text" });
+        const result = await handler({ action: "segmentation_test_paths", output_format: "text" });
         expect(result.isError).toBe(true);
         expect(result.content[0].text).toContain("source_zone");
         expect(result.content[0].text).toContain("dest_zone");
       });
 
       it("should reject missing dest_zone", async () => {
-        const result = await handler({ action: "test_paths", source_zone: "192.168.1.0/24", output_format: "text" });
+        const result = await handler({ action: "segmentation_test_paths", source_zone: "192.168.1.0/24", output_format: "text" });
         expect(result.isError).toBe(true);
       });
 
@@ -438,7 +430,7 @@ describe("network-defense tools", () => {
         });
 
         const result = await handler({
-          action: "test_paths",
+          action: "segmentation_test_paths",
           source_zone: "192.168.1.0/24",
           dest_zone: "10.0.0.0/24",
           output_format: "text",
@@ -449,23 +441,20 @@ describe("network-defense tools", () => {
         expect(result.content[0].text).toContain("Reachable hosts");
       });
 
-      it("should return JSON format for test_paths", async () => {
+      it("should return JSON format for segmentation_test_paths", async () => {
         mockSpawnSafe.mockImplementation((command: string, args: string[]) => {
           const fullCmd = `${command} ${args.join(" ")}`;
           if (fullCmd.includes("traceroute")) {
             return createMockChildProcess("traceroute to 10.0.0.1\n 1  gw  1ms\n", "", 0);
           }
           if (fullCmd.includes("nmap")) {
-            return createMockChildProcess(
-              "Nmap scan report for 10.0.0.5\nHost is up\n",
-              "", 0,
-            );
+            return createMockChildProcess("Nmap scan report for 10.0.0.5\nHost is up\n", "", 0);
           }
           return createMockChildProcess("", "", 0);
         });
 
         const result = await handler({
-          action: "test_paths",
+          action: "segmentation_test_paths",
           source_zone: "192.168.1.0/24",
           dest_zone: "10.0.0.0/24",
           output_format: "json",
@@ -480,9 +469,9 @@ describe("network-defense tools", () => {
       });
     });
 
-    // ── audit_vlans ───────────────────────────────────────────────────────
+    // ── segmentation_audit_vlans ────────────────────────────────────────
 
-    describe("audit_vlans", () => {
+    describe("segmentation_audit_vlans", () => {
       it("should detect VLAN interfaces", async () => {
         mockSpawnSafe.mockImplementation((command: string, args: string[]) => {
           const fullCmd = `${command} ${args.join(" ")}`;
@@ -501,7 +490,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "audit_vlans", output_format: "text" });
+        const result = await handler({ action: "segmentation_audit_vlans", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("VLAN");
         expect(result.content[0].text).toContain("100");
@@ -518,15 +507,12 @@ describe("network-defense tools", () => {
             );
           }
           if (fullCmd.includes("/proc/net/vlan/config")) {
-            return createMockChildProcess(
-              "VLAN Dev name | VLAN ID\neth0.100 | 100 | eth0\n",
-              "", 0,
-            );
+            return createMockChildProcess("VLAN Dev name | VLAN ID\neth0.100 | 100 | eth0\n", "", 0);
           }
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "audit_vlans", output_format: "text" });
+        const result = await handler({ action: "segmentation_audit_vlans", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("VLAN Config");
       });
@@ -546,7 +532,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 0);
         });
 
-        const result = await handler({ action: "audit_vlans", output_format: "json" });
+        const result = await handler({ action: "segmentation_audit_vlans", output_format: "json" });
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.dot1qSupported).toBe(true);
@@ -557,7 +543,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "", 1);
         });
 
-        const result = await handler({ action: "audit_vlans", output_format: "json" });
+        const result = await handler({ action: "segmentation_audit_vlans", output_format: "json" });
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.securityConcerns).toBeInstanceOf(Array);
@@ -566,15 +552,15 @@ describe("network-defense tools", () => {
       });
     });
 
-    // ── Error handling ────────────────────────────────────────────────────
+    // ── Error handling ──────────────────────────────────────────────────
 
     describe("error handling", () => {
-      it("should handle command failures gracefully for map_zones", async () => {
+      it("should handle command failures gracefully for segmentation_map_zones", async () => {
         mockSpawnSafe.mockImplementation(() => {
           return createMockChildProcess("", "command not found", 127);
         });
 
-        const result = await handler({ action: "map_zones", output_format: "text" });
+        const result = await handler({ action: "segmentation_map_zones", output_format: "text" });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("Total zones detected: 0");
       });
@@ -584,7 +570,7 @@ describe("network-defense tools", () => {
           throw new Error("Binary not in allowlist");
         });
 
-        const result = await handler({ action: "map_zones", output_format: "text" });
+        const result = await handler({ action: "segmentation_map_zones", output_format: "text" });
         // runSegmentCommand catches the throw, so the tool should still complete
         expect(result.isError).toBeUndefined();
       });
@@ -594,7 +580,7 @@ describe("network-defense tools", () => {
           return createMockChildProcess("", "iptables: command not found", 127);
         });
 
-        const result = await handler({ action: "verify_isolation", output_format: "json" });
+        const result = await handler({ action: "segmentation_verify_isolation", output_format: "json" });
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.violations.length).toBeGreaterThan(0);
@@ -602,17 +588,17 @@ describe("network-defense tools", () => {
       });
     });
 
-    // ── JSON output format ────────────────────────────────────────────────
+    // ── JSON output format ──────────────────────────────────────────────
 
     describe("JSON output format", () => {
-      it("should return JSON for map_zones", async () => {
+      it("should return JSON for segmentation_map_zones", async () => {
         mockSpawnSafe.mockImplementation(() => createMockChildProcess("", "", 0));
-        const result = await handler({ action: "map_zones", output_format: "json" });
+        const result = await handler({ action: "segmentation_map_zones", output_format: "json" });
         expect(result.isError).toBeUndefined();
         expect(() => JSON.parse(result.content[0].text)).not.toThrow();
       });
 
-      it("should return JSON for verify_isolation", async () => {
+      it("should return JSON for segmentation_verify_isolation", async () => {
         mockSpawnSafe.mockImplementation((command: string, args: string[]) => {
           const fullCmd = `${command} ${args.join(" ")}`;
           if (fullCmd.includes("iptables -L FORWARD -n")) {
@@ -620,15 +606,15 @@ describe("network-defense tools", () => {
           }
           return createMockChildProcess("", "", 0);
         });
-        const result = await handler({ action: "verify_isolation", output_format: "json" });
+        const result = await handler({ action: "segmentation_verify_isolation", output_format: "json" });
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.forwardPolicy).toBeDefined();
       });
 
-      it("should return JSON for audit_vlans", async () => {
+      it("should return JSON for segmentation_audit_vlans", async () => {
         mockSpawnSafe.mockImplementation(() => createMockChildProcess("", "", 0));
-        const result = await handler({ action: "audit_vlans", output_format: "json" });
+        const result = await handler({ action: "segmentation_audit_vlans", output_format: "json" });
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.vlanCount).toBeDefined();

@@ -1,8 +1,10 @@
 /**
  * Access control and authentication auditing tools for Kali Defense MCP Server.
  *
- * Registers 6 tools: access_ssh, access_pam, access_sudo_audit,
- * access_user_audit, access_password_policy, access_restrict_shell.
+ * Registers 1 consolidated tool: access_control
+ * Actions: ssh_audit, ssh_harden, ssh_cipher_audit, pam_audit, pam_configure,
+ *          sudo_audit, user_audit, password_policy_audit, password_policy_set,
+ *          restrict_shell
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -193,56 +195,148 @@ function validateSshConfigValue(value: string): string {
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerAccessControlTools(server: McpServer): void {
-  // ── 1. access_ssh (merged: access_ssh_audit, access_ssh_harden, access_ssh_cipher_audit) ──
-
   server.tool(
-    "access_ssh",
-    "SSH server security. Actions: audit=check config against best practices, harden=apply hardening settings, cipher_audit=audit cryptographic algorithms",
+    "access_control",
+    "Access control and authentication security. Actions: ssh_audit=check SSH config, ssh_harden=apply SSH hardening, ssh_cipher_audit=audit SSH cryptographic algorithms, pam_audit=check PAM config, pam_configure=set up PAM modules, sudo_audit=audit sudoers, user_audit=audit user accounts, password_policy_audit=audit password policy, password_policy_set=set password policy, restrict_shell=restrict user login shell",
     {
       action: z
-        .enum(["audit", "harden", "cipher_audit"])
-        .describe("Action: audit=check config, harden=apply settings, cipher_audit=check algorithms"),
-      // shared
+        .enum([
+          "ssh_audit",
+          "ssh_harden",
+          "ssh_cipher_audit",
+          "pam_audit",
+          "pam_configure",
+          "sudo_audit",
+          "user_audit",
+          "password_policy_audit",
+          "password_policy_set",
+          "restrict_shell",
+        ])
+        .describe("Action to perform"),
+      // ── SSH params ──
       config_path: z
         .string()
         .optional()
         .default("/etc/ssh/sshd_config")
-        .describe("Path to sshd_config file"),
-      // harden params
+        .describe("Path to sshd_config file (ssh_audit, ssh_harden, ssh_cipher_audit)"),
       settings: z
         .string()
         .optional()
-        .describe("Comma-separated key=value pairs for harden, e.g. 'PermitRootLogin=no,MaxAuthTries=4'"),
+        .describe("Comma-separated key=value pairs for ssh_harden, e.g. 'PermitRootLogin=no,MaxAuthTries=4'"),
       apply_recommended: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Apply all recommended hardening settings (for harden)"),
+        .describe("Apply all recommended SSH hardening settings (ssh_harden)"),
       restart_sshd: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Restart sshd after applying changes (for harden)"),
-      // shared
-      dry_run: z
+        .describe("Restart sshd after applying changes (ssh_harden)"),
+      // ── PAM audit params ──
+      service: z
+        .string()
+        .optional()
+        .describe("Specific PAM service to audit, e.g. 'sshd', 'login', 'sudo' (pam_audit)"),
+      check_all: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Check common-auth, common-password, etc. (pam_audit)"),
+      // ── PAM configure params ──
+      module: z
+        .enum(["pwquality", "faillock"])
+        .optional()
+        .describe("PAM module to configure (pam_configure)"),
+      pam_settings: z
+        .object({
+          // pwquality settings
+          minlen: z.number().optional(),
+          dcredit: z.number().optional(),
+          ucredit: z.number().optional(),
+          lcredit: z.number().optional(),
+          ocredit: z.number().optional(),
+          minclass: z.number().optional(),
+          maxrepeat: z.number().optional(),
+          reject_username: z.boolean().optional(),
+          // faillock settings
+          deny: z.number().optional(),
+          unlock_time: z.number().optional(),
+          fail_interval: z.number().optional(),
+        })
+        .optional()
+        .describe("PAM module-specific settings (pam_configure)"),
+      // ── sudo_audit params ──
+      check_nopasswd: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Preview changes (for harden)"),
+        .describe("Check for NOPASSWD entries (sudo_audit, default: true)"),
+      check_insecure: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Check for insecure sudoers configurations (sudo_audit, default: true)"),
+      // ── user_audit params ──
+      check_type: z
+        .enum(["all", "privileged", "inactive", "no_password", "shell", "locked"])
+        .optional()
+        .default("all")
+        .describe("Type of user audit to perform (user_audit, default: all)"),
+      // ── password_policy params ──
+      min_days: z
+        .number()
+        .optional()
+        .describe("Minimum days between password changes (PASS_MIN_DAYS) (password_policy_set)"),
+      max_days: z
+        .number()
+        .optional()
+        .describe("Maximum days before password must be changed (PASS_MAX_DAYS) (password_policy_set)"),
+      warn_days: z
+        .number()
+        .optional()
+        .describe("Days before expiry to warn user (PASS_WARN_AGE) (password_policy_set)"),
+      min_length: z
+        .number()
+        .optional()
+        .describe("Minimum password length (PASS_MIN_LEN) (password_policy_set)"),
+      inactive_days: z
+        .number()
+        .optional()
+        .describe("Days after password expires before account is disabled (password_policy_set)"),
+      encrypt_method: z
+        .enum(["SHA512", "YESCRYPT"])
+        .optional()
+        .describe("Password hashing algorithm (ENCRYPT_METHOD) (password_policy_set)"),
+      // ── restrict_shell params ──
+      username: z
+        .string()
+        .optional()
+        .describe("The username to restrict (restrict_shell)"),
+      shell: z
+        .string()
+        .optional()
+        .default("/usr/sbin/nologin")
+        .describe("Shell to set (restrict_shell, default: /usr/sbin/nologin)"),
+      // ── shared ──
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Preview changes without executing (ssh_harden, pam_configure, password_policy_set, restrict_shell)"),
     },
     async (params) => {
       const { action } = params;
 
       switch (action) {
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
+        // ── ssh_audit ────────────────────────────────────────────────
+        case "ssh_audit": {
           try {
             const config_path = params.config_path ?? "/etc/ssh/sshd_config";
             const result = await executeCommand({
               command: "sudo",
               args: ["cat", config_path],
-              toolName: "access_ssh",
-              timeout: getToolTimeout("access_ssh"),
+              toolName: "access_control",
+              timeout: getToolTimeout("access_control"),
             });
 
             if (result.exitCode !== 0) {
@@ -327,7 +421,7 @@ export function registerAccessControlTools(server: McpServer): void {
             const warned = findings.filter((f) => f.status === "warn").length;
 
             const entry = createChangeEntry({
-              tool: "access_ssh",
+              tool: "access_control",
               action: "SSH configuration audit",
               target: config_path,
               after: `Pass: ${passed}, Fail: ${failed}, Warn: ${warned}`,
@@ -349,8 +443,8 @@ export function registerAccessControlTools(server: McpServer): void {
           }
         }
 
-        // ── harden ───────────────────────────────────────────────────
-        case "harden": {
+        // ── ssh_harden ───────────────────────────────────────────────
+        case "ssh_harden": {
           try {
             const configPath = params.config_path ?? "/etc/ssh/sshd_config";
 
@@ -405,7 +499,7 @@ export function registerAccessControlTools(server: McpServer): void {
 
             if (params.dry_run ?? getConfig().dryRun) {
               const entry = createChangeEntry({
-                tool: "access_ssh",
+                tool: "access_control",
                 action: "[DRY-RUN] Apply SSH hardening",
                 target: configPath,
                 after: JSON.stringify(settingsToApply),
@@ -439,7 +533,7 @@ export function registerAccessControlTools(server: McpServer): void {
               await executeCommand({
                 command: "sudo",
                 args: ["cp", configPath, `${configPath}.bak.${Date.now()}`],
-                toolName: "access_ssh",
+                toolName: "access_control",
               });
             }
 
@@ -453,14 +547,14 @@ export function registerAccessControlTools(server: McpServer): void {
                   `s|^#*\\s*${key}\\s.*|${key} ${value}|`,
                   configPath,
                 ],
-                toolName: "access_ssh",
-                timeout: getToolTimeout("access_ssh"),
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
               });
 
               const grepResult = await executeCommand({
                 command: "grep",
                 args: ["-q", `^${key}\\s`, configPath],
-                toolName: "access_ssh",
+                toolName: "access_control",
               });
 
               if (grepResult.exitCode !== 0) {
@@ -468,7 +562,7 @@ export function registerAccessControlTools(server: McpServer): void {
                   command: "sudo",
                   args: ["tee", "-a", configPath],
                   stdin: `${key} ${value}\n`,
-                  toolName: "access_ssh",
+                  toolName: "access_control",
                 });
               }
             }
@@ -477,13 +571,13 @@ export function registerAccessControlTools(server: McpServer): void {
             const testResult = await executeCommand({
               command: "sudo",
               args: ["sshd", "-t"],
-              toolName: "access_ssh",
-              timeout: getToolTimeout("access_ssh"),
+              toolName: "access_control",
+              timeout: getToolTimeout("access_control"),
             });
 
             if (testResult.exitCode !== 0) {
               const entry = createChangeEntry({
-                tool: "access_ssh",
+                tool: "access_control",
                 action: "Apply SSH hardening (config validation FAILED)",
                 target: configPath,
                 after: JSON.stringify(settingsToApply),
@@ -517,8 +611,8 @@ export function registerAccessControlTools(server: McpServer): void {
               const restartResult = await executeCommand({
                 command: "sudo",
                 args: ["systemctl", "restart", "sshd"],
-                toolName: "access_ssh",
-                timeout: getToolTimeout("access_ssh"),
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
               });
 
               restartOutput =
@@ -528,7 +622,7 @@ export function registerAccessControlTools(server: McpServer): void {
             }
 
             const entry = createChangeEntry({
-              tool: "access_ssh",
+              tool: "access_control",
               action: "Apply SSH hardening",
               target: configPath,
               after: JSON.stringify(settingsToApply),
@@ -558,8 +652,8 @@ export function registerAccessControlTools(server: McpServer): void {
           }
         }
 
-        // ── cipher_audit ─────────────────────────────────────────────
-        case "cipher_audit": {
+        // ── ssh_cipher_audit ─────────────────────────────────────────
+        case "ssh_cipher_audit": {
           try {
             const config_path = params.config_path ?? "/etc/ssh/sshd_config";
 
@@ -568,7 +662,7 @@ export function registerAccessControlTools(server: McpServer): void {
               command: "cat",
               args: [config_path],
               timeout: 10000,
-              toolName: "access_ssh",
+              toolName: "access_control",
             });
 
             const config = result.stdout;
@@ -578,7 +672,7 @@ export function registerAccessControlTools(server: McpServer): void {
               command: "sudo",
               args: ["sshd", "-T"],
               timeout: 10000,
-              toolName: "access_ssh",
+              toolName: "access_control",
             });
             const runtimeConfig = runtimeResult.exitCode === 0 ? runtimeResult.stdout : "";
 
@@ -687,7 +781,7 @@ export function registerAccessControlTools(server: McpServer): void {
               command: "ls",
               args: ["-la", "/etc/ssh/"],
               timeout: 5000,
-              toolName: "access_ssh",
+              toolName: "access_control",
             });
 
             const hasDSA = hostKeyCheck.stdout.includes("ssh_host_dsa_key");
@@ -731,67 +825,8 @@ export function registerAccessControlTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 2. access_pam (merged: access_pam_audit, access_pam_configure) ──
-
-  server.tool(
-    "access_pam",
-    "PAM configuration security. Actions: audit=check PAM config for issues, configure=set up pam_pwquality or pam_faillock",
-    {
-      action: z
-        .enum(["audit", "configure"])
-        .describe("Action: audit=check PAM config, configure=set up PAM modules"),
-      // audit params
-      service: z
-        .string()
-        .optional()
-        .describe("Specific PAM service to audit, e.g. 'sshd', 'login', 'sudo' (for audit)"),
-      check_all: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Check common-auth, common-password, etc. (for audit)"),
-      // configure params
-      module: z
-        .enum(["pwquality", "faillock"])
-        .optional()
-        .describe("PAM module to configure (required for configure)"),
-      settings: z
-        .object({
-          // pwquality settings
-          minlen: z.number().optional(),
-          dcredit: z.number().optional(),
-          ucredit: z.number().optional(),
-          lcredit: z.number().optional(),
-          ocredit: z.number().optional(),
-          minclass: z.number().optional(),
-          maxrepeat: z.number().optional(),
-          reject_username: z.boolean().optional(),
-          // faillock settings
-          deny: z.number().optional(),
-          unlock_time: z.number().optional(),
-          fail_interval: z.number().optional(),
-        })
-        .optional()
-        .describe("Module-specific settings (for configure)"),
-      // shared
-      dry_run: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Preview changes (for configure)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
+        // ── pam_audit ────────────────────────────────────────────────
+        case "pam_audit": {
           try {
             const filesToCheck: string[] = [];
 
@@ -823,8 +858,8 @@ export function registerAccessControlTools(server: McpServer): void {
               const result = await executeCommand({
                 command: "sudo",
                 args: ["cat", filePath],
-                toolName: "access_pam",
-                timeout: getToolTimeout("access_pam"),
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
               });
 
               if (result.exitCode === 0) {
@@ -978,7 +1013,7 @@ export function registerAccessControlTools(server: McpServer): void {
             }
 
             const entry = createChangeEntry({
-              tool: "access_pam",
+              tool: "access_control",
               action: `PAM audit${params.service ? ` (${params.service})` : ""}${params.check_all ? " (all common)" : ""}`,
               target: uniqueFiles.join(", "),
               after: `Findings: ${findings.length}`,
@@ -1012,11 +1047,11 @@ export function registerAccessControlTools(server: McpServer): void {
           }
         }
 
-        // ── configure ────────────────────────────────────────────────
-        case "configure": {
+        // ── pam_configure ────────────────────────────────────────────
+        case "pam_configure": {
           try {
             if (!params.module) {
-              return { content: [createErrorContent("Error: 'module' is required for configure action (pwquality or faillock)")], isError: true };
+              return { content: [createErrorContent("Error: 'module' is required for pam_configure action (pwquality or faillock)")], isError: true };
             }
 
             const pamModule = params.module;
@@ -1035,14 +1070,14 @@ export function registerAccessControlTools(server: McpServer): void {
               };
 
               const merged = {
-                minlen: params.settings?.minlen ?? defaults.minlen,
-                dcredit: params.settings?.dcredit ?? defaults.dcredit,
-                ucredit: params.settings?.ucredit ?? defaults.ucredit,
-                lcredit: params.settings?.lcredit ?? defaults.lcredit,
-                ocredit: params.settings?.ocredit ?? defaults.ocredit,
-                minclass: params.settings?.minclass ?? defaults.minclass,
-                maxrepeat: params.settings?.maxrepeat ?? defaults.maxrepeat,
-                reject_username: params.settings?.reject_username ?? defaults.reject_username,
+                minlen: params.pam_settings?.minlen ?? defaults.minlen,
+                dcredit: params.pam_settings?.dcredit ?? defaults.dcredit,
+                ucredit: params.pam_settings?.ucredit ?? defaults.ucredit,
+                lcredit: params.pam_settings?.lcredit ?? defaults.lcredit,
+                ocredit: params.pam_settings?.ocredit ?? defaults.ocredit,
+                minclass: params.pam_settings?.minclass ?? defaults.minclass,
+                maxrepeat: params.pam_settings?.maxrepeat ?? defaults.maxrepeat,
+                reject_username: params.pam_settings?.reject_username ?? defaults.reject_username,
               };
 
               const targetFile = "/etc/security/pwquality.conf";
@@ -1059,7 +1094,7 @@ export function registerAccessControlTools(server: McpServer): void {
 
               if (isDryRun) {
                 const entry = createChangeEntry({
-                  tool: "access_pam",
+                  tool: "access_control",
                   action: "[DRY-RUN] Configure pam_pwquality",
                   target: targetFile,
                   after: JSON.stringify(merged),
@@ -1082,14 +1117,14 @@ export function registerAccessControlTools(server: McpServer): void {
               await executeCommand({
                 command: "sudo",
                 args: ["cp", targetFile, `${targetFile}.bak.${Date.now()}`],
-                toolName: "access_pam",
+                toolName: "access_control",
               });
 
               // Read current file content
               const currentResult = await executeCommand({
                 command: "sudo",
                 args: ["cat", targetFile],
-                toolName: "access_pam",
+                toolName: "access_control",
               });
 
               let currentContent = currentResult.exitCode === 0 ? currentResult.stdout : "";
@@ -1111,13 +1146,13 @@ export function registerAccessControlTools(server: McpServer): void {
               await executeCommand({
                 command: "sudo",
                 args: ["tee", targetFile],
-                toolName: "access_pam",
-                timeout: getToolTimeout("access_pam"),
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
                 stdin: currentContent,
               });
 
               const entry = createChangeEntry({
-                tool: "access_pam",
+                tool: "access_control",
                 action: "Configure pam_pwquality",
                 target: targetFile,
                 after: JSON.stringify(merged),
@@ -1144,9 +1179,9 @@ export function registerAccessControlTools(server: McpServer): void {
             };
 
             const merged = {
-              deny: params.settings?.deny ?? defaults.deny,
-              unlock_time: params.settings?.unlock_time ?? defaults.unlock_time,
-              fail_interval: params.settings?.fail_interval ?? defaults.fail_interval,
+              deny: params.pam_settings?.deny ?? defaults.deny,
+              unlock_time: params.pam_settings?.unlock_time ?? defaults.unlock_time,
+              fail_interval: params.pam_settings?.fail_interval ?? defaults.fail_interval,
             };
 
             const targetFile = (await getDistroAdapter()).paths.pamAuth;
@@ -1156,7 +1191,7 @@ export function registerAccessControlTools(server: McpServer): void {
 
             if (isDryRun) {
               const entry = createChangeEntry({
-                tool: "access_pam",
+                tool: "access_control",
                 action: "[DRY-RUN] Configure pam_faillock",
                 target: targetFile,
                 after: JSON.stringify(merged),
@@ -1180,7 +1215,7 @@ export function registerAccessControlTools(server: McpServer): void {
             await executeCommand({
               command: "sudo",
               args: ["cp", targetFile, `${targetFile}.bak.${Date.now()}`],
-              toolName: "access_pam",
+              toolName: "access_control",
             });
 
             // Remove existing pam_faillock lines first
@@ -1192,7 +1227,7 @@ export function registerAccessControlTools(server: McpServer): void {
                 "/pam_faillock\\.so/d",
                 targetFile,
               ],
-              toolName: "access_pam",
+              toolName: "access_control",
             });
 
             // Insert preauth line before pam_unix.so auth line
@@ -1204,7 +1239,7 @@ export function registerAccessControlTools(server: McpServer): void {
                 `0,/pam_unix\\.so/s|.*pam_unix\\.so.*|${preLine}\\n&|`,
                 targetFile,
               ],
-              toolName: "access_pam",
+              toolName: "access_control",
             });
 
             // Insert authfail line after pam_unix.so auth line
@@ -1216,11 +1251,11 @@ export function registerAccessControlTools(server: McpServer): void {
                 `0,/pam_unix\\.so/{/pam_unix\\.so/a\\${authLine}}`,
                 targetFile,
               ],
-              toolName: "access_pam",
+              toolName: "access_control",
             });
 
             const entry = createChangeEntry({
-              tool: "access_pam",
+              tool: "access_control",
               action: "Configure pam_faillock",
               target: targetFile,
               after: JSON.stringify(merged),
@@ -1244,883 +1279,813 @@ export function registerAccessControlTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
+        // ── sudo_audit ───────────────────────────────────────────────
+        case "sudo_audit": {
+          const { check_nopasswd, check_insecure } = params;
+          try {
+            // Read main sudoers file
+            const sudoersResult = await executeCommand({
+              command: "sudo",
+              args: ["cat", "/etc/sudoers"],
+              toolName: "access_control",
+              timeout: getToolTimeout("access_control"),
+            });
 
-  // ── 3. access_sudo_audit (kept as-is) ─────────────────────────────────────
+            if (sudoersResult.exitCode !== 0) {
+              return {
+                content: [
+                  createErrorContent(
+                    `Cannot read /etc/sudoers: ${sudoersResult.stderr}`
+                  ),
+                ],
+                isError: true,
+              };
+            }
 
-  server.tool(
-    "access_sudo_audit",
-    "Audit sudoers configuration for security weaknesses",
-    {
-      check_nopasswd: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Check for NOPASSWD entries (default: true)"),
-      check_insecure: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe("Check for insecure configurations (default: true)"),
-    },
-    async ({ check_nopasswd, check_insecure }) => {
-      try {
-        // Read main sudoers file
-        const sudoersResult = await executeCommand({
-          command: "sudo",
-          args: ["cat", "/etc/sudoers"],
-          toolName: "access_sudo_audit",
-          timeout: getToolTimeout("access_sudo_audit"),
-        });
+            // Read sudoers.d directory
+            const sudoersDResult = await executeCommand({
+              command: "sudo",
+              args: ["ls", "/etc/sudoers.d/"],
+              toolName: "access_control",
+            });
 
-        if (sudoersResult.exitCode !== 0) {
-          return {
-            content: [
-              createErrorContent(
-                `Cannot read /etc/sudoers: ${sudoersResult.stderr}`
-              ),
-            ],
-            isError: true,
-          };
+            const dropInFiles = sudoersDResult.stdout
+              .split("\n")
+              .map((l) => l.trim())
+              .filter((l) => l.length > 0);
+
+            // Read all drop-in files
+            let allSudoersContent = sudoersResult.stdout;
+            for (const file of dropInFiles) {
+              const fileResult = await executeCommand({
+                command: "sudo",
+                args: ["cat", `/etc/sudoers.d/${file}`],
+                toolName: "access_control",
+              });
+              if (fileResult.exitCode === 0) {
+                allSudoersContent += `\n# --- ${file} ---\n${fileResult.stdout}`;
+              }
+            }
+
+            const findings: Array<{
+              type: string;
+              severity: "critical" | "high" | "medium" | "low";
+              detail: string;
+              line?: string;
+            }> = [];
+
+            const lines = allSudoersContent.split("\n");
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("#")) continue;
+
+              if (check_nopasswd && trimmed.includes("NOPASSWD")) {
+                findings.push({
+                  type: "NOPASSWD",
+                  severity: "high",
+                  detail: "NOPASSWD allows sudo without password authentication",
+                  line: trimmed,
+                });
+              }
+
+              if (
+                check_insecure &&
+                trimmed.includes("ALL=(ALL)") &&
+                trimmed.includes("ALL") &&
+                !trimmed.startsWith("root")
+              ) {
+                findings.push({
+                  type: "BROAD_PRIVILEGE",
+                  severity: "high",
+                  detail: "Non-root user has full sudo privileges",
+                  line: trimmed,
+                });
+              }
+
+              if (check_insecure && trimmed.includes("!authenticate")) {
+                findings.push({
+                  type: "NO_AUTHENTICATE",
+                  severity: "critical",
+                  detail: "Authentication bypass in sudoers",
+                  line: trimmed,
+                });
+              }
+            }
+
+            // Check for missing security defaults
+            const defaultChecks: Array<{
+              pattern: string;
+              name: string;
+              severity: "critical" | "high" | "medium" | "low";
+            }> = [
+              { pattern: "env_reset", name: "Defaults env_reset", severity: "medium" },
+              { pattern: "secure_path", name: "Defaults secure_path", severity: "medium" },
+              { pattern: "logfile", name: "Defaults logfile", severity: "low" },
+            ];
+
+            if (check_insecure) {
+              for (const check of defaultChecks) {
+                if (!allSudoersContent.includes(check.pattern)) {
+                  findings.push({
+                    type: "MISSING_DEFAULT",
+                    severity: check.severity,
+                    detail: `${check.name} is not configured`,
+                  });
+                }
+              }
+            }
+
+            // List users with sudo access
+            const sudoUsersResult = await executeCommand({
+              command: "getent",
+              args: ["group", "sudo"],
+              toolName: "access_control",
+            });
+
+            const sudoGroup = sudoUsersResult.stdout.trim();
+
+            const entry = createChangeEntry({
+              tool: "access_control",
+              action: "Sudoers configuration audit",
+              target: "/etc/sudoers",
+              after: `Findings: ${findings.length}`,
+              dryRun: false,
+              success: true,
+            });
+            logChange(entry);
+
+            const output = {
+              totalFindings: findings.length,
+              dropInFiles,
+              sudoGroup,
+              findings,
+            };
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
         }
 
-        // Read sudoers.d directory
-        const sudoersDResult = await executeCommand({
-          command: "sudo",
-          args: ["ls", "/etc/sudoers.d/"],
-          toolName: "access_sudo_audit",
-        });
+        // ── user_audit ───────────────────────────────────────────────
+        case "user_audit": {
+          const { check_type } = params;
+          try {
+            const passwdResult = await executeCommand({
+              command: "cat",
+              args: ["/etc/passwd"],
+              toolName: "access_control",
+              timeout: getToolTimeout("access_control"),
+            });
 
-        const dropInFiles = sudoersDResult.stdout
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0);
+            const shadowResult = await executeCommand({
+              command: "sudo",
+              args: ["cat", "/etc/shadow"],
+              toolName: "access_control",
+            });
 
-        // Read all drop-in files
-        let allSudoersContent = sudoersResult.stdout;
-        for (const file of dropInFiles) {
-          const fileResult = await executeCommand({
-            command: "sudo",
-            args: ["cat", `/etc/sudoers.d/${file}`],
-            toolName: "access_sudo_audit",
-          });
-          if (fileResult.exitCode === 0) {
-            allSudoersContent += `\n# --- ${file} ---\n${fileResult.stdout}`;
+            const lastlogResult = await executeCommand({
+              command: "lastlog",
+              args: [],
+              toolName: "access_control",
+            });
+
+            const users = passwdResult.stdout
+              .split("\n")
+              .filter((l) => l.trim().length > 0)
+              .map((line) => {
+                const parts = line.split(":");
+                return {
+                  username: parts[0],
+                  uid: parseInt(parts[2], 10),
+                  gid: parseInt(parts[3], 10),
+                  gecos: parts[4] ?? "",
+                  home: parts[5] ?? "",
+                  shell: parts[6] ?? "",
+                };
+              });
+
+            const shadowMap: Record<string, string> = {};
+            if (shadowResult.exitCode === 0) {
+              for (const line of shadowResult.stdout.split("\n")) {
+                const parts = line.split(":");
+                if (parts.length >= 2) {
+                  shadowMap[parts[0]] = parts[1];
+                }
+              }
+            }
+
+            const lastlogMap: Record<string, string> = {};
+            for (const line of lastlogResult.stdout.split("\n").slice(1)) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              const parts = trimmed.split(/\s+/);
+              if (parts.length >= 1) {
+                const username = parts[0];
+                if (trimmed.includes("Never logged in")) {
+                  lastlogMap[username] = "never";
+                } else {
+                  lastlogMap[username] = parts.slice(3).join(" ");
+                }
+              }
+            }
+
+            const nologinShells = [
+              "/usr/sbin/nologin",
+              "/bin/false",
+              "/sbin/nologin",
+              "/bin/nologin",
+            ];
+
+            const loginShells = [
+              "/bin/bash",
+              "/bin/sh",
+              "/bin/zsh",
+              "/bin/fish",
+              "/usr/bin/bash",
+              "/usr/bin/zsh",
+              "/usr/bin/fish",
+            ];
+
+            const results: Record<string, Array<Record<string, unknown>>> = {};
+
+            if (check_type === "all" || check_type === "privileged") {
+              results.privileged = users
+                .filter((u) => u.uid === 0)
+                .map((u) => ({
+                  username: u.username,
+                  uid: u.uid,
+                  shell: u.shell,
+                  warning:
+                    u.username !== "root"
+                      ? "NON-ROOT USER WITH UID 0!"
+                      : null,
+                }));
+            }
+
+            if (check_type === "all" || check_type === "inactive") {
+              results.inactive = users
+                .filter((u) => {
+                  const lastLogin = lastlogMap[u.username];
+                  if (!lastLogin || lastLogin === "never") return true;
+                  const loginDate = new Date(lastLogin);
+                  const daysSince =
+                    (Date.now() - loginDate.getTime()) / (1000 * 60 * 60 * 24);
+                  return daysSince > 90;
+                })
+                .filter((u) => !nologinShells.includes(u.shell))
+                .map((u) => ({
+                  username: u.username,
+                  uid: u.uid,
+                  lastLogin: lastlogMap[u.username] ?? "unknown",
+                  shell: u.shell,
+                }));
+            }
+
+            if (check_type === "all" || check_type === "no_password") {
+              results.no_password = users
+                .filter((u) => {
+                  const hash = shadowMap[u.username];
+                  return hash === "" || hash === "!" || hash === "*" || hash === "!!";
+                })
+                .map((u) => ({
+                  username: u.username,
+                  uid: u.uid,
+                  passwordStatus: shadowMap[u.username] || "empty",
+                  shell: u.shell,
+                }));
+            }
+
+            if (check_type === "all" || check_type === "shell") {
+              const systemUsers = users.filter(
+                (u) => u.uid < 1000 && u.uid !== 0
+              );
+              results.shell = systemUsers
+                .filter((u) => loginShells.includes(u.shell))
+                .map((u) => ({
+                  username: u.username,
+                  uid: u.uid,
+                  shell: u.shell,
+                  warning: "System user has interactive login shell",
+                }));
+            }
+
+            if (check_type === "all" || check_type === "locked") {
+              results.locked = users
+                .filter((u) => {
+                  const hash = shadowMap[u.username];
+                  return (
+                    hash?.startsWith("!") ||
+                    hash?.startsWith("*") ||
+                    nologinShells.includes(u.shell)
+                  );
+                })
+                .map((u) => ({
+                  username: u.username,
+                  uid: u.uid,
+                  shell: u.shell,
+                  locked: shadowMap[u.username]?.startsWith("!") ?? false,
+                  nologin: nologinShells.includes(u.shell),
+                }));
+            }
+
+            const totalFindings = Object.values(results).reduce(
+              (sum, arr) => sum + arr.length,
+              0
+            );
+
+            const entry = createChangeEntry({
+              tool: "access_control",
+              action: `User account audit (${check_type})`,
+              target: "/etc/passwd",
+              after: `Total findings: ${totalFindings}`,
+              dryRun: false,
+              success: true,
+            });
+            logChange(entry);
+
+            const output = {
+              checkType: check_type,
+              totalUsers: users.length,
+              totalFindings,
+              categories: results,
+            };
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        const findings: Array<{
-          type: string;
-          severity: "critical" | "high" | "medium" | "low";
-          detail: string;
-          line?: string;
-        }> = [];
-
-        const lines = allSudoersContent.split("\n");
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith("#")) continue;
-
-          if (check_nopasswd && trimmed.includes("NOPASSWD")) {
-            findings.push({
-              type: "NOPASSWD",
-              severity: "high",
-              detail: "NOPASSWD allows sudo without password authentication",
-              line: trimmed,
+        // ── password_policy_audit ────────────────────────────────────
+        case "password_policy_audit": {
+          try {
+            const loginDefsResult = await executeCommand({
+              command: "cat",
+              args: ["/etc/login.defs"],
+              toolName: "access_control",
+              timeout: getToolTimeout("access_control"),
             });
-          }
 
-          if (
-            check_insecure &&
-            trimmed.includes("ALL=(ALL)") &&
-            trimmed.includes("ALL") &&
-            !trimmed.startsWith("root")
-          ) {
-            findings.push({
-              type: "BROAD_PRIVILEGE",
-              severity: "high",
-              detail: "Non-root user has full sudo privileges",
-              line: trimmed,
+            const pamResult = await executeCommand({
+              command: "cat",
+              args: [(await getDistroAdapter()).paths.pamPassword],
+              toolName: "access_control",
             });
-          }
 
-          if (check_insecure && trimmed.includes("!authenticate")) {
-            findings.push({
-              type: "NO_AUTHENTICATE",
-              severity: "critical",
-              detail: "Authentication bypass in sudoers",
-              line: trimmed,
+            const loginDefs: Record<string, string> = {};
+            const passwordKeys = [
+              "PASS_MAX_DAYS",
+              "PASS_MIN_DAYS",
+              "PASS_WARN_AGE",
+              "PASS_MIN_LEN",
+              "ENCRYPT_METHOD",
+              "SHA_CRYPT_MIN_ROUNDS",
+              "SHA_CRYPT_MAX_ROUNDS",
+              "INACTIVE",
+            ];
+
+            for (const line of loginDefsResult.stdout.split("\n")) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("#")) continue;
+
+              const parts = trimmed.split(/\s+/);
+              if (parts.length >= 2 && passwordKeys.includes(parts[0])) {
+                loginDefs[parts[0]] = parts[1];
+              }
+            }
+
+            const pamModules: Array<{ module: string; present: boolean }> = [
+              { module: "pam_pwquality", present: false },
+              { module: "pam_cracklib", present: false },
+              { module: "pam_unix", present: false },
+            ];
+
+            if (pamResult.exitCode === 0) {
+              for (const mod of pamModules) {
+                mod.present = pamResult.stdout.includes(mod.module);
+              }
+            }
+
+            const useraddResult = await executeCommand({
+              command: "cat",
+              args: ["/etc/default/useradd"],
+              toolName: "access_control",
             });
+            let inactiveValue = "not set";
+            if (useraddResult.exitCode === 0) {
+              const inactiveMatch = useraddResult.stdout.match(/^INACTIVE=(.*)$/m);
+              if (inactiveMatch) {
+                inactiveValue = inactiveMatch[1].trim();
+                loginDefs["INACTIVE"] = inactiveValue;
+              }
+            }
+
+            const recommendations: string[] = [];
+            const maxDays = parseInt(loginDefs["PASS_MAX_DAYS"] ?? "99999", 10);
+            const minDays = parseInt(loginDefs["PASS_MIN_DAYS"] ?? "0", 10);
+            const warnAge = parseInt(loginDefs["PASS_WARN_AGE"] ?? "7", 10);
+
+            if (maxDays > 365) {
+              recommendations.push(
+                `PASS_MAX_DAYS (${maxDays}) should be <= 365. Set to 365 or less (CIS recommends ≤365 for non-privileged, ≤90 for privileged)`
+              );
+            }
+            if (minDays < 1) {
+              recommendations.push(
+                `PASS_MIN_DAYS (${minDays}) should be >= 1`
+              );
+            }
+            if (warnAge < 7) {
+              recommendations.push(
+                `PASS_WARN_AGE (${warnAge}) should be >= 7`
+              );
+            }
+            const encMethod = loginDefs["ENCRYPT_METHOD"] ?? "not set";
+            if (encMethod !== "SHA512" && encMethod !== "YESCRYPT") {
+              recommendations.push(
+                `ENCRYPT_METHOD should be SHA512 or YESCRYPT (current: ${encMethod})`
+              );
+            }
+            if (inactiveValue === "not set" || inactiveValue === "-1") {
+              recommendations.push(
+                `INACTIVE (${inactiveValue}) should be set to 30 or less to disable accounts after password expiry`
+              );
+            }
+            if (!pamModules.find((m) => m.module === "pam_pwquality")?.present) {
+              recommendations.push(
+                "pam_pwquality is not configured in PAM - password complexity not enforced"
+              );
+            }
+
+            const entry = createChangeEntry({
+              tool: "access_control",
+              action: "Password policy audit",
+              target: "/etc/login.defs",
+              after: `Recommendations: ${recommendations.length}`,
+              dryRun: false,
+              success: true,
+            });
+            logChange(entry);
+
+            const output = {
+              loginDefs,
+              pamModules,
+              recommendations,
+            };
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        // Check for missing security defaults
-        const defaultChecks: Array<{
-          pattern: string;
-          name: string;
-          severity: "critical" | "high" | "medium" | "low";
-        }> = [
-          { pattern: "env_reset", name: "Defaults env_reset", severity: "medium" },
-          { pattern: "secure_path", name: "Defaults secure_path", severity: "medium" },
-          { pattern: "logfile", name: "Defaults logfile", severity: "low" },
-        ];
+        // ── password_policy_set ──────────────────────────────────────
+        case "password_policy_set": {
+          const { min_days, max_days, warn_days, min_length, inactive_days, encrypt_method, dry_run } = params;
+          try {
+            const settingsToApply: Record<string, string> = {};
+            if (min_days !== undefined) settingsToApply["PASS_MIN_DAYS"] = String(min_days);
+            if (max_days !== undefined) settingsToApply["PASS_MAX_DAYS"] = String(max_days);
+            if (warn_days !== undefined) settingsToApply["PASS_WARN_AGE"] = String(warn_days);
+            if (min_length !== undefined) settingsToApply["PASS_MIN_LEN"] = String(min_length);
+            if (encrypt_method !== undefined) settingsToApply["ENCRYPT_METHOD"] = encrypt_method;
 
-        if (check_insecure) {
-          for (const check of defaultChecks) {
-            if (!allSudoersContent.includes(check.pattern)) {
-              findings.push({
-                type: "MISSING_DEFAULT",
-                severity: check.severity,
-                detail: `${check.name} is not configured`,
+            const extraCommands: string[] = [];
+
+            if (inactive_days !== undefined) {
+              extraCommands.push(`sudo useradd -D -f ${inactive_days}`);
+              extraCommands.push(
+                `sudo sed -i 's/^INACTIVE.*/INACTIVE=${inactive_days}/' /etc/default/useradd || echo 'INACTIVE=${inactive_days}' | sudo tee -a /etc/default/useradd`
+              );
+            }
+
+            if (Object.keys(settingsToApply).length === 0 && extraCommands.length === 0) {
+              return {
+                content: [
+                  createErrorContent(
+                    "No password policy values specified to set."
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const sedCommands: string[] = [];
+            for (const [key, value] of Object.entries(settingsToApply)) {
+              sedCommands.push(
+                `sudo sed -i 's/^#*\\s*${key}\\s.*/${key}\\t${value}/' /etc/login.defs`
+              );
+            }
+
+            if (dry_run ?? getConfig().dryRun) {
+              const allSettings = { ...settingsToApply };
+              if (inactive_days !== undefined) allSettings["INACTIVE"] = String(inactive_days);
+
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: "[DRY-RUN] Set password policy",
+                target: "/etc/login.defs",
+                after: JSON.stringify(allSettings),
+                dryRun: true,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `[DRY-RUN] Would apply the following password policy to /etc/login.defs:\n\n` +
+                      Object.entries(allSettings)
+                        .map(([k, v]) => `  ${k} = ${v}`)
+                        .join("\n") +
+                      `\n\nSed commands:\n${sedCommands.map((c) => `  ${c}`).join("\n")}` +
+                      (extraCommands.length > 0
+                        ? `\n\nExtra commands:\n${extraCommands.map((c) => `  ${c}`).join("\n")}`
+                        : "")
+                  ),
+                ],
+              };
+            }
+
+            // Backup first
+            let backupPath: string | undefined;
+            try {
+              backupPath = backupFile("/etc/login.defs");
+            } catch {
+              await executeCommand({
+                command: "sudo",
+                args: [
+                  "cp",
+                  "/etc/login.defs",
+                  `/etc/login.defs.bak.${Date.now()}`,
+                ],
+                toolName: "access_control",
               });
             }
-          }
-        }
 
-        // List users with sudo access
-        const sudoUsersResult = await executeCommand({
-          command: "getent",
-          args: ["group", "sudo"],
-          toolName: "access_sudo_audit",
-        });
+            // Apply login.defs changes
+            for (const [key, value] of Object.entries(settingsToApply)) {
+              await executeCommand({
+                command: "sudo",
+                args: [
+                  "sed",
+                  "-i",
+                  `s/^#*\\s*${key}\\s.*/${key}\\t${value}/`,
+                  "/etc/login.defs",
+                ],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+            }
 
-        const sudoGroup = sudoUsersResult.stdout.trim();
+            // Apply INACTIVE setting if provided
+            if (inactive_days !== undefined) {
+              await executeCommand({
+                command: "sudo",
+                args: ["useradd", "-D", "-f", String(inactive_days)],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
 
-        const entry = createChangeEntry({
-          tool: "access_sudo_audit",
-          action: "Sudoers configuration audit",
-          target: "/etc/sudoers",
-          after: `Findings: ${findings.length}`,
-          dryRun: false,
-          success: true,
-        });
-        logChange(entry);
+              const grepInactive = await executeCommand({
+                command: "grep",
+                args: ["-q", "^INACTIVE", "/etc/default/useradd"],
+                toolName: "access_control",
+              });
 
-        const output = {
-          totalFindings: findings.length,
-          dropInFiles,
-          sudoGroup,
-          findings,
-        };
+              if (grepInactive.exitCode === 0) {
+                await executeCommand({
+                  command: "sudo",
+                  args: [
+                    "sed",
+                    "-i",
+                    `s/^INACTIVE.*/INACTIVE=${inactive_days}/`,
+                    "/etc/default/useradd",
+                  ],
+                  toolName: "access_control",
+                });
+              } else {
+                await executeCommand({
+                  command: "sudo",
+                  args: ["tee", "-a", "/etc/default/useradd"],
+                  toolName: "access_control",
+                  stdin: `INACTIVE=${inactive_days}\n`,
+                });
+              }
+            }
 
-        return { content: [formatToolOutput(output)] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
+            const allApplied = { ...settingsToApply };
+            if (inactive_days !== undefined) allApplied["INACTIVE"] = String(inactive_days);
 
-  // ── 4. access_user_audit (kept as-is) ─────────────────────────────────────
+            const entry = createChangeEntry({
+              tool: "access_control",
+              action: "Set password policy",
+              target: "/etc/login.defs",
+              after: JSON.stringify(allApplied),
+              backupPath,
+              dryRun: false,
+              success: true,
+              rollbackCommand: backupPath
+                ? `sudo cp ${backupPath} /etc/login.defs`
+                : undefined,
+            });
+            logChange(entry);
 
-  server.tool(
-    "access_user_audit",
-    "Audit user accounts for security issues (privileged, inactive, no password, shells)",
-    {
-      check_type: z
-        .enum(["all", "privileged", "inactive", "no_password", "shell", "locked"])
-        .optional()
-        .default("all")
-        .describe("Type of user audit to perform (default: all)"),
-    },
-    async ({ check_type }) => {
-      try {
-        const passwdResult = await executeCommand({
-          command: "cat",
-          args: ["/etc/passwd"],
-          toolName: "access_user_audit",
-          timeout: getToolTimeout("access_user_audit"),
-        });
-
-        const shadowResult = await executeCommand({
-          command: "sudo",
-          args: ["cat", "/etc/shadow"],
-          toolName: "access_user_audit",
-        });
-
-        const lastlogResult = await executeCommand({
-          command: "lastlog",
-          args: [],
-          toolName: "access_user_audit",
-        });
-
-        const users = passwdResult.stdout
-          .split("\n")
-          .filter((l) => l.trim().length > 0)
-          .map((line) => {
-            const parts = line.split(":");
             return {
-              username: parts[0],
-              uid: parseInt(parts[2], 10),
-              gid: parseInt(parts[3], 10),
-              gecos: parts[4] ?? "",
-              home: parts[5] ?? "",
-              shell: parts[6] ?? "",
-            };
-          });
-
-        const shadowMap: Record<string, string> = {};
-        if (shadowResult.exitCode === 0) {
-          for (const line of shadowResult.stdout.split("\n")) {
-            const parts = line.split(":");
-            if (parts.length >= 2) {
-              shadowMap[parts[0]] = parts[1];
-            }
-          }
-        }
-
-        const lastlogMap: Record<string, string> = {};
-        for (const line of lastlogResult.stdout.split("\n").slice(1)) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          const parts = trimmed.split(/\s+/);
-          if (parts.length >= 1) {
-            const username = parts[0];
-            if (trimmed.includes("Never logged in")) {
-              lastlogMap[username] = "never";
-            } else {
-              lastlogMap[username] = parts.slice(3).join(" ");
-            }
-          }
-        }
-
-        const nologinShells = [
-          "/usr/sbin/nologin",
-          "/bin/false",
-          "/sbin/nologin",
-          "/bin/nologin",
-        ];
-
-        const loginShells = [
-          "/bin/bash",
-          "/bin/sh",
-          "/bin/zsh",
-          "/bin/fish",
-          "/usr/bin/bash",
-          "/usr/bin/zsh",
-          "/usr/bin/fish",
-        ];
-
-        const results: Record<string, Array<Record<string, unknown>>> = {};
-
-        if (check_type === "all" || check_type === "privileged") {
-          results.privileged = users
-            .filter((u) => u.uid === 0)
-            .map((u) => ({
-              username: u.username,
-              uid: u.uid,
-              shell: u.shell,
-              warning:
-                u.username !== "root"
-                  ? "NON-ROOT USER WITH UID 0!"
-                  : null,
-            }));
-        }
-
-        if (check_type === "all" || check_type === "inactive") {
-          results.inactive = users
-            .filter((u) => {
-              const lastLogin = lastlogMap[u.username];
-              if (!lastLogin || lastLogin === "never") return true;
-              const loginDate = new Date(lastLogin);
-              const daysSince =
-                (Date.now() - loginDate.getTime()) / (1000 * 60 * 60 * 24);
-              return daysSince > 90;
-            })
-            .filter((u) => !nologinShells.includes(u.shell))
-            .map((u) => ({
-              username: u.username,
-              uid: u.uid,
-              lastLogin: lastlogMap[u.username] ?? "unknown",
-              shell: u.shell,
-            }));
-        }
-
-        if (check_type === "all" || check_type === "no_password") {
-          results.no_password = users
-            .filter((u) => {
-              const hash = shadowMap[u.username];
-              return hash === "" || hash === "!" || hash === "*" || hash === "!!";
-            })
-            .map((u) => ({
-              username: u.username,
-              uid: u.uid,
-              passwordStatus: shadowMap[u.username] || "empty",
-              shell: u.shell,
-            }));
-        }
-
-        if (check_type === "all" || check_type === "shell") {
-          const systemUsers = users.filter(
-            (u) => u.uid < 1000 && u.uid !== 0
-          );
-          results.shell = systemUsers
-            .filter((u) => loginShells.includes(u.shell))
-            .map((u) => ({
-              username: u.username,
-              uid: u.uid,
-              shell: u.shell,
-              warning: "System user has interactive login shell",
-            }));
-        }
-
-        if (check_type === "all" || check_type === "locked") {
-          results.locked = users
-            .filter((u) => {
-              const hash = shadowMap[u.username];
-              return (
-                hash?.startsWith("!") ||
-                hash?.startsWith("*") ||
-                nologinShells.includes(u.shell)
-              );
-            })
-            .map((u) => ({
-              username: u.username,
-              uid: u.uid,
-              shell: u.shell,
-              locked: shadowMap[u.username]?.startsWith("!") ?? false,
-              nologin: nologinShells.includes(u.shell),
-            }));
-        }
-
-        const totalFindings = Object.values(results).reduce(
-          (sum, arr) => sum + arr.length,
-          0
-        );
-
-        const entry = createChangeEntry({
-          tool: "access_user_audit",
-          action: `User account audit (${check_type})`,
-          target: "/etc/passwd",
-          after: `Total findings: ${totalFindings}`,
-          dryRun: false,
-          success: true,
-        });
-        logChange(entry);
-
-        const output = {
-          checkType: check_type,
-          totalUsers: users.length,
-          totalFindings,
-          categories: results,
-        };
-
-        return { content: [formatToolOutput(output)] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
-
-  // ── 5. access_password_policy (kept as-is) ────────────────────────────────
-
-  server.tool(
-    "access_password_policy",
-    "Audit or set system password policy in /etc/login.defs and PAM",
-    {
-      action: z
-        .enum(["audit", "set"])
-        .describe("Audit current policy or set new values"),
-      min_days: z
-        .number()
-        .optional()
-        .describe("Minimum days between password changes (PASS_MIN_DAYS)"),
-      max_days: z
-        .number()
-        .optional()
-        .describe("Maximum days before password must be changed (PASS_MAX_DAYS)"),
-      warn_days: z
-        .number()
-        .optional()
-        .describe("Days before expiry to warn user (PASS_WARN_AGE)"),
-      min_length: z
-        .number()
-        .optional()
-        .describe("Minimum password length (PASS_MIN_LEN)"),
-      inactive_days: z
-        .number()
-        .optional()
-        .describe("Days after password expires before account is disabled (INACTIVE)"),
-      encrypt_method: z
-        .enum(["SHA512", "YESCRYPT"])
-        .optional()
-        .describe("Password hashing algorithm (ENCRYPT_METHOD)"),
-      dry_run: z
-        .boolean()
-        .optional()
-        .describe("Preview changes without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
-    },
-    async ({ action, min_days, max_days, warn_days, min_length, inactive_days, encrypt_method, dry_run }) => {
-      try {
-        if (action === "audit") {
-          const loginDefsResult = await executeCommand({
-            command: "cat",
-            args: ["/etc/login.defs"],
-            toolName: "access_password_policy",
-            timeout: getToolTimeout("access_password_policy"),
-          });
-
-          const pamResult = await executeCommand({
-            command: "cat",
-            args: [(await getDistroAdapter()).paths.pamPassword],
-            toolName: "access_password_policy",
-          });
-
-          const loginDefs: Record<string, string> = {};
-          const passwordKeys = [
-            "PASS_MAX_DAYS",
-            "PASS_MIN_DAYS",
-            "PASS_WARN_AGE",
-            "PASS_MIN_LEN",
-            "ENCRYPT_METHOD",
-            "SHA_CRYPT_MIN_ROUNDS",
-            "SHA_CRYPT_MAX_ROUNDS",
-            "INACTIVE",
-          ];
-
-          for (const line of loginDefsResult.stdout.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith("#")) continue;
-
-            const parts = trimmed.split(/\s+/);
-            if (parts.length >= 2 && passwordKeys.includes(parts[0])) {
-              loginDefs[parts[0]] = parts[1];
-            }
-          }
-
-          const pamModules: Array<{ module: string; present: boolean }> = [
-            { module: "pam_pwquality", present: false },
-            { module: "pam_cracklib", present: false },
-            { module: "pam_unix", present: false },
-          ];
-
-          if (pamResult.exitCode === 0) {
-            for (const mod of pamModules) {
-              mod.present = pamResult.stdout.includes(mod.module);
-            }
-          }
-
-          const useraddResult = await executeCommand({
-            command: "cat",
-            args: ["/etc/default/useradd"],
-            toolName: "access_password_policy",
-          });
-          let inactiveValue = "not set";
-          if (useraddResult.exitCode === 0) {
-            const inactiveMatch = useraddResult.stdout.match(/^INACTIVE=(.*)$/m);
-            if (inactiveMatch) {
-              inactiveValue = inactiveMatch[1].trim();
-              loginDefs["INACTIVE"] = inactiveValue;
-            }
-          }
-
-          const recommendations: string[] = [];
-          const maxDays = parseInt(loginDefs["PASS_MAX_DAYS"] ?? "99999", 10);
-          const minDays = parseInt(loginDefs["PASS_MIN_DAYS"] ?? "0", 10);
-          const warnAge = parseInt(loginDefs["PASS_WARN_AGE"] ?? "7", 10);
-
-          if (maxDays > 365) {
-            recommendations.push(
-              `PASS_MAX_DAYS (${maxDays}) should be <= 365. Set to 365 or less (CIS recommends ≤365 for non-privileged, ≤90 for privileged)`
-            );
-          }
-          if (minDays < 1) {
-            recommendations.push(
-              `PASS_MIN_DAYS (${minDays}) should be >= 1`
-            );
-          }
-          if (warnAge < 7) {
-            recommendations.push(
-              `PASS_WARN_AGE (${warnAge}) should be >= 7`
-            );
-          }
-          const encMethod = loginDefs["ENCRYPT_METHOD"] ?? "not set";
-          if (encMethod !== "SHA512" && encMethod !== "YESCRYPT") {
-            recommendations.push(
-              `ENCRYPT_METHOD should be SHA512 or YESCRYPT (current: ${encMethod})`
-            );
-          }
-          if (inactiveValue === "not set" || inactiveValue === "-1") {
-            recommendations.push(
-              `INACTIVE (${inactiveValue}) should be set to 30 or less to disable accounts after password expiry`
-            );
-          }
-          if (!pamModules.find((m) => m.module === "pam_pwquality")?.present) {
-            recommendations.push(
-              "pam_pwquality is not configured in PAM - password complexity not enforced"
-            );
-          }
-
-          const entry = createChangeEntry({
-            tool: "access_password_policy",
-            action: "Password policy audit",
-            target: "/etc/login.defs",
-            after: `Recommendations: ${recommendations.length}`,
-            dryRun: false,
-            success: true,
-          });
-          logChange(entry);
-
-          const output = {
-            loginDefs,
-            pamModules,
-            recommendations,
-          };
-
-          return { content: [formatToolOutput(output)] };
-        }
-
-        // action === "set"
-        const settingsToApply: Record<string, string> = {};
-        if (min_days !== undefined) settingsToApply["PASS_MIN_DAYS"] = String(min_days);
-        if (max_days !== undefined) settingsToApply["PASS_MAX_DAYS"] = String(max_days);
-        if (warn_days !== undefined) settingsToApply["PASS_WARN_AGE"] = String(warn_days);
-        if (min_length !== undefined) settingsToApply["PASS_MIN_LEN"] = String(min_length);
-        if (encrypt_method !== undefined) settingsToApply["ENCRYPT_METHOD"] = encrypt_method;
-
-        const extraCommands: string[] = [];
-
-        if (inactive_days !== undefined) {
-          extraCommands.push(`sudo useradd -D -f ${inactive_days}`);
-          extraCommands.push(
-            `sudo sed -i 's/^INACTIVE.*/INACTIVE=${inactive_days}/' /etc/default/useradd || echo 'INACTIVE=${inactive_days}' | sudo tee -a /etc/default/useradd`
-          );
-        }
-
-        if (Object.keys(settingsToApply).length === 0 && extraCommands.length === 0) {
-          return {
-            content: [
-              createErrorContent(
-                "No password policy values specified to set."
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        const sedCommands: string[] = [];
-        for (const [key, value] of Object.entries(settingsToApply)) {
-          sedCommands.push(
-            `sudo sed -i 's/^#*\\s*${key}\\s.*/${key}\\t${value}/' /etc/login.defs`
-          );
-        }
-
-        if (dry_run ?? getConfig().dryRun) {
-          const allSettings = { ...settingsToApply };
-          if (inactive_days !== undefined) allSettings["INACTIVE"] = String(inactive_days);
-
-          const entry = createChangeEntry({
-            tool: "access_password_policy",
-            action: "[DRY-RUN] Set password policy",
-            target: "/etc/login.defs",
-            after: JSON.stringify(allSettings),
-            dryRun: true,
-            success: true,
-          });
-          logChange(entry);
-
-          return {
-            content: [
-              createTextContent(
-                `[DRY-RUN] Would apply the following password policy to /etc/login.defs:\n\n` +
-                  Object.entries(allSettings)
-                    .map(([k, v]) => `  ${k} = ${v}`)
-                    .join("\n") +
-                  `\n\nSed commands:\n${sedCommands.map((c) => `  ${c}`).join("\n")}` +
-                  (extraCommands.length > 0
-                    ? `\n\nExtra commands:\n${extraCommands.map((c) => `  ${c}`).join("\n")}`
-                    : "")
-              ),
-            ],
-          };
-        }
-
-        // Backup first
-        let backupPath: string | undefined;
-        try {
-          backupPath = backupFile("/etc/login.defs");
-        } catch {
-          await executeCommand({
-            command: "sudo",
-            args: [
-              "cp",
-              "/etc/login.defs",
-              `/etc/login.defs.bak.${Date.now()}`,
-            ],
-            toolName: "access_password_policy",
-          });
-        }
-
-        // Apply login.defs changes
-        for (const [key, value] of Object.entries(settingsToApply)) {
-          await executeCommand({
-            command: "sudo",
-            args: [
-              "sed",
-              "-i",
-              `s/^#*\\s*${key}\\s.*/${key}\\t${value}/`,
-              "/etc/login.defs",
-            ],
-            toolName: "access_password_policy",
-            timeout: getToolTimeout("access_password_policy"),
-          });
-        }
-
-        // Apply INACTIVE setting if provided
-        if (inactive_days !== undefined) {
-          await executeCommand({
-            command: "sudo",
-            args: ["useradd", "-D", "-f", String(inactive_days)],
-            toolName: "access_password_policy",
-            timeout: getToolTimeout("access_password_policy"),
-          });
-
-          const grepInactive = await executeCommand({
-            command: "grep",
-            args: ["-q", "^INACTIVE", "/etc/default/useradd"],
-            toolName: "access_password_policy",
-          });
-
-          if (grepInactive.exitCode === 0) {
-            await executeCommand({
-              command: "sudo",
-              args: [
-                "sed",
-                "-i",
-                `s/^INACTIVE.*/INACTIVE=${inactive_days}/`,
-                "/etc/default/useradd",
+              content: [
+                createTextContent(
+                  `Password policy updated in /etc/login.defs:\n\n` +
+                    Object.entries(allApplied)
+                      .map(([k, v]) => `  ${k} = ${v}`)
+                      .join("\n") +
+                    (backupPath ? `\n\nBackup: ${backupPath}` : "")
+                ),
               ],
-              toolName: "access_password_policy",
-            });
-          } else {
-            await executeCommand({
-              command: "sudo",
-              args: ["tee", "-a", "/etc/default/useradd"],
-              toolName: "access_password_policy",
-              stdin: `INACTIVE=${inactive_days}\n`,
-            });
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        const allApplied = { ...settingsToApply };
-        if (inactive_days !== undefined) allApplied["INACTIVE"] = String(inactive_days);
+        // ── restrict_shell ───────────────────────────────────────────
+        case "restrict_shell": {
+          const { username, shell, dry_run } = params;
+          try {
+            if (!username) {
+              return {
+                content: [createErrorContent("'username' is required for restrict_shell action")],
+                isError: true,
+              };
+            }
 
-        const entry = createChangeEntry({
-          tool: "access_password_policy",
-          action: "Set password policy",
-          target: "/etc/login.defs",
-          after: JSON.stringify(allApplied),
-          backupPath,
-          dryRun: false,
-          success: true,
-          rollbackCommand: backupPath
-            ? `sudo cp ${backupPath} /etc/login.defs`
-            : undefined,
-        });
-        logChange(entry);
+            // Validate username
+            if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(username)) {
+              return {
+                content: [
+                  createErrorContent(
+                    `Invalid username '${username}'. Must match /^[a-z_][a-z0-9_-]{0,31}$/.`
+                  ),
+                ],
+                isError: true,
+              };
+            }
 
-        return {
-          content: [
-            createTextContent(
-              `Password policy updated in /etc/login.defs:\n\n` +
-                Object.entries(allApplied)
-                  .map(([k, v]) => `  ${k} = ${v}`)
-                  .join("\n") +
-                (backupPath ? `\n\nBackup: ${backupPath}` : "")
-            ),
-          ],
-        };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
+            // Validate shell path
+            if (!/^\/[a-z\/]+$/.test(shell)) {
+              return {
+                content: [
+                  createErrorContent(
+                    `Invalid shell path '${shell}'. Must match /^\\/[a-z\\/]+$/.`
+                  ),
+                ],
+                isError: true,
+              };
+            }
 
-  // ── 6. access_restrict_shell (kept as-is) ─────────────────────────────────
+            // Safety check: refuse to change shell for root
+            if (username === "root") {
+              return {
+                content: [
+                  createErrorContent(
+                    "Refusing to change shell for root user. This is a safety restriction."
+                  ),
+                ],
+                isError: true,
+              };
+            }
 
-  server.tool(
-    "access_restrict_shell",
-    "Restrict a user's login shell (e.g., set service accounts to /usr/sbin/nologin)",
-    {
-      username: z
-        .string()
-        .describe("The username to restrict"),
-      shell: z
-        .string()
-        .optional()
-        .default("/usr/sbin/nologin")
-        .describe("Shell to set (default: /usr/sbin/nologin)"),
-      dry_run: z
-        .boolean()
-        .optional()
-        .describe("Preview changes without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
-    },
-    async ({ username, shell, dry_run }) => {
-      try {
-        // Validate username
-        if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(username)) {
-          return {
-            content: [
-              createErrorContent(
-                `Invalid username '${username}'. Must match /^[a-z_][a-z0-9_-]{0,31}$/.`
-              ),
-            ],
-            isError: true,
-          };
+            // Safety check: refuse to change shell for current user
+            const whoamiResult = await executeCommand({
+              command: "whoami",
+              args: [],
+              toolName: "access_control",
+            });
+            const currentUser = whoamiResult.stdout.trim();
+            if (username === currentUser) {
+              return {
+                content: [
+                  createErrorContent(
+                    `Refusing to change shell for the current user '${currentUser}'. This is a safety restriction.`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            // Check that the user exists
+            const idResult = await executeCommand({
+              command: "id",
+              args: [username],
+              toolName: "access_control",
+            });
+            if (idResult.exitCode !== 0) {
+              return {
+                content: [
+                  createErrorContent(`User '${username}' does not exist.`),
+                ],
+                isError: true,
+              };
+            }
+
+            // Get current shell
+            const getentResult = await executeCommand({
+              command: "getent",
+              args: ["passwd", username],
+              toolName: "access_control",
+            });
+            const currentShell = getentResult.stdout.trim().split(":").pop() ?? "unknown";
+
+            if (dry_run ?? getConfig().dryRun) {
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: `[DRY-RUN] Restrict shell for ${username}`,
+                target: `/etc/passwd (${username})`,
+                before: `shell=${currentShell}`,
+                after: `shell=${shell}`,
+                dryRun: true,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `[DRY-RUN] Would change shell for '${username}':\n\n` +
+                      `  Current shell: ${currentShell}\n` +
+                      `  New shell:     ${shell}\n\n` +
+                      `  Command: sudo usermod -s ${shell} ${username}`
+                  ),
+                ],
+              };
+            }
+
+            // Apply the shell change
+            const result = await executeCommand({
+              command: "sudo",
+              args: ["usermod", "-s", shell, username],
+              toolName: "access_control",
+              timeout: getToolTimeout("access_control"),
+            });
+
+            if (result.exitCode !== 0) {
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: `Restrict shell for ${username}`,
+                target: `/etc/passwd (${username})`,
+                before: `shell=${currentShell}`,
+                after: `shell=${shell}`,
+                dryRun: false,
+                success: false,
+                error: result.stderr,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createErrorContent(
+                    `Failed to change shell for '${username}': ${result.stderr}`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const entry = createChangeEntry({
+              tool: "access_control",
+              action: `Restrict shell for ${username}`,
+              target: `/etc/passwd (${username})`,
+              before: `shell=${currentShell}`,
+              after: `shell=${shell}`,
+              dryRun: false,
+              success: true,
+              rollbackCommand: `sudo usermod -s ${currentShell} ${username}`,
+            });
+            logChange(entry);
+
+            return {
+              content: [
+                createTextContent(
+                  `Shell restricted for '${username}':\n\n` +
+                    `  Previous shell: ${currentShell}\n` +
+                    `  New shell:      ${shell}\n\n` +
+                    `  Rollback: sudo usermod -s ${currentShell} ${username}`
+                ),
+              ],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
         }
 
-        // Validate shell path
-        if (!/^\/[a-z\/]+$/.test(shell)) {
-          return {
-            content: [
-              createErrorContent(
-                `Invalid shell path '${shell}'. Must match /^\\/[a-z\\/]+$/.`
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        // Safety check: refuse to change shell for root
-        if (username === "root") {
-          return {
-            content: [
-              createErrorContent(
-                "Refusing to change shell for root user. This is a safety restriction."
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        // Safety check: refuse to change shell for current user
-        const whoamiResult = await executeCommand({
-          command: "whoami",
-          args: [],
-          toolName: "access_restrict_shell",
-        });
-        const currentUser = whoamiResult.stdout.trim();
-        if (username === currentUser) {
-          return {
-            content: [
-              createErrorContent(
-                `Refusing to change shell for the current user '${currentUser}'. This is a safety restriction.`
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        // Check that the user exists
-        const idResult = await executeCommand({
-          command: "id",
-          args: [username],
-          toolName: "access_restrict_shell",
-        });
-        if (idResult.exitCode !== 0) {
-          return {
-            content: [
-              createErrorContent(`User '${username}' does not exist.`),
-            ],
-            isError: true,
-          };
-        }
-
-        // Get current shell
-        const getentResult = await executeCommand({
-          command: "getent",
-          args: ["passwd", username],
-          toolName: "access_restrict_shell",
-        });
-        const currentShell = getentResult.stdout.trim().split(":").pop() ?? "unknown";
-
-        if (dry_run ?? getConfig().dryRun) {
-          const entry = createChangeEntry({
-            tool: "access_restrict_shell",
-            action: `[DRY-RUN] Restrict shell for ${username}`,
-            target: `/etc/passwd (${username})`,
-            before: `shell=${currentShell}`,
-            after: `shell=${shell}`,
-            dryRun: true,
-            success: true,
-          });
-          logChange(entry);
-
-          return {
-            content: [
-              createTextContent(
-                `[DRY-RUN] Would change shell for '${username}':\n\n` +
-                  `  Current shell: ${currentShell}\n` +
-                  `  New shell:     ${shell}\n\n` +
-                  `  Command: sudo usermod -s ${shell} ${username}`
-              ),
-            ],
-          };
-        }
-
-        // Apply the shell change
-        const result = await executeCommand({
-          command: "sudo",
-          args: ["usermod", "-s", shell, username],
-          toolName: "access_restrict_shell",
-          timeout: getToolTimeout("access_restrict_shell"),
-        });
-
-        if (result.exitCode !== 0) {
-          const entry = createChangeEntry({
-            tool: "access_restrict_shell",
-            action: `Restrict shell for ${username}`,
-            target: `/etc/passwd (${username})`,
-            before: `shell=${currentShell}`,
-            after: `shell=${shell}`,
-            dryRun: false,
-            success: false,
-            error: result.stderr,
-          });
-          logChange(entry);
-
-          return {
-            content: [
-              createErrorContent(
-                `Failed to change shell for '${username}': ${result.stderr}`
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        const entry = createChangeEntry({
-          tool: "access_restrict_shell",
-          action: `Restrict shell for ${username}`,
-          target: `/etc/passwd (${username})`,
-          before: `shell=${currentShell}`,
-          after: `shell=${shell}`,
-          dryRun: false,
-          success: true,
-          rollbackCommand: `sudo usermod -s ${currentShell} ${username}`,
-        });
-        logChange(entry);
-
-        return {
-          content: [
-            createTextContent(
-              `Shell restricted for '${username}':\n\n` +
-                `  Previous shell: ${currentShell}\n` +
-                `  New shell:      ${shell}\n\n` +
-                `  Rollback: sudo usermod -s ${currentShell} ${username}`
-            ),
-          ],
-        };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
+        default:
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
   );

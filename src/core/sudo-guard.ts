@@ -35,7 +35,8 @@
  */
 
 import { SudoSession } from "./sudo-session.js";
-import { statSync, lstatSync } from "node:fs";
+import { statSync, lstatSync, readFileSync } from "node:fs";
+import { logger } from "./logger.js";
 
 // ── Permission Error Detection ───────────────────────────────────────────────
 
@@ -149,6 +150,62 @@ export interface ElevationPromptResponse {
  * generation. All methods are stateless and can be called directly.
  */
 export class SudoGuard {
+  /**
+   * Check whether passwordless sudo (`NOPASSWD: ALL`) is still active.
+   *
+   * Reads `/etc/sudoers` and `/etc/sudoers.d/mcpuser` (non-root readable
+   * paths only) and searches for the `NOPASSWD:.*ALL` pattern. If found,
+   * logs a CRITICAL security warning — the credential validation in
+   * `SudoSession.elevate()` is hollow while this grant exists.
+   *
+   * This check is intended to be called during server startup so operators
+   * are alerted immediately if the Docker image was not rebuilt correctly.
+   *
+   * @returns `{ nopasswdDetected: boolean, location?: string }`
+   */
+  static checkNopasswdConfiguration(): { nopasswdDetected: boolean; location?: string } {
+    const candidatePaths = [
+      "/etc/sudoers",
+      "/etc/sudoers.d/mcpuser",
+      "/etc/sudoers.d/",
+    ];
+
+    const nopasswdPattern = /NOPASSWD\s*:\s*ALL/i;
+
+    for (const filePath of candidatePaths) {
+      try {
+        const content = readFileSync(filePath, "utf-8");
+        if (nopasswdPattern.test(content)) {
+          logger.security(
+            "sudo-guard",
+            "nopasswd_detected",
+            "SECURITY CRITICAL: NOPASSWD:ALL detected in sudoers configuration. " +
+            "Authentication via sudo_elevate is NON-FUNCTIONAL — any password will be accepted. " +
+            "Remove NOPASSWD from the sudoers file and set a real password for mcpuser. " +
+            "See docs/SUDO-SESSION-DESIGN.md for remediation steps.",
+            {
+              severity: "CRITICAL",
+              location: filePath,
+              remediation:
+                "Rebuild the Docker image with the updated Dockerfile that uses " +
+                "etc/sudoers.d/mcpuser (scoped allowlist, no NOPASSWD).",
+            }
+          );
+          return { nopasswdDetected: true, location: filePath };
+        }
+      } catch {
+        // File may not exist or may not be readable — that's fine
+      }
+    }
+
+    logger.info(
+      "sudo-guard",
+      "nopasswd_check_passed",
+      "Sudoers NOPASSWD:ALL check passed — passwordless sudo not detected"
+    );
+    return { nopasswdDetected: false };
+  }
+
   /**
    * Check whether command output (stderr and/or stdout) indicates a
    * permission/privilege failure.

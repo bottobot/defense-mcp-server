@@ -160,23 +160,22 @@ describe("dependency-validator", () => {
     });
 
     it("should return satisfied when all required binaries are available", async () => {
-      // firewall_iptables requires "iptables", optional "ip6tables"
-      // Provide mock results for both required and optional binary checks
-      mockCheckTool.mockResolvedValue({ installed: true, path: "/usr/sbin/iptables" });
+      // vuln_manage requires "nmap", optional "nikto", "searchsploit"
+      // Provide mock results for all binary checks
+      mockCheckTool.mockResolvedValue({ installed: true, path: "/usr/bin/nmap" });
 
-      const result = await ensureDependencies("firewall_iptables");
+      const result = await ensureDependencies("vuln_manage");
       expect(result.satisfied).toBe(true);
       expect(result.missingRequired).toEqual([]);
     });
 
     it("should report missing required binaries", async () => {
-      // firewall_iptables requires "iptables", optional "ip6tables"
-      // All calls return not installed
+      // vuln_manage requires "nmap" — all calls return not installed
       mockCheckTool.mockResolvedValue({ installed: false });
 
-      const result = await ensureDependencies("firewall_iptables");
+      const result = await ensureDependencies("vuln_manage");
       expect(result.satisfied).toBe(false);
-      expect(result.missingRequired).toContain("iptables");
+      expect(result.missingRequired).toContain("nmap");
     });
 
     it("should auto-install missing binaries when autoInstall is enabled", async () => {
@@ -185,28 +184,36 @@ describe("dependency-validator", () => {
         dryRun: false,
       } as ReturnType<typeof getConfig>);
 
-      // All checkTool calls: not installed initially
-      mockCheckTool.mockResolvedValueOnce({ installed: false }); // iptables required check
-      // installTool succeeds
+      // nmap required: not installed initially
+      mockCheckTool.mockResolvedValueOnce({ installed: false });
+      // installTool succeeds for nmap
       mockInstallTool.mockResolvedValueOnce({
-        tool: { name: "iptables", binary: "iptables", packages: {}, category: "firewall", required: true },
+        tool: { name: "nmap", binary: "nmap", packages: {}, category: "network", required: true },
         success: true,
         message: "Installed",
       });
       // Re-check after install: now installed
-      mockCheckTool.mockResolvedValueOnce({ installed: true, path: "/usr/sbin/iptables" });
-      // ip6tables optional check: not installed (but doesn't fail the overall check)
+      mockCheckTool.mockResolvedValueOnce({ installed: true, path: "/usr/bin/nmap" });
+      // nikto optional: not installed (doesn't fail overall check)
       mockCheckTool.mockResolvedValueOnce({ installed: false });
-      // auto-install attempt for ip6tables
+      // auto-install attempt for nikto: fail (optional)
       mockInstallTool.mockResolvedValueOnce({
-        tool: { name: "ip6tables", binary: "ip6tables", packages: {}, category: "firewall", required: false },
+        tool: { name: "nikto", binary: "nikto", packages: {}, category: "network", required: false },
+        success: false,
+        message: "Not found",
+      });
+      // searchsploit optional: not installed
+      mockCheckTool.mockResolvedValueOnce({ installed: false });
+      // auto-install attempt for searchsploit: fail (optional)
+      mockInstallTool.mockResolvedValueOnce({
+        tool: { name: "searchsploit", binary: "searchsploit", packages: {}, category: "network", required: false },
         success: false,
         message: "Not found",
       });
 
-      const result = await ensureDependencies("firewall_iptables");
+      const result = await ensureDependencies("vuln_manage");
       expect(result.satisfied).toBe(true);
-      expect(result.autoInstalled).toContain("iptables");
+      expect(result.autoInstalled).toContain("nmap");
     });
 
     it("should report install errors when auto-install fails", async () => {
@@ -215,24 +222,31 @@ describe("dependency-validator", () => {
         dryRun: false,
       } as ReturnType<typeof getConfig>);
 
-      // iptables required: not installed
+      // nmap required: not installed
       mockCheckTool.mockResolvedValueOnce({ installed: false });
       mockInstallTool.mockResolvedValueOnce({
-        tool: { name: "iptables", binary: "iptables", packages: {}, category: "firewall", required: true },
+        tool: { name: "nmap", binary: "nmap", packages: {}, category: "network", required: true },
         success: false,
         message: "Package not found",
       });
-      // ip6tables optional: not installed
+      // nikto optional: not installed
       mockCheckTool.mockResolvedValueOnce({ installed: false });
       mockInstallTool.mockResolvedValueOnce({
-        tool: { name: "ip6tables", binary: "ip6tables", packages: {}, category: "firewall", required: false },
+        tool: { name: "nikto", binary: "nikto", packages: {}, category: "network", required: false },
+        success: false,
+        message: "Not found",
+      });
+      // searchsploit optional: not installed
+      mockCheckTool.mockResolvedValueOnce({ installed: false });
+      mockInstallTool.mockResolvedValueOnce({
+        tool: { name: "searchsploit", binary: "searchsploit", packages: {}, category: "network", required: false },
         success: false,
         message: "Not found",
       });
 
-      const result = await ensureDependencies("firewall_iptables");
+      const result = await ensureDependencies("vuln_manage");
       expect(result.satisfied).toBe(false);
-      expect(result.missingRequired).toContain("iptables");
+      expect(result.missingRequired).toContain("nmap");
       expect(result.installErrors.length).toBeGreaterThan(0);
     });
   });

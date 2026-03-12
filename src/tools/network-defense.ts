@@ -1,11 +1,10 @@
 /**
  * Network defense tools for Kali Defense MCP Server.
  *
- * Registers 4 tools:
- *   netdef_connections (actions: list, audit)
- *   netdef_capture (actions: custom, dns, arp)
- *   netdef_security_audit (actions: scan_detect, ipv6, self_scan)
- *   network_segmentation_audit (actions: map_zones, verify_isolation, test_paths, audit_vlans)
+ * Registers 1 tool: network_defense (actions: connections_list, connections_audit,
+ * capture_custom, capture_dns, capture_arp, security_scan_detect, security_ipv6,
+ * security_self_scan, segmentation_map_zones, segmentation_verify_isolation,
+ * segmentation_test_paths, segmentation_audit_vlans)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -172,25 +171,54 @@ async function runSudoSegmentCommand(
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerNetworkDefenseTools(server: McpServer): void {
-  // ── 1. netdef_connections (merged: connections + open_ports_audit) ─────
-
   server.tool(
-    "netdef_connections",
-    "Network connections: list active connections or audit listening ports for suspicious services.",
+    "network_defense",
+    "Network defense: list/audit connections, capture traffic, detect port scans, audit IPv6, self-scan, and network segmentation audit.",
     {
-      action: z.enum(["list", "audit"]).describe("Action: list=list active connections, audit=audit listening ports"),
-      // list params
-      protocol: z.enum(["tcp", "udp", "all"]).optional().default("all").describe("Protocol filter (list action)"),
-      listening: z.boolean().optional().default(false).describe("Show only listening sockets (list action)"),
-      process: z.boolean().optional().default(true).describe("Show process information (list action)"),
-      // audit params
-      include_loopback: z.boolean().optional().default(false).describe("Include services listening only on loopback (audit action)"),
+      action: z.enum([
+        "connections_list",
+        "connections_audit",
+        "capture_custom",
+        "capture_dns",
+        "capture_arp",
+        "security_scan_detect",
+        "security_ipv6",
+        "security_self_scan",
+        "segmentation_map_zones",
+        "segmentation_verify_isolation",
+        "segmentation_test_paths",
+        "segmentation_audit_vlans",
+      ]).describe("Action to perform"),
+      // connections params
+      protocol: z.enum(["tcp", "udp", "all"]).optional().default("all").describe("Protocol filter (connections_list)"),
+      listening: z.boolean().optional().default(false).describe("Show only listening sockets (connections_list)"),
+      process: z.boolean().optional().default(true).describe("Show process information (connections_list)"),
+      include_loopback: z.boolean().optional().default(false).describe("Include loopback services (connections_audit)"),
+      // capture params
+      interface: z.string().min(1).optional().default("any").describe("Network interface to capture on"),
+      count: z.number().optional().default(100).describe("Number of packets to capture"),
+      duration: z.number().optional().default(30).describe("Capture duration in seconds"),
+      filter: z.string().optional().describe("BPF filter expression (capture_custom)"),
+      output_file: z.string().optional().describe("Path to save pcap file (capture_custom)"),
+      dry_run: z.boolean().optional().describe("Preview the command without executing"),
+      // security_scan_detect params
+      log_file: z.string().optional().describe("Log file to analyze (security_scan_detect)"),
+      threshold: z.number().optional().default(10).describe("Connection attempts threshold (security_scan_detect)"),
+      timeframe: z.number().optional().default(60).describe("Seconds to look back (security_scan_detect)"),
+      // security_self_scan params
+      target: z.enum(["localhost", "external"]).optional().default("localhost").describe("Scan target (security_self_scan)"),
+      scan_type: z.enum(["quick", "full", "service"]).optional().default("quick").describe("Scan type (security_self_scan)"),
+      // segmentation params
+      source_zone: z.string().optional().describe("Source network zone/subnet CIDR (segmentation_test_paths)"),
+      dest_zone: z.string().optional().describe("Destination network zone/subnet CIDR (segmentation_test_paths)"),
+      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format"),
     },
     async (params) => {
       const { action } = params;
 
       switch (action) {
-        case "list": {
+        // ── connections_list ─────────────────────────────────────────
+        case "connections_list": {
           const { protocol, listening, process: showProcess } = params;
           try {
             const args: string[] = [];
@@ -202,7 +230,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             if (showProcess) args.push("-p");
 
             const result = await executeCommand({
-              command: "ss", args, toolName: "netdef_connections",
+              command: "ss", args, toolName: "network_defense",
               timeout: getToolTimeout("tcpdump"),
             });
 
@@ -218,11 +246,12 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        case "audit": {
+        // ── connections_audit ────────────────────────────────────────
+        case "connections_audit": {
           const { include_loopback } = params;
           try {
             const result = await executeCommand({
-              command: "ss", args: ["-tulnp"], toolName: "netdef_connections",
+              command: "ss", args: ["-tulnp"], toolName: "network_defense",
               timeout: getToolTimeout("tcpdump"),
             });
 
@@ -269,32 +298,8 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 2. netdef_capture (merged: tcpdump + dns_monitor + arp_monitor) ────
-
-  server.tool(
-    "netdef_capture",
-    "Network capture: custom tcpdump capture, DNS query monitoring, or ARP traffic monitoring.",
-    {
-      action: z.enum(["custom", "dns", "arp"]).describe("Action: custom=tcpdump capture, dns=DNS monitoring, arp=ARP monitoring"),
-      interface: z.string().min(1).optional().default("any").describe("Network interface to capture on"),
-      count: z.number().optional().default(100).describe("Number of packets to capture"),
-      duration: z.number().optional().default(30).describe("Capture duration in seconds"),
-      // custom params
-      filter: z.string().optional().describe("BPF filter expression (custom action)"),
-      output_file: z.string().optional().describe("Path to save pcap file (custom action)"),
-      dry_run: z.boolean().optional().describe("Preview the command without executing"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        case "custom": {
+        // ── capture_custom ───────────────────────────────────────────
+        case "capture_custom": {
           const { interface: iface, filter, count, output_file, duration, dry_run } = params;
           try {
             if (iface !== "any") validateInterface(iface);
@@ -314,14 +319,14 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             const fullCmd = `sudo tcpdump ${args.join(" ")}`;
 
             if (dry_run ?? getConfig().dryRun) {
-              logChange(createChangeEntry({ tool: "netdef_capture", action: "[DRY-RUN] Capture network traffic", target: iface, after: fullCmd, dryRun: true, success: true }));
+              logChange(createChangeEntry({ tool: "network_defense", action: "[DRY-RUN] Capture network traffic", target: iface, after: fullCmd, dryRun: true, success: true }));
               return { content: [createTextContent(`[DRY-RUN] Would execute:\n  ${fullCmd}\n\nDuration: ${duration}s, Packets: ${count}`)] };
             }
 
             const captureTimeout = duration * 1000 + 5000;
-            const result = await executeCommand({ command: "sudo", args: ["tcpdump", ...args], toolName: "netdef_capture", timeout: captureTimeout });
+            const result = await executeCommand({ command: "sudo", args: ["tcpdump", ...args], toolName: "network_defense", timeout: captureTimeout });
 
-            logChange(createChangeEntry({ tool: "netdef_capture", action: "Capture network traffic", target: iface, after: fullCmd, dryRun: false, success: result.exitCode === 0 || result.timedOut }));
+            logChange(createChangeEntry({ tool: "network_defense", action: "Capture network traffic", target: iface, after: fullCmd, dryRun: false, success: result.exitCode === 0 || result.timedOut }));
 
             return { content: [formatToolOutput({ interface: iface, filter: filter ?? "none", packetCount: count, duration, timedOut: result.timedOut, outputFile: output_file ?? "none (stdout)", captured: result.stdout, stats: result.stderr })] };
           } catch (err: unknown) {
@@ -330,7 +335,8 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        case "dns": {
+        // ── capture_dns ──────────────────────────────────────────────
+        case "capture_dns": {
           const { interface: iface, count, duration } = params;
           try {
             if (iface !== "any") validateInterface(iface);
@@ -338,7 +344,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             const args = ["-i", iface, "-c", String(count), "port", "53", "-n"];
             const captureTimeout = duration * 1000 + 5000;
 
-            const result = await executeCommand({ command: "sudo", args: ["tcpdump", ...args], toolName: "netdef_capture", timeout: captureTimeout });
+            const result = await executeCommand({ command: "sudo", args: ["tcpdump", ...args], toolName: "network_defense", timeout: captureTimeout });
 
             const dnsLines = result.stdout.split("\n").filter((l) => l.trim().length > 0);
             const queries: string[] = [];
@@ -356,7 +362,8 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        case "arp": {
+        // ── capture_arp ──────────────────────────────────────────────
+        case "capture_arp": {
           const { interface: iface, count, duration } = params;
           try {
             if (iface !== "any") validateInterface(iface);
@@ -364,7 +371,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             const args = ["-i", iface, "-c", String(count), "arp", "-n"];
             const captureTimeout = duration * 1000 + 5000;
 
-            const result = await executeCommand({ command: "sudo", args: ["tcpdump", ...args], toolName: "netdef_capture", timeout: captureTimeout });
+            const result = await executeCommand({ command: "sudo", args: ["tcpdump", ...args], toolName: "network_defense", timeout: captureTimeout });
 
             const arpLines = result.stdout.split("\n").filter((l) => l.trim().length > 0);
             const ipToMac: Record<string, Set<string>> = {};
@@ -395,32 +402,8 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 3. netdef_security_audit (merged: port_scan_detect + ipv6 + self_scan) ──
-
-  server.tool(
-    "netdef_security_audit",
-    "Network security audit: detect port scanning, audit IPv6 configuration, or run nmap self-scan.",
-    {
-      action: z.enum(["scan_detect", "ipv6", "self_scan"]).describe("Action: scan_detect=detect port scans, ipv6=audit IPv6, self_scan=nmap self-scan"),
-      // scan_detect params
-      log_file: z.string().optional().describe("Log file to analyze (scan_detect action)"),
-      threshold: z.number().optional().default(10).describe("Connection attempts threshold (scan_detect action)"),
-      timeframe: z.number().optional().default(60).describe("Seconds to look back (scan_detect action)"),
-      // self_scan params
-      target: z.enum(["localhost", "external"]).optional().default("localhost").describe("Scan target (self_scan action)"),
-      scan_type: z.enum(["quick", "full", "service"]).optional().default("quick").describe("Scan type (self_scan action)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        case "scan_detect": {
+        // ── security_scan_detect ─────────────────────────────────────
+        case "security_scan_detect": {
           const { log_file, threshold, timeframe } = params;
           try {
             const sinceStr = `${String(timeframe)} seconds ago`;
@@ -428,10 +411,10 @@ export function registerNetworkDefenseTools(server: McpServer): void {
 
             const journalArgs = ["--since", sinceStr, "--no-pager", "-g", "SYN|refused connection|connection attempt|UFW BLOCK"];
 
-            const journalResult = await executeCommand({ command: "journalctl", args: journalArgs, toolName: "netdef_security_audit", timeout: getToolTimeout("tcpdump") });
+            const journalResult = await executeCommand({ command: "journalctl", args: journalArgs, toolName: "network_defense", timeout: getToolTimeout("tcpdump") });
 
             const dmesgArgs = ["-T", "--level=warn,err"];
-            const dmesgResult = await executeCommand({ command: "dmesg", args: dmesgArgs, toolName: "netdef_security_audit", timeout: getToolTimeout("tcpdump") });
+            const dmesgResult = await executeCommand({ command: "dmesg", args: dmesgArgs, toolName: "network_defense", timeout: getToolTimeout("tcpdump") });
 
             const ipCounts: Record<string, number> = {};
             const ipRe = /SRC=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g;
@@ -460,20 +443,21 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        case "ipv6": {
+        // ── security_ipv6 ────────────────────────────────────────────
+        case "security_ipv6": {
           try {
             const findings: Array<{check: string, status: string, value: string, description: string}> = [];
 
-            const ipv6All = await executeCommand({ command: "sysctl", args: ["net.ipv6.conf.all.disable_ipv6"], timeout: 5000, toolName: "netdef_security_audit" });
+            const ipv6All = await executeCommand({ command: "sysctl", args: ["net.ipv6.conf.all.disable_ipv6"], timeout: 5000, toolName: "network_defense" });
             const disabled = ipv6All.stdout.includes("= 1");
             findings.push({ check: "ipv6_disabled", status: "INFO", value: disabled ? "disabled" : "enabled", description: "IPv6 status (disable if not needed)" });
 
             if (!disabled) {
-              const addrResult = await executeCommand({ command: "ip", args: ["-6", "addr", "show"], timeout: 5000, toolName: "netdef_security_audit" });
+              const addrResult = await executeCommand({ command: "ip", args: ["-6", "addr", "show"], timeout: 5000, toolName: "network_defense" });
               const hasGlobal = addrResult.stdout.includes("scope global");
               findings.push({ check: "ipv6_global_address", status: hasGlobal ? "INFO" : "PASS", value: hasGlobal ? "has global IPv6 address" : "link-local only", description: "IPv6 global address presence" });
 
-              const ip6tables = await executeCommand({ command: "sudo", args: ["ip6tables", "-L", "-n"], timeout: 10000, toolName: "netdef_security_audit" });
+              const ip6tables = await executeCommand({ command: "sudo", args: ["ip6tables", "-L", "-n"], timeout: 10000, toolName: "network_defense" });
               const inputMatch = ip6tables.stdout.match(/Chain INPUT \(policy (\w+)\)/);
               findings.push({ check: "ipv6_firewall_input", status: inputMatch && (inputMatch[1] === "DROP" || inputMatch[1] === "REJECT") ? "PASS" : "FAIL", value: inputMatch ? inputMatch[1] : "unknown", description: "IPv6 INPUT chain policy (should be DROP if IPv6 enabled)" });
 
@@ -483,7 +467,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
                 { key: "net.ipv6.conf.all.accept_source_route", expected: "0", desc: "Accept source route" },
               ];
               for (const sc of sysctlChecks) {
-                const val = await executeCommand({ command: "sysctl", args: [sc.key], timeout: 5000, toolName: "netdef_security_audit" });
+                const val = await executeCommand({ command: "sysctl", args: [sc.key], timeout: 5000, toolName: "network_defense" });
                 const current = val.stdout.split("=").pop()?.trim() || "unknown";
                 findings.push({ check: sc.key, status: current === sc.expected ? "PASS" : "FAIL", value: current, description: `${sc.desc} (should be ${sc.expected})` });
               }
@@ -495,11 +479,12 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        case "self_scan": {
+        // ── security_self_scan ───────────────────────────────────────
+        case "security_self_scan": {
           try {
             let scanTarget = "127.0.0.1";
             if (params.target === "external") {
-              const ipResult = await executeCommand({ command: "hostname", args: ["-I"], timeout: 5000, toolName: "netdef_security_audit" });
+              const ipResult = await executeCommand({ command: "hostname", args: ["-I"], timeout: 5000, toolName: "network_defense" });
               scanTarget = ipResult.stdout.trim().split(" ")[0] || "127.0.0.1";
             }
 
@@ -509,55 +494,25 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             else if (params.scan_type === "service") args.unshift("-sV", "-F");
             args.push("--open", "-n");
 
-            const result = await executeCommand({ command: "nmap", args, timeout: 120000, toolName: "netdef_security_audit" });
+            const result = await executeCommand({ command: "nmap", args, timeout: 120000, toolName: "network_defense" });
             return { content: [createTextContent(`Self-Scan Results (target: ${scanTarget}, type: ${params.scan_type}):\n\n${result.stdout}\n${result.stderr ? `\nWarnings:\n${result.stderr}` : ""}`)] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 4. network_segmentation_audit ────────────────────────────────────────
-
-  server.tool(
-    "network_segmentation_audit",
-    "Network segmentation audit: map network zones, verify isolation enforcement, test paths between zones, audit VLAN configurations.",
-    {
-      action: z.enum(["map_zones", "verify_isolation", "test_paths", "audit_vlans"]).describe("Action: map_zones=map network zones, verify_isolation=check segmentation enforcement, test_paths=test connectivity between zones, audit_vlans=audit VLAN configs"),
-      source_zone: z.string().optional().describe("Source network zone/subnet in CIDR notation (test_paths action)"),
-      dest_zone: z.string().optional().describe("Destination network zone/subnet in CIDR notation (test_paths action)"),
-      interface: z.string().optional().describe("Specific network interface to audit"),
-      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format: text or json"),
-    },
-    async (params) => {
-      const { action, output_format } = params;
-
-      switch (action) {
-        case "map_zones": {
+        // ── segmentation_map_zones ───────────────────────────────────
+        case "segmentation_map_zones": {
+          const { output_format } = params;
           try {
             const ifaceFilter = params.interface;
 
-            // Get network interfaces and subnets
             const addrResult = await runSegmentCommand("ip", ["addr", "show"]);
-
-            // Get routing table
             const routeResult = await runSegmentCommand("ip", ["route", "show"]);
-
-            // Get firewall rules
             const fwResult = await runSudoSegmentCommand("iptables", ["-L", "-n", "-v"]);
-
-            // Get FORWARD chain specifically
             const fwdResult = await runSudoSegmentCommand("iptables", ["-L", "FORWARD", "-n", "-v"]);
-
-            // Get bridge interfaces
             const bridgeResult = await runSegmentCommand("bridge", ["link", "show"]);
 
-            // Parse interfaces into zone map
             interface ZoneInfo {
               interface: string;
               subnet: string;
@@ -579,7 +534,6 @@ export function registerNetworkDefenseTools(server: McpServer): void {
               for (const m of inetMatches) {
                 const subnet = m[1];
 
-                // Find gateway from route table
                 let gateway: string | null = null;
                 const routeLines = routeResult.stdout.split("\n");
                 for (const line of routeLines) {
@@ -589,7 +543,6 @@ export function registerNetworkDefenseTools(server: McpServer): void {
                   }
                 }
 
-                // Find associated firewall rules
                 const firewallRules: string[] = [];
                 if (fwResult.exitCode === 0) {
                   const fwLines = fwResult.stdout.split("\n");
@@ -643,12 +596,13 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        case "verify_isolation": {
+        // ── segmentation_verify_isolation ────────────────────────────
+        case "segmentation_verify_isolation": {
+          const { output_format } = params;
           try {
             const violations: string[] = [];
             let score = 100;
 
-            // Check FORWARD chain default policy
             const fwdResult = await runSudoSegmentCommand("iptables", ["-L", "FORWARD", "-n"]);
 
             let forwardPolicy = "UNKNOWN";
@@ -662,7 +616,6 @@ export function registerNetworkDefenseTools(server: McpServer): void {
                 }
               }
 
-              // Check for overly permissive rules (ACCEPT all from any to any)
               const fwdLines = fwdResult.stdout.split("\n");
               for (const line of fwdLines) {
                 if (line.includes("ACCEPT") && line.includes("0.0.0.0/0") &&
@@ -676,7 +629,6 @@ export function registerNetworkDefenseTools(server: McpServer): void {
               score -= 40;
             }
 
-            // Check for NAT/masquerade rules that might bypass segmentation
             const natResult = await runSudoSegmentCommand("iptables", ["-t", "nat", "-L", "-n"]);
             const natBypasses: string[] = [];
             if (natResult.exitCode === 0) {
@@ -731,8 +683,9 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        case "test_paths": {
-          const { source_zone, dest_zone } = params;
+        // ── segmentation_test_paths ──────────────────────────────────
+        case "segmentation_test_paths": {
+          const { source_zone, dest_zone, output_format } = params;
           if (!source_zone || !dest_zone) {
             return { content: [createErrorContent("test_paths requires both source_zone and dest_zone parameters (CIDR notation)")], isError: true };
           }
@@ -743,13 +696,11 @@ export function registerNetworkDefenseTools(server: McpServer): void {
 
             const destIP = dest_zone.split("/")[0];
 
-            // Try traceroute first, fall back to tracepath
             let traceResult = await runSegmentCommand("traceroute", ["-n", "-m", "15", destIP], 30_000);
             if (traceResult.exitCode !== 0) {
               traceResult = await runSegmentCommand("tracepath", ["-n", destIP], 30_000);
             }
 
-            // Host discovery in target zone
             const nmapResult = await runSudoSegmentCommand("nmap", ["-sn", dest_zone], 60_000);
 
             const reachableHosts: string[] = [];
@@ -789,9 +740,10 @@ export function registerNetworkDefenseTools(server: McpServer): void {
           }
         }
 
-        case "audit_vlans": {
+        // ── segmentation_audit_vlans ─────────────────────────────────
+        case "segmentation_audit_vlans": {
+          const { output_format } = params;
           try {
-            // List VLAN interfaces
             const linkResult = await runSegmentCommand("ip", ["-d", "link", "show"]);
 
             interface VlanInfo {
@@ -820,14 +772,12 @@ export function registerNetworkDefenseTools(server: McpServer): void {
               }
             }
 
-            // Check VLAN tagging config
             let vlanConfig = "";
             const vlanConfigResult = await runSegmentCommand("cat", ["/proc/net/vlan/config"]);
             if (vlanConfigResult.exitCode === 0) {
               vlanConfig = vlanConfigResult.stdout.trim();
             }
 
-            // Check 802.1Q support
             let dot1qSupported = vlanConfigResult.exitCode === 0;
             if (!dot1qSupported) {
               const lsmodResult = await runSegmentCommand("lsmod", []);
@@ -836,7 +786,6 @@ export function registerNetworkDefenseTools(server: McpServer): void {
               }
             }
 
-            // Security concerns
             const concerns: string[] = [];
             if (vlans.length === 0) {
               concerns.push("No VLAN interfaces detected - network may lack segmentation");
@@ -844,7 +793,6 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             if (!dot1qSupported) {
               concerns.push("802.1Q VLAN support not detected");
             }
-            // Check for promiscuous interfaces (possible trunk port exposure)
             if (linkResult.exitCode === 0 && linkResult.stdout.includes("PROMISC")) {
               concerns.push("Promiscuous interface detected - possible trunk port exposure");
             }

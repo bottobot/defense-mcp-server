@@ -295,6 +295,8 @@ export async function executeCommand(
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
+      // Close stdin first to unblock any process waiting for input (e.g. sudo -S waiting for password)
+      try { if (child.stdin && !child.stdin.destroyed) child.stdin.end(); } catch { /* ignore */ }
       // Graceful SIGTERM first
       try { child.kill("SIGTERM"); } catch { /* ignore */ }
       // Escalate to SIGKILL after 5 seconds if still running

@@ -88,20 +88,15 @@ describe("compliance tools", () => {
 
   // ── Registration ──────────────────────────────────────────────────────
 
-  it("should register all compliance tools", () => {
-    expect(tools.has("compliance_lynis_audit")).toBe(true);
-    expect(tools.has("compliance_oscap_scan")).toBe(true);
-    expect(tools.has("compliance_check")).toBe(true);
-    expect(tools.has("compliance_policy_evaluate")).toBe(true);
-    expect(tools.has("compliance_report")).toBe(true);
-    expect(tools.has("compliance_cron_restrict")).toBe(true);
-    expect(tools.has("compliance_tmp_hardening")).toBe(true);
+  it("should register exactly 1 consolidated compliance tool", () => {
+    expect(tools.size).toBe(1);
+    expect(tools.has("compliance")).toBe(true);
   });
 
   // ── TOOL-013/014: dry_run defaults to true ───────────────────────────
 
-  it("should default dry_run to true for compliance_cron_restrict schema", () => {
-    const tool = tools.get("compliance_cron_restrict")!;
+  it("should default dry_run to true for cron_restrict schema", () => {
+    const tool = tools.get("compliance")!;
     // The schema should have dry_run with a default of true
     const schema = tool.schema as Record<string, { _def?: { defaultValue?: () => boolean } }>;
     // Verify the handler respects dry_run default by testing behavior
@@ -109,9 +104,9 @@ describe("compliance tools", () => {
   });
 
   it("should produce dry-run output for cron_restrict when dry_run not specified", async () => {
-    const handler = tools.get("compliance_cron_restrict")!.handler;
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "create_allow_files",
+      action: "cron_restrict",
       allowed_users: ["root"],
       dry_run: true,
     });
@@ -119,10 +114,10 @@ describe("compliance tools", () => {
     expect(result.content[0].text).toContain("dry_run");
   });
 
-  it("should default dry_run to true for compliance_tmp_hardening schema", async () => {
-    const handler = tools.get("compliance_tmp_hardening")!.handler;
+  it("should default dry_run to true for tmp_harden schema", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "apply",
+      action: "tmp_harden",
       mount_options: "nodev,nosuid,noexec",
       dry_run: true,
     });
@@ -132,20 +127,20 @@ describe("compliance tools", () => {
 
   // ── Framework compliance ─────────────────────────────────────────────
 
-  it("should require framework param for framework action", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should require framework param for framework_check action", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "framework",
+      action: "framework_check",
       dryRun: true,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("framework is required");
   });
 
-  it("should support dryRun for framework check", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should support dryRun for framework_check", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "framework",
+      action: "framework_check",
       framework: "pci-dss-v4",
       dryRun: true,
     });
@@ -156,9 +151,9 @@ describe("compliance tools", () => {
   // ── Cron restrict validation ─────────────────────────────────────────
 
   it("should validate username format in cron_restrict", async () => {
-    const handler = tools.get("compliance_cron_restrict")!.handler;
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "create_allow_files",
+      action: "cron_restrict",
       allowed_users: ["root", "INVALID USER!"],
       dry_run: false,
     });
@@ -169,9 +164,9 @@ describe("compliance tools", () => {
   // ── Tmp hardening validation ─────────────────────────────────────────
 
   it("should reject invalid mount_options characters", async () => {
-    const handler = tools.get("compliance_tmp_hardening")!.handler;
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "apply",
+      action: "tmp_harden",
       mount_options: "nodev;rm -rf /",
       dry_run: true,
     });
@@ -179,40 +174,40 @@ describe("compliance tools", () => {
     expect(result.content[0].text).toContain("Invalid mount_options");
   });
 
-  it("should accept valid mount_options", async () => {
-    const handler = tools.get("compliance_tmp_hardening")!.handler;
+  it("should accept valid mount_options via tmp_audit", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "audit",
+      action: "tmp_audit",
     });
     expect(result.isError).toBeUndefined();
   });
 
   // ── CIS checks ──────────────────────────────────────────────────────
 
-  it("should handle CIS check action with all sections", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should handle cis_check action with all sections", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "cis",
+      action: "cis_check",
       section: "all",
       level: "1",
     });
     expect(result.content).toBeDefined();
   });
 
-  it("should handle CIS check for filesystem section", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should handle cis_check for filesystem section", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "cis",
+      action: "cis_check",
       section: "filesystem",
       level: "1",
     });
     expect(result.content).toBeDefined();
   });
 
-  it("should handle CIS check for network section", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should handle cis_check for network section", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "cis",
+      action: "cis_check",
       section: "network",
       level: "1",
     });
@@ -222,26 +217,26 @@ describe("compliance tools", () => {
   // ── Policy evaluation ────────────────────────────────────────────────
 
   it("should list available policies when none specified", async () => {
-    const handler = tools.get("compliance_policy_evaluate")!.handler;
-    const result = await handler({});
+    const handler = tools.get("compliance")!.handler;
+    const result = await handler({ action: "policy_evaluate" });
     expect(result.content).toBeDefined();
     expect(result.content[0].text).toContain("policy");
   });
 
   // ── Cron restrict status action ──────────────────────────────────────
 
-  it("should handle cron_restrict status action", async () => {
-    const handler = tools.get("compliance_cron_restrict")!.handler;
-    const result = await handler({ action: "status" });
+  it("should handle cron_restrict_status action", async () => {
+    const handler = tools.get("compliance")!.handler;
+    const result = await handler({ action: "cron_restrict_status" });
     expect(result.content).toBeDefined();
   });
 
   // ── Tmp hardening apply in dry_run ───────────────────────────────────
 
-  it("should handle tmp_hardening apply with valid options", async () => {
-    const handler = tools.get("compliance_tmp_hardening")!.handler;
+  it("should handle tmp_harden apply with valid options", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "apply",
+      action: "tmp_harden",
       mount_options: "nodev,nosuid,noexec",
       dry_run: true,
     });
@@ -251,10 +246,10 @@ describe("compliance tools", () => {
 
   // ── Framework checks with specific frameworks ────────────────────────
 
-  it("should support hipaa framework check in dry_run", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should support hipaa framework_check in dry_run", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "framework",
+      action: "framework_check",
       framework: "hipaa",
       dryRun: true,
     });
@@ -262,30 +257,30 @@ describe("compliance tools", () => {
     expect(result.content[0].text).toContain("hipaa");
   });
 
-  it("should support soc2 framework check in dry_run", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should support soc2 framework_check in dry_run", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "framework",
+      action: "framework_check",
       framework: "soc2",
       dryRun: true,
     });
     expect(result.isError).toBeUndefined();
   });
 
-  it("should support iso27001 framework check in dry_run", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should support iso27001 framework_check in dry_run", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "framework",
+      action: "framework_check",
       framework: "iso27001",
       dryRun: true,
     });
     expect(result.isError).toBeUndefined();
   });
 
-  it("should support gdpr framework check in dry_run", async () => {
-    const handler = tools.get("compliance_check")!.handler;
+  it("should support gdpr framework_check in dry_run", async () => {
+    const handler = tools.get("compliance")!.handler;
     const result = await handler({
-      action: "framework",
+      action: "framework_check",
       framework: "gdpr",
       dryRun: true,
     });

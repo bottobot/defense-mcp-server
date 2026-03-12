@@ -109,43 +109,49 @@ describe("ebpf-security tools", () => {
       tools = mock.tools;
     });
 
-    it("should register list_ebpf_programs and falco tools", () => {
-      expect(tools.has("ebpf_list_programs")).toBe(true);
-      expect(tools.has("ebpf_falco")).toBe(true);
+    it("should register 1 ebpf tool", () => {
+      expect(tools.has("ebpf")).toBe(true);
+      expect(tools.size).toBe(1);
     });
 
-    it("should handle falco status action when not installed", async () => {
+    it("should handle falco_status action when not installed", async () => {
       const { executeCommand } = await import("../../src/core/executor.js");
       vi.mocked(executeCommand).mockResolvedValueOnce({ ...cmdOk, exitCode: 1, stdout: "" });
-      const handler = tools.get("ebpf_falco")!.handler;
-      const result = await handler({ action: "status" });
+      const handler = tools.get("ebpf")!.handler;
+      const result = await handler({ action: "falco_status" });
       expect(result.content[0].text).toContain("installed");
     });
 
-    it("should require ruleName for deploy_rules action", async () => {
-      const handler = tools.get("ebpf_falco")!.handler;
-      const result = await handler({ action: "deploy_rules", dryRun: true });
+    it("should require ruleName for falco_deploy_rules action", async () => {
+      const handler = tools.get("ebpf")!.handler;
+      const result = await handler({ action: "falco_deploy_rules", dryRun: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("ruleName is required");
     });
 
-    it("should require ruleContent for deploy_rules action", async () => {
-      const handler = tools.get("ebpf_falco")!.handler;
-      const result = await handler({ action: "deploy_rules", ruleName: "test", dryRun: true });
+    it("should require ruleContent for falco_deploy_rules action", async () => {
+      const handler = tools.get("ebpf")!.handler;
+      const result = await handler({ action: "falco_deploy_rules", ruleName: "test", dryRun: true });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("ruleContent is required");
     });
 
-    it("should preview deploy_rules in dry_run mode", async () => {
-      const handler = tools.get("ebpf_falco")!.handler;
+    it("should preview falco_deploy_rules in dry_run mode", async () => {
+      const handler = tools.get("ebpf")!.handler;
       const result = await handler({
-        action: "deploy_rules",
+        action: "falco_deploy_rules",
         ruleName: "test-rule",
         ruleContent: "- rule: test\n  desc: test rule",
         dryRun: true,
       });
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain("dryRun");
+    });
+
+    it("should handle list_programs action", async () => {
+      const handler = tools.get("ebpf")!.handler;
+      const result = await handler({ action: "list_programs", dryRun: true });
+      expect(result.content).toBeDefined();
     });
   });
 });

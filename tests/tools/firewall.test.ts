@@ -78,20 +78,16 @@ describe("firewall tools", () => {
 
   // ── Registration ──────────────────────────────────────────────────────
 
-  it("should register all 5 firewall tools", () => {
-    expect(tools.has("firewall_iptables")).toBe(true);
-    expect(tools.has("firewall_ufw")).toBe(true);
-    expect(tools.has("firewall_persist")).toBe(true);
-    expect(tools.has("firewall_nftables_list")).toBe(true);
-    expect(tools.has("firewall_policy_audit")).toBe(true);
+  it("should register a single firewall tool", () => {
+    expect(tools.has("firewall")).toBe(true);
   });
 
   // ── TOOL-003: Port validation ────────────────────────────────────────
 
   it("should reject port specification with invalid characters (TOOL-003)", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       protocol: "tcp",
       port: "80;rm -rf /",
@@ -103,9 +99,9 @@ describe("firewall tools", () => {
   });
 
   it("should reject port number out of range (TOOL-003)", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       protocol: "tcp",
       port: "99999",
@@ -117,9 +113,9 @@ describe("firewall tools", () => {
   });
 
   it("should accept valid port range (TOOL-003)", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       protocol: "tcp",
       port: "8080:8090",
@@ -133,8 +129,9 @@ describe("firewall tools", () => {
   // ── TOOL-008: nftables table name validation ─────────────────────────
 
   it("should reject nftables table name with spaces (TOOL-008)", async () => {
-    const handler = tools.get("firewall_nftables_list")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
+      action: "nftables_list",
       table: "my table; drop",
       family: "ip",
     });
@@ -143,8 +140,9 @@ describe("firewall tools", () => {
   });
 
   it("should reject nftables table name starting with number (TOOL-008)", async () => {
-    const handler = tools.get("firewall_nftables_list")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
+      action: "nftables_list",
       table: "123table",
       family: "ip",
     });
@@ -152,8 +150,9 @@ describe("firewall tools", () => {
   });
 
   it("should accept valid nftables table name (TOOL-008)", async () => {
-    const handler = tools.get("firewall_nftables_list")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
+      action: "nftables_list",
       table: "myfilter",
       family: "ip",
     });
@@ -164,9 +163,9 @@ describe("firewall tools", () => {
   // ── Match module validation ──────────────────────────────────────────
 
   it("should reject unknown match module", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       protocol: "tcp",
       match_module: "malicious_module",
@@ -179,9 +178,9 @@ describe("firewall tools", () => {
   });
 
   it("should accept allowed match module 'limit'", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       protocol: "tcp",
       match_module: "limit",
@@ -196,9 +195,9 @@ describe("firewall tools", () => {
   // ── Chain and protocol validation ────────────────────────────────────
 
   it("should require chain for add action", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       table: "filter",
       dry_run: true,
       target_action: "DROP",
@@ -208,9 +207,9 @@ describe("firewall tools", () => {
   });
 
   it("should require protocol when port is specified", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       port: "80",
       table: "filter",
@@ -224,9 +223,9 @@ describe("firewall tools", () => {
   // ── Custom chain name validation ─────────────────────────────────────
 
   it("should reject invalid custom chain name", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "create_chain",
+      action: "iptables_create_chain",
       chain_name: "invalid chain!",
       table: "filter",
       dry_run: true,
@@ -236,9 +235,9 @@ describe("firewall tools", () => {
   });
 
   it("should accept valid custom chain name", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "create_chain",
+      action: "iptables_create_chain",
       chain_name: "MY_CHAIN",
       table: "filter",
       dry_run: true,
@@ -249,9 +248,9 @@ describe("firewall tools", () => {
   // ── iptables list action ─────────────────────────────────────────────
 
   it("should handle list action", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "list",
+      action: "iptables_list",
       table: "filter",
     });
     expect(result.content).toBeDefined();
@@ -259,9 +258,9 @@ describe("firewall tools", () => {
   });
 
   it("should handle list action with verbose and chain", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "list",
+      action: "iptables_list",
       table: "filter",
       chain: "INPUT",
       verbose: true,
@@ -272,9 +271,9 @@ describe("firewall tools", () => {
   // ── iptables delete action ───────────────────────────────────────────
 
   it("should require chain for delete action", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "delete",
+      action: "iptables_delete",
       table: "filter",
       dry_run: true,
     });
@@ -283,9 +282,9 @@ describe("firewall tools", () => {
   });
 
   it("should require rule_number for delete action", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "delete",
+      action: "iptables_delete",
       table: "filter",
       chain: "INPUT",
       dry_run: true,
@@ -295,9 +294,9 @@ describe("firewall tools", () => {
   });
 
   it("should handle delete action in dry_run", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "delete",
+      action: "iptables_delete",
       table: "filter",
       chain: "INPUT",
       rule_number: 1,
@@ -310,9 +309,9 @@ describe("firewall tools", () => {
   // ── iptables set_policy action ───────────────────────────────────────
 
   it("should require chain for set_policy action", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "set_policy",
+      action: "iptables_set_policy",
       table: "filter",
       policy: "DROP",
       dry_run: true,
@@ -321,9 +320,9 @@ describe("firewall tools", () => {
   });
 
   it("should require policy for set_policy action", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "set_policy",
+      action: "iptables_set_policy",
       table: "filter",
       chain: "INPUT",
       dry_run: true,
@@ -332,9 +331,9 @@ describe("firewall tools", () => {
   });
 
   it("should reject non-built-in chains for set_policy", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "set_policy",
+      action: "iptables_set_policy",
       table: "filter",
       chain: "MY_CUSTOM",
       policy: "DROP",
@@ -347,9 +346,9 @@ describe("firewall tools", () => {
   // ── iptables create_chain missing chain_name ─────────────────────────
 
   it("should require chain_name for create_chain action", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "create_chain",
+      action: "iptables_create_chain",
       table: "filter",
       dry_run: true,
     });
@@ -360,22 +359,22 @@ describe("firewall tools", () => {
   // ── UFW tool tests ───────────────────────────────────────────────────
 
   it("should handle UFW status action", async () => {
-    const handler = tools.get("firewall_ufw")!.handler;
-    const result = await handler({ action: "status" });
+    const handler = tools.get("firewall")!.handler;
+    const result = await handler({ action: "ufw_status" });
     expect(result.content).toBeDefined();
   });
 
   it("should require rule_action for UFW add", async () => {
-    const handler = tools.get("firewall_ufw")!.handler;
-    const result = await handler({ action: "add", dry_run: true });
+    const handler = tools.get("firewall")!.handler;
+    const result = await handler({ action: "ufw_add", dry_run: true });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("rule_action");
   });
 
   it("should handle UFW add in dry_run", async () => {
-    const handler = tools.get("firewall_ufw")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "ufw_add",
       rule_action: "allow",
       direction: "in",
       port: "22",
@@ -389,9 +388,9 @@ describe("firewall tools", () => {
   // ── match_options/tcp_flags validation ───────────────────────────────
 
   it("should reject match_options with special characters", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       protocol: "tcp",
       match_module: "limit",
@@ -405,9 +404,9 @@ describe("firewall tools", () => {
   });
 
   it("should accept --syn tcp flag", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       protocol: "tcp",
       tcp_flags: "--syn",
@@ -419,9 +418,9 @@ describe("firewall tools", () => {
   });
 
   it("should reject invalid tcp_flags", async () => {
-    const handler = tools.get("firewall_iptables")!.handler;
+    const handler = tools.get("firewall")!.handler;
     const result = await handler({
-      action: "add",
+      action: "iptables_add",
       chain: "INPUT",
       protocol: "tcp",
       tcp_flags: "--invalid-flag",

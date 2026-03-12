@@ -1,59 +1,753 @@
 /**
- * Logging and audit tools for Kali Defense MCP Server.
+ * Log management tools for Kali Defense MCP Server.
  *
- * Registers 4 tools:
- *   log_auditd (actions: rules, search, report, cis_rules)
- *   log_journalctl_query (kept as-is)
- *   log_fail2ban (actions: status, ban, unban, reload, audit)
- *   log_system (actions: analyze, rotation_audit)
+ * Consolidates logging.ts (4 tools) and siem-integration.ts (1 tool) into a
+ * single tool: `log_management` with 16 actions.
+ *
+ * Actions:
+ *   auditd_rules, auditd_search, auditd_report, auditd_cis_rules
+ *   journalctl_query
+ *   fail2ban_status, fail2ban_ban, fail2ban_unban, fail2ban_reload, fail2ban_audit
+ *   syslog_analyze, rotation_audit
+ *   siem_syslog_forward, siem_filebeat, siem_audit_forwarding, siem_test_connectivity
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
-import { createTextContent, createErrorContent, parseAuditdOutput, parseFail2banOutput, formatToolOutput } from "../core/parsers.js";
+import {
+  createTextContent,
+  createErrorContent,
+  parseAuditdOutput,
+  parseFail2banOutput,
+  formatToolOutput,
+} from "../core/parsers.js";
 import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
-import { sanitizeArgs, validateFilePath, validateAuditdKey, validateTarget, validateToolPath } from "../core/sanitizer.js";
+import {
+  sanitizeArgs,
+  validateFilePath,
+  validateAuditdKey,
+  validateTarget,
+  validateToolPath,
+} from "../core/sanitizer.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
 import { existsSync } from "node:fs";
+import { spawnSafe } from "../core/spawn-safe.js";
+import type { ChildProcess } from "node:child_process";
 
 // ── TOOL-015 remediation: allowed directories for log file paths ────────────
 const ALLOWED_LOG_DIRS = ["/var/log", "/var/spool", "/tmp", "/var/lib", "/run/log"];
 
+// ── SIEM constants ──────────────────────────────────────────────────────────
+/** Critical log sources that should be forwarded per CIS benchmarks */
+const CRITICAL_LOG_SOURCES = ["auth", "syslog", "kern", "audit"];
+
+/** Log file paths corresponding to critical sources */
+const LOG_SOURCE_FILES: Record<string, string> = {
+  auth: "/var/log/auth.log",
+  syslog: "/var/log/syslog",
+  kern: "/var/log/kern.log",
+  audit: "/var/log/audit/audit.log",
+};
+
+/** Hostname/IP validation pattern */
+const SIEM_HOST_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,253}[a-zA-Z0-9]$/;
+
+// ── SIEM helpers ────────────────────────────────────────────────────────────
+
+interface CommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 30_000,
+): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    let child: ChildProcess;
+    try {
+      child = spawnSafe(command, args);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resolve({ stdout: "", stderr: msg, exitCode: -1 });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let resolved = false;
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        child.kill("SIGTERM");
+        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
+      }
+    }, timeoutMs);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on("close", (code: number | null) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: code ?? -1 });
+      }
+    });
+
+    child.on("error", (err: Error) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ stdout, stderr: err.message, exitCode: -1 });
+      }
+    });
+  });
+}
+
+/**
+ * Validate a SIEM host string (hostname or IP address).
+ * Returns true if the host looks reasonable.
+ */
+export function validateSiemHost(host: string): boolean {
+  if (!host || host.trim().length === 0) return false;
+  const trimmed = host.trim();
+  // Allow IP addresses (v4)
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed)) return true;
+  // Allow hostnames
+  if (SIEM_HOST_PATTERN.test(trimmed)) return true;
+  return false;
+}
+
+// ── SIEM action implementations ─────────────────────────────────────────────
+
+interface SyslogForwardResult {
+  syslogDaemon: string;
+  daemonInstalled: boolean;
+  existingForwardingRules: string[];
+  rsyslogModules: { imtcp: boolean; imudp: boolean };
+  tlsSupport: boolean;
+  currentConfig: string;
+  recommendedConfig: string;
+  recommendations: string[];
+}
+
+async function configureSyslogForward(
+  siemHost?: string,
+  siemPort?: number,
+  protocol?: string,
+  logSources?: string[],
+): Promise<SyslogForwardResult> {
+  const result: SyslogForwardResult = {
+    syslogDaemon: "unknown",
+    daemonInstalled: false,
+    existingForwardingRules: [],
+    rsyslogModules: { imtcp: false, imudp: false },
+    tlsSupport: false,
+    currentConfig: "",
+    recommendedConfig: "",
+    recommendations: [],
+  };
+
+  const effectivePort = siemPort ?? 514;
+  const effectiveProtocol = protocol ?? "tcp";
+
+  const rsyslogCheck = await runCommand("dpkg", ["-l", "rsyslog"], 10_000);
+  const syslogNgCheck = await runCommand("dpkg", ["-l", "syslog-ng"], 10_000);
+
+  if (rsyslogCheck.exitCode === 0 && rsyslogCheck.stdout.includes("ii")) {
+    result.syslogDaemon = "rsyslog";
+    result.daemonInstalled = true;
+  } else if (syslogNgCheck.exitCode === 0 && syslogNgCheck.stdout.includes("ii")) {
+    result.syslogDaemon = "syslog-ng";
+    result.daemonInstalled = true;
+  } else {
+    result.syslogDaemon = "none";
+    result.daemonInstalled = false;
+    result.recommendations.push("No syslog daemon found — install rsyslog: apt-get install rsyslog");
+    return result;
+  }
+
+  const configResult = await runCommand("cat", ["/etc/rsyslog.conf"], 10_000);
+  if (configResult.exitCode === 0) {
+    result.currentConfig = configResult.stdout;
+    const lines = configResult.stdout.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("#") || trimmed.length === 0) continue;
+      if (/\s@@[^\s]/.test(trimmed) || /\s@[^@\s]/.test(trimmed)) {
+        result.existingForwardingRules.push(trimmed);
+      }
+    }
+    result.rsyslogModules.imtcp = configResult.stdout.includes("imtcp");
+    result.rsyslogModules.imudp = configResult.stdout.includes("imudp");
+  }
+
+  const rsyslogDResult = await runCommand("cat", ["/etc/rsyslog.d/"], 10_000);
+  if (rsyslogDResult.exitCode === 0) {
+    const lines = rsyslogDResult.stdout.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("#") || trimmed.length === 0) continue;
+      if (/\s@@[^\s]/.test(trimmed) || /\s@[^@\s]/.test(trimmed)) {
+        result.existingForwardingRules.push(trimmed);
+      }
+    }
+  }
+
+  const tlsCheck = await runCommand("dpkg", ["-l", "rsyslog-gnutls"], 10_000);
+  result.tlsSupport = tlsCheck.exitCode === 0 && tlsCheck.stdout.includes("ii");
+
+  if (siemHost) {
+    const forwardPrefix = effectiveProtocol === "udp" ? "@" : "@@";
+    const sources = logSources && logSources.length > 0 ? logSources : ["*.*"];
+    let config = "# SIEM forwarding configuration\n";
+    if (effectiveProtocol === "tls") {
+      config += '# TLS configuration\n';
+      config += '$DefaultNetstreamDriverCAFile /etc/rsyslog.d/ca.pem\n';
+      config += '$DefaultNetstreamDriver gtls\n';
+      config += '$ActionSendStreamDriverMode 1\n';
+      config += '$ActionSendStreamDriverAuthMode x509/name\n';
+      if (!result.tlsSupport) {
+        result.recommendations.push("TLS requested but rsyslog-gnutls not installed — install: apt-get install rsyslog-gnutls");
+      }
+    }
+    for (const source of sources) {
+      const facility = source === "*.*" ? "*.*" : `${source}.*`;
+      config += `${facility} ${forwardPrefix}${siemHost}:${effectivePort}\n`;
+    }
+    result.recommendedConfig = config;
+  }
+
+  if (result.existingForwardingRules.length === 0) {
+    result.recommendations.push("No remote forwarding rules found — logs are not being forwarded to a SIEM");
+  } else {
+    result.recommendations.push(`Found ${result.existingForwardingRules.length} forwarding rule(s) — verify they target the correct SIEM`);
+  }
+
+  if (!result.rsyslogModules.imtcp && effectiveProtocol === "tcp") {
+    result.recommendations.push("imtcp module not loaded — TCP reception may not work");
+  }
+
+  if (!result.tlsSupport) {
+    result.recommendations.push("TLS not available — consider installing rsyslog-gnutls for encrypted log forwarding");
+  }
+
+  return result;
+}
+
+interface FilebeatResult {
+  installed: boolean;
+  version: string;
+  enabledModules: string[];
+  disabledModules: string[];
+  outputConfig: string;
+  serviceStatus: string;
+  serviceRunning: boolean;
+  configPath: string;
+  recommendedConfig: string;
+  recommendations: string[];
+}
+
+async function configureFilebeat(
+  siemHost?: string,
+  siemPort?: number,
+): Promise<FilebeatResult> {
+  const result: FilebeatResult = {
+    installed: false,
+    version: "unknown",
+    enabledModules: [],
+    disabledModules: [],
+    outputConfig: "",
+    serviceStatus: "unknown",
+    serviceRunning: false,
+    configPath: "/etc/filebeat/filebeat.yml",
+    recommendedConfig: "",
+    recommendations: [],
+  };
+
+  const effectivePort = siemPort ?? 5044;
+
+  const whichResult = await runCommand("which", ["filebeat"], 10_000);
+  if (whichResult.exitCode !== 0) {
+    const dpkgResult = await runCommand("dpkg", ["-l", "filebeat"], 10_000);
+    if (dpkgResult.exitCode !== 0 || !dpkgResult.stdout.includes("ii")) {
+      result.installed = false;
+      result.recommendations.push("Filebeat is not installed — install from Elastic repository for log shipping");
+      return result;
+    }
+  }
+
+  result.installed = true;
+
+  const versionResult = await runCommand("filebeat", ["version"], 10_000);
+  if (versionResult.exitCode === 0) {
+    result.version = versionResult.stdout.trim();
+  }
+
+  const configResult = await runCommand("cat", ["/etc/filebeat/filebeat.yml"], 10_000);
+  if (configResult.exitCode === 0) {
+    result.outputConfig = configResult.stdout;
+    const lines = configResult.stdout.split("\n");
+    let inOutput = false;
+    for (const line of lines) {
+      if (line.match(/^output\./)) { inOutput = true; }
+      if (inOutput && line.trim().length > 0 && !line.startsWith(" ") && !line.startsWith("\t") && !line.match(/^output\./)) {
+        inOutput = false;
+      }
+    }
+  }
+
+  const modulesResult = await runCommand("filebeat", ["modules", "list"], 15_000);
+  if (modulesResult.exitCode === 0) {
+    const lines = modulesResult.stdout.split("\n");
+    let inEnabled = false;
+    let inDisabled = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed === "Enabled:") { inEnabled = true; inDisabled = false; continue; }
+      if (trimmed === "Disabled:") { inEnabled = false; inDisabled = true; continue; }
+      if (trimmed.length > 0) {
+        if (inEnabled) result.enabledModules.push(trimmed);
+        if (inDisabled) result.disabledModules.push(trimmed);
+      }
+    }
+  }
+
+  const serviceResult = await runCommand("systemctl", ["status", "filebeat"], 10_000);
+  if (serviceResult.exitCode === 0 || serviceResult.exitCode === 3) {
+    result.serviceStatus = serviceResult.stdout.trim();
+    result.serviceRunning = serviceResult.stdout.includes("active (running)");
+  }
+
+  if (siemHost) {
+    result.recommendedConfig =
+      "# Filebeat output configuration for Logstash\n" +
+      "output.logstash:\n" +
+      `  hosts: ["${siemHost}:${effectivePort}"]\n` +
+      "  ssl.enabled: true\n" +
+      "  ssl.certificate_authorities: ['/etc/filebeat/ca.pem']\n";
+  }
+
+  if (!result.serviceRunning) {
+    result.recommendations.push("Filebeat service is not running — start with: systemctl start filebeat");
+  }
+  if (result.enabledModules.length === 0) {
+    result.recommendations.push("No Filebeat modules enabled — enable system module: filebeat modules enable system");
+  }
+
+  return result;
+}
+
+interface ForwardingAuditResult {
+  rsyslogForwarding: boolean;
+  rsyslogRules: string[];
+  filebeatRunning: boolean;
+  filebeatStatus: string;
+  criticalSourcesCovered: Array<{ source: string; forwarded: boolean; path: string }>;
+  missingSourcesCount: number;
+  logRotationConfig: string;
+  logRotationInterferes: boolean;
+  cisBenchmark: string;
+  cisCompliant: boolean;
+  recommendations: string[];
+}
+
+async function auditForwarding(logSources?: string[]): Promise<ForwardingAuditResult> {
+  const result: ForwardingAuditResult = {
+    rsyslogForwarding: false,
+    rsyslogRules: [],
+    filebeatRunning: false,
+    filebeatStatus: "unknown",
+    criticalSourcesCovered: [],
+    missingSourcesCount: 0,
+    logRotationConfig: "",
+    logRotationInterferes: false,
+    cisBenchmark: "CIS Benchmark 4.2.1 — Ensure logging is configured to a remote log host",
+    cisCompliant: false,
+    recommendations: [],
+  };
+
+  const sourcesToCheck = logSources && logSources.length > 0 ? logSources : CRITICAL_LOG_SOURCES;
+
+  const rsyslogConfig = await runCommand("cat", ["/etc/rsyslog.conf"], 10_000);
+  if (rsyslogConfig.exitCode === 0) {
+    const lines = rsyslogConfig.stdout.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("#") || trimmed.length === 0) continue;
+      if (/\s@@[^\s]/.test(trimmed) || /\s@[^@\s]/.test(trimmed)) {
+        result.rsyslogRules.push(trimmed);
+        result.rsyslogForwarding = true;
+      }
+      if (trimmed.includes("action(type=\"omfwd\"")) {
+        result.rsyslogRules.push(trimmed);
+        result.rsyslogForwarding = true;
+      }
+    }
+  }
+
+  const filebeatResult = await runCommand("systemctl", ["status", "filebeat"], 10_000);
+  if (filebeatResult.exitCode === 0 || filebeatResult.exitCode === 3) {
+    result.filebeatStatus = filebeatResult.stdout.trim();
+    result.filebeatRunning = filebeatResult.stdout.includes("active (running)");
+  }
+
+  const configContent = rsyslogConfig.exitCode === 0 ? rsyslogConfig.stdout : "";
+  for (const source of sourcesToCheck) {
+    const logPath = LOG_SOURCE_FILES[source] ?? `/var/log/${source}.log`;
+    let forwarded = false;
+    if (result.rsyslogForwarding) {
+      if (result.rsyslogRules.some((r) => r.includes("*.*"))) { forwarded = true; }
+      if (result.rsyslogRules.some((r) => r.includes(`${source}.*`))) { forwarded = true; }
+      if (configContent.includes(source) && result.rsyslogForwarding) { forwarded = true; }
+    }
+    if (result.filebeatRunning) { forwarded = true; }
+    result.criticalSourcesCovered.push({ source, forwarded, path: logPath });
+    if (!forwarded) { result.missingSourcesCount++; }
+  }
+
+  const logrotateResult = await runCommand("cat", ["/etc/logrotate.d/rsyslog"], 10_000);
+  if (logrotateResult.exitCode === 0) {
+    result.logRotationConfig = logrotateResult.stdout;
+    if (!logrotateResult.stdout.includes("sharedscripts") ||
+        !logrotateResult.stdout.includes("postrotate")) {
+      result.logRotationInterferes = true;
+      result.recommendations.push("Log rotation may interfere with forwarding — ensure sharedscripts and postrotate with rsyslog reload are configured");
+    }
+  }
+
+  result.cisCompliant = result.rsyslogForwarding || result.filebeatRunning;
+
+  if (!result.rsyslogForwarding && !result.filebeatRunning) {
+    result.recommendations.push("CRITICAL: No log forwarding configured — logs are not being sent to a remote SIEM");
+    result.recommendations.push("Configure rsyslog forwarding or install Filebeat for centralized logging");
+  }
+
+  if (result.missingSourcesCount > 0) {
+    const missing = result.criticalSourcesCovered
+      .filter((s) => !s.forwarded)
+      .map((s) => s.source);
+    result.recommendations.push(`Missing forwarding for ${result.missingSourcesCount} critical source(s): ${missing.join(", ")}`);
+  }
+
+  if (!result.cisCompliant) {
+    result.recommendations.push(`Non-compliant with ${result.cisBenchmark}`);
+  }
+
+  return result;
+}
+
+interface ConnectivityResult {
+  siemHost: string;
+  siemPort: number;
+  protocol: string;
+  tcpConnectivity: boolean;
+  tcpMessage: string;
+  tlsVerification: boolean;
+  tlsMessage: string;
+  dnsResolution: boolean;
+  dnsResult: string;
+  firewallStatus: string;
+  firewallBlocked: boolean;
+  testMessageSent: boolean;
+  testMessageResult: string;
+  recommendations: string[];
+}
+
+async function testConnectivity(
+  siemHost: string,
+  siemPort?: number,
+  protocol?: string,
+): Promise<ConnectivityResult> {
+  const effectivePort = siemPort ?? 514;
+  const effectiveProtocol = protocol ?? "tcp";
+
+  const result: ConnectivityResult = {
+    siemHost,
+    siemPort: effectivePort,
+    protocol: effectiveProtocol,
+    tcpConnectivity: false,
+    tcpMessage: "not tested",
+    tlsVerification: false,
+    tlsMessage: "not tested",
+    dnsResolution: false,
+    dnsResult: "not tested",
+    firewallStatus: "not checked",
+    firewallBlocked: false,
+    testMessageSent: false,
+    testMessageResult: "not attempted",
+    recommendations: [],
+  };
+
+  const digResult = await runCommand("dig", [siemHost], 15_000);
+  if (digResult.exitCode === 0 && digResult.stdout.includes("ANSWER SECTION")) {
+    result.dnsResolution = true;
+    result.dnsResult = "resolved successfully";
+  } else if (digResult.exitCode === 0) {
+    result.dnsResolution = false;
+    result.dnsResult = "DNS query returned no results";
+    result.recommendations.push(`DNS resolution failed for ${siemHost} — verify hostname is correct`);
+  } else {
+    result.dnsResolution = false;
+    result.dnsResult = digResult.stderr || "dig command failed";
+    result.recommendations.push("dig command not available — install dnsutils for DNS testing");
+  }
+
+  const ncResult = await runCommand("nc", ["-z", "-w", "5", siemHost, String(effectivePort)], 15_000);
+  if (ncResult.exitCode === 0) {
+    result.tcpConnectivity = true;
+    result.tcpMessage = `TCP connection to ${siemHost}:${effectivePort} successful`;
+  } else {
+    result.tcpConnectivity = false;
+    result.tcpMessage = `TCP connection to ${siemHost}:${effectivePort} failed`;
+    result.recommendations.push(`Cannot reach ${siemHost}:${effectivePort} — check network connectivity and firewall rules`);
+  }
+
+  if (effectiveProtocol === "tls") {
+    const opensslResult = await runCommand(
+      "openssl",
+      ["s_client", "-connect", `${siemHost}:${effectivePort}`, "-brief"],
+      15_000,
+    );
+    if (opensslResult.exitCode === 0 && opensslResult.stdout.includes("Verification")) {
+      result.tlsVerification = true;
+      result.tlsMessage = "TLS handshake successful";
+    } else if (opensslResult.exitCode === 0) {
+      result.tlsVerification = false;
+      result.tlsMessage = opensslResult.stderr || "TLS handshake completed with warnings";
+      result.recommendations.push("TLS certificate verification may have issues — check CA certificates");
+    } else {
+      result.tlsVerification = false;
+      result.tlsMessage = opensslResult.stderr || "TLS handshake failed";
+      result.recommendations.push("TLS connection failed — verify the SIEM supports TLS on this port");
+    }
+  }
+
+  const iptablesResult = await runCommand("iptables", ["-L", "-n"], 10_000);
+  if (iptablesResult.exitCode === 0) {
+    const lines = iptablesResult.stdout.split("\n");
+    const portStr = String(effectivePort);
+    for (const line of lines) {
+      if (line.includes(portStr)) {
+        result.firewallStatus = line.trim();
+        if (line.includes("DROP") || line.includes("REJECT")) {
+          result.firewallBlocked = true;
+          result.recommendations.push(`Firewall rule blocking port ${effectivePort} detected — update iptables to allow SIEM traffic`);
+        }
+      }
+    }
+    if (result.firewallStatus === "not checked") {
+      result.firewallStatus = `No specific rules found for port ${effectivePort}`;
+    }
+  } else {
+    result.firewallStatus = "iptables not accessible (may need root)";
+  }
+
+  const loggerResult = await runCommand(
+    "logger",
+    ["-n", siemHost, "-P", String(effectivePort), "--tcp", "kali-defense SIEM connectivity test"],
+    15_000,
+  );
+  if (loggerResult.exitCode === 0) {
+    result.testMessageSent = true;
+    result.testMessageResult = "Test syslog message sent successfully";
+  } else {
+    result.testMessageSent = false;
+    result.testMessageResult = loggerResult.stderr || "Failed to send test message";
+    if (loggerResult.stderr?.includes("not found")) {
+      result.recommendations.push("logger command not available — install bsdutils for syslog testing");
+    }
+  }
+
+  if (!result.tcpConnectivity && !result.dnsResolution) {
+    result.recommendations.push("CRITICAL: SIEM endpoint is unreachable — verify host, port, and network path");
+  } else if (!result.tcpConnectivity) {
+    result.recommendations.push("DNS resolves but TCP connection fails — check if SIEM is listening on the specified port");
+  }
+
+  return result;
+}
+
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerLoggingTools(server: McpServer): void {
-  // ── 1. log_auditd (merged: rules, search, report, cis_rules) ─────────
-
   server.tool(
-    "log_auditd",
-    "Auditd management: manage rules, search logs, generate reports, or check CIS benchmark audit rules.",
+    "log_management",
+    "Log management: auditd rules/search/reporting, journalctl queries, fail2ban management, syslog analysis, log rotation audit, and SIEM integration (syslog forwarding, Filebeat, connectivity testing).",
     {
-      action: z.enum(["rules", "search", "report", "cis_rules"]).describe("Action: rules=manage auditd rules, search=search audit logs, report=generate audit report, cis_rules=check/generate CIS rules"),
-      // rules params
-      rules_action: z.enum(["list", "add", "delete"]).optional().describe("Rule action (rules action)"),
-      rule: z.string().min(1).optional().describe("Audit rule string (rules add/delete)"),
-      // search params
-      key: z.string().min(1).regex(/^[a-zA-Z0-9._-]+$/).optional().describe("Audit key to search for (search action)"),
-      syscall: z.string().min(1).regex(/^[a-zA-Z0-9_]+$/).optional().describe("System call name to filter (search action)"),
-      uid: z.string().min(1).regex(/^[0-9]+$/).optional().describe("User ID to filter (search action)"),
-      start: z.string().min(1).optional().describe("Start time e.g. 'today', '1 hour ago' (search/report action)"),
-      end: z.string().min(1).optional().describe("End time (search action)"),
-      success: z.enum(["yes", "no"]).optional().describe("Filter by success/failure (search action)"),
-      limit: z.number().optional().default(50).describe("Maximum number of lines to return (search action)"),
-      // report params
-      report_type: z.enum(["summary", "auth", "login", "account", "event", "file", "exec"]).optional().default("summary").describe("Type of audit report (report action)"),
-      // cis_rules params
-      cis_action: z.enum(["check", "generate"]).optional().default("check").describe("check or generate CIS rules (cis_rules action)"),
-      // shared
-      dry_run: z.boolean().optional().describe("Preview the command without executing"),
+      action: z
+        .enum([
+          "auditd_rules",
+          "auditd_search",
+          "auditd_report",
+          "auditd_cis_rules",
+          "journalctl_query",
+          "fail2ban_status",
+          "fail2ban_ban",
+          "fail2ban_unban",
+          "fail2ban_reload",
+          "fail2ban_audit",
+          "syslog_analyze",
+          "rotation_audit",
+          "siem_syslog_forward",
+          "siem_filebeat",
+          "siem_audit_forwarding",
+          "siem_test_connectivity",
+        ])
+        .describe(
+          "Action: auditd_rules/search/report/cis_rules, journalctl_query, fail2ban_status/ban/unban/reload/audit, syslog_analyze, rotation_audit, siem_syslog_forward/filebeat/audit_forwarding/test_connectivity"
+        ),
+      // auditd rules params
+      rules_action: z
+        .enum(["list", "add", "delete"])
+        .optional()
+        .describe("Rule action (auditd_rules action)"),
+      rule: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Audit rule string (auditd_rules add/delete)"),
+      // auditd search params
+      key: z
+        .string()
+        .min(1)
+        .regex(/^[a-zA-Z0-9._-]+$/)
+        .optional()
+        .describe("Audit key to search for (auditd_search action)"),
+      syscall: z
+        .string()
+        .min(1)
+        .regex(/^[a-zA-Z0-9_]+$/)
+        .optional()
+        .describe("System call name to filter (auditd_search action)"),
+      uid: z
+        .string()
+        .min(1)
+        .regex(/^[0-9]+$/)
+        .optional()
+        .describe("User ID to filter (auditd_search action)"),
+      start: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Start time e.g. 'today', '1 hour ago' (auditd_search/report action)"),
+      end: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("End time (auditd_search action)"),
+      success: z
+        .enum(["yes", "no"])
+        .optional()
+        .describe("Filter by success/failure (auditd_search action)"),
+      limit: z
+        .number()
+        .optional()
+        .default(50)
+        .describe("Maximum number of lines to return (auditd_search action)"),
+      // auditd report params
+      report_type: z
+        .enum(["summary", "auth", "login", "account", "event", "file", "exec"])
+        .optional()
+        .default("summary")
+        .describe("Type of audit report (auditd_report action)"),
+      // auditd cis_rules params
+      cis_action: z
+        .enum(["check", "generate"])
+        .optional()
+        .default("check")
+        .describe("check or generate CIS rules (auditd_cis_rules action)"),
+      // shared log params
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Preview without executing"),
+      // journalctl params
+      unit: z
+        .string()
+        .optional()
+        .describe("Systemd unit name to filter (journalctl_query action)"),
+      priority: z
+        .enum(["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"])
+        .optional()
+        .describe("Minimum priority level (journalctl_query action)"),
+      since: z
+        .string()
+        .optional()
+        .describe("Start time, e.g. '1 hour ago', 'today', '2024-01-01' (journalctl_query action)"),
+      until: z
+        .string()
+        .optional()
+        .describe("End time (journalctl_query action)"),
+      grep: z
+        .string()
+        .optional()
+        .describe("Pattern to search for in log messages (journalctl_query action)"),
+      lines: z
+        .number()
+        .optional()
+        .describe("Number of log lines / max lines to return"),
+      output_format: z
+        .string()
+        .optional()
+        .describe("Output format: short/json/cat/verbose (journalctl_query), text/json (SIEM actions)"),
+      // fail2ban params
+      jail: z
+        .string()
+        .min(1)
+        .regex(/^[a-zA-Z0-9._-]+$/)
+        .optional()
+        .describe("Jail name (fail2ban_status: optional, fail2ban_ban/unban: required)"),
+      ip: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("IP address to ban or unban (fail2ban_ban/unban action)"),
+      // syslog_analyze params
+      log_file: z
+        .string()
+        .optional()
+        .describe("Path to the log file (syslog_analyze action)"),
+      pattern: z
+        .enum(["auth_failures", "ssh_brute", "privilege_escalation", "service_changes", "all"])
+        .optional()
+        .default("all")
+        .describe("Security event pattern (syslog_analyze action)"),
+      // SIEM params
+      siem_host: z
+        .string()
+        .optional()
+        .describe("SIEM server hostname or IP address"),
+      siem_port: z
+        .number()
+        .optional()
+        .describe("SIEM server port (default 514 for syslog, 5044 for filebeat)"),
+      protocol: z
+        .enum(["tcp", "udp", "tls"])
+        .optional()
+        .default("tcp")
+        .describe("Transport protocol (default tcp)"),
+      log_sources: z
+        .array(z.string())
+        .optional()
+        .describe("Log sources to forward (e.g., auth, syslog, kern, audit)"),
     },
     async (params) => {
       const { action } = params;
 
       switch (action) {
-        case "rules": {
+        // ── auditd_rules ───────────────────────────────────────────────────
+        case "auditd_rules": {
           const { rules_action, rule, dry_run } = params;
           try {
             if (!rules_action) {
@@ -61,7 +755,7 @@ export function registerLoggingTools(server: McpServer): void {
             }
 
             if (rules_action === "list") {
-              const result = await executeCommand({ command: "sudo", args: ["auditctl", "-l"], toolName: "log_auditd", timeout: getToolTimeout("auditd") });
+              const result = await executeCommand({ command: "sudo", args: ["auditctl", "-l"], toolName: "log_management", timeout: getToolTimeout("auditd") });
               if (result.exitCode !== 0) return { content: [createErrorContent(`auditctl list failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
               return { content: [createTextContent(`Current auditd rules:\n${result.stdout}`)] };
             }
@@ -85,13 +779,13 @@ export function registerLoggingTools(server: McpServer): void {
             const fullCmd = `sudo ${args.join(" ")}`;
 
             if (dry_run ?? getConfig().dryRun) {
-              logChange(createChangeEntry({ tool: "log_auditd", action: `[DRY-RUN] ${rules_action} auditd rule`, target: rule, after: fullCmd, dryRun: true, success: true }));
+              logChange(createChangeEntry({ tool: "log_management", action: `[DRY-RUN] ${rules_action} auditd rule`, target: rule, after: fullCmd, dryRun: true, success: true }));
               return { content: [createTextContent(`[DRY-RUN] Would execute:\n  ${fullCmd}`)] };
             }
 
-            const result = await executeCommand({ command: "sudo", args, toolName: "log_auditd", timeout: getToolTimeout("auditd") });
+            const result = await executeCommand({ command: "sudo", args, toolName: "log_management", timeout: getToolTimeout("auditd") });
             const ok = result.exitCode === 0;
-            logChange(createChangeEntry({ tool: "log_auditd", action: `${rules_action} auditd rule`, target: rule, after: fullCmd, dryRun: false, success: ok, error: ok ? undefined : result.stderr }));
+            logChange(createChangeEntry({ tool: "log_management", action: `${rules_action} auditd rule`, target: rule, after: fullCmd, dryRun: false, success: ok, error: ok ? undefined : result.stderr }));
 
             if (!ok) return { content: [createErrorContent(`auditctl ${rules_action} failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
             return { content: [createTextContent(`Auditd rule ${rules_action === "add" ? "added" : "deleted"} successfully.\nCommand: ${fullCmd}`)] };
@@ -100,8 +794,9 @@ export function registerLoggingTools(server: McpServer): void {
           }
         }
 
-        case "search": {
-          const { key, syscall, uid, start, end, success, limit: maxLines } = params;
+        // ── auditd_search ──────────────────────────────────────────────────
+        case "auditd_search": {
+          const { key, syscall, uid, start, end, success, limit: maxLines = 50 } = params;
           try {
             const args: string[] = ["ausearch"];
             if (key) { validateAuditdKey(key); args.push("-k", key); }
@@ -113,7 +808,7 @@ export function registerLoggingTools(server: McpServer): void {
             args.push("--interpret");
             sanitizeArgs(args);
 
-            const result = await executeCommand({ command: "sudo", args, toolName: "log_auditd", timeout: getToolTimeout("auditd") });
+            const result = await executeCommand({ command: "sudo", args, toolName: "log_management", timeout: getToolTimeout("auditd") });
 
             if (result.exitCode !== 0 && !result.stderr.includes("no matches")) {
               return { content: [createErrorContent(`ausearch failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
@@ -132,8 +827,9 @@ export function registerLoggingTools(server: McpServer): void {
           }
         }
 
-        case "report": {
-          const { report_type, start } = params;
+        // ── auditd_report ──────────────────────────────────────────────────
+        case "auditd_report": {
+          const { report_type = "summary", start } = params;
           try {
             const args: string[] = ["aureport"];
             const reportFlags: Record<string, string> = { summary: "--summary", auth: "--auth", login: "--login", account: "--account-modifications", event: "--event", file: "--file", exec: "--executable" };
@@ -141,7 +837,7 @@ export function registerLoggingTools(server: McpServer): void {
             if (start) { sanitizeArgs([start]); args.push("--start", start); }
             sanitizeArgs(args);
 
-            const result = await executeCommand({ command: "sudo", args, toolName: "log_auditd", timeout: getToolTimeout("auditd") });
+            const result = await executeCommand({ command: "sudo", args, toolName: "log_management", timeout: getToolTimeout("auditd") });
             if (result.exitCode !== 0) return { content: [createErrorContent(`aureport failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
             return { content: [createTextContent(`Audit Report (${report_type}):\n${"=".repeat(50)}\n${result.stdout}`)] };
           } catch (err: unknown) {
@@ -149,8 +845,9 @@ export function registerLoggingTools(server: McpServer): void {
           }
         }
 
-        case "cis_rules": {
-          const { cis_action } = params;
+        // ── auditd_cis_rules ───────────────────────────────────────────────
+        case "auditd_cis_rules": {
+          const { cis_action = "check" } = params;
           try {
             const CIS_RULES = [
               { rule: "-a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change", description: "Record time changes (64-bit)" },
@@ -187,7 +884,7 @@ export function registerLoggingTools(server: McpServer): void {
               return { content: [createTextContent(`# CIS Benchmark Required Audit Rules\n# Save to /etc/audit/rules.d/99-cis.rules\n# Then run: sudo augenrules --load\n\n${rulesText}\n\n# Make immutable (must be last rule)\n-e 2\n`)] };
             }
 
-            const currentRules = await executeCommand({ command: "sudo", args: ["auditctl", "-l"], timeout: 10000, toolName: "log_auditd" });
+            const currentRules = await executeCommand({ command: "sudo", args: ["auditctl", "-l"], timeout: 10000, toolName: "log_management" });
             const existing = currentRules.stdout || "";
 
             const results = CIS_RULES.map(r => {
@@ -204,72 +901,38 @@ export function registerLoggingTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
+        // ── journalctl_query ───────────────────────────────────────────────
+        case "journalctl_query": {
+          const { unit, priority, since, until, grep, lines: numLines = 100, output_format } = params;
+          const effectiveOutputFormat = (output_format ?? "short") as string;
+          try {
+            const args: string[] = ["journalctl"];
+            if (unit) { sanitizeArgs([unit]); args.push("--unit", unit); }
+            if (priority) args.push("-p", priority);
+            if (since) { sanitizeArgs([since]); args.push("--since", since); }
+            if (until) { sanitizeArgs([until]); args.push("--until", until); }
+            if (grep) { sanitizeArgs([grep]); args.push("-g", grep); }
+            args.push("-n", String(numLines));
+            args.push("-o", effectiveOutputFormat);
+            args.push("--no-pager");
+            sanitizeArgs(args);
 
-  // ── 2. log_journalctl_query (kept as-is) ──────────────────────────────
+            const result = await executeCommand({ command: "journalctl", args: args.slice(1), toolName: "log_management", timeout: getToolTimeout("auditd") });
+            if (result.exitCode !== 0) return { content: [createErrorContent(`journalctl query failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
+            return { content: [createTextContent(result.stdout)] };
+          } catch (err: unknown) {
+            return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
+          }
+        }
 
-  server.tool(
-    "log_journalctl_query",
-    "Query systemd journal for log entries with flexible filtering",
-    {
-      unit: z.string().optional().describe("Systemd unit name to filter"),
-      priority: z.enum(["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]).optional().describe("Minimum priority level"),
-      since: z.string().optional().describe("Start time, e.g. '1 hour ago', 'today', '2024-01-01'"),
-      until: z.string().optional().describe("End time"),
-      grep: z.string().optional().describe("Pattern to search for in log messages"),
-      lines: z.number().optional().default(100).describe("Number of log lines to return"),
-      output_format: z.enum(["short", "json", "cat", "verbose"]).optional().default("short").describe("Output format for journal entries"),
-    },
-    async ({ unit, priority, since, until, grep, lines, output_format }) => {
-      try {
-        const args: string[] = ["journalctl"];
-        if (unit) { sanitizeArgs([unit]); args.push("--unit", unit); }
-        if (priority) args.push("-p", priority);
-        if (since) { sanitizeArgs([since]); args.push("--since", since); }
-        if (until) { sanitizeArgs([until]); args.push("--until", until); }
-        if (grep) { sanitizeArgs([grep]); args.push("-g", grep); }
-        args.push("-n", String(lines));
-        args.push("-o", output_format);
-        args.push("--no-pager");
-        sanitizeArgs(args);
-
-        const result = await executeCommand({ command: "journalctl", args: args.slice(1), toolName: "log_journalctl_query", timeout: getToolTimeout("auditd") });
-        if (result.exitCode !== 0) return { content: [createErrorContent(`journalctl query failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
-        return { content: [createTextContent(result.stdout)] };
-      } catch (err: unknown) {
-        return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
-      }
-    }
-  );
-
-  // ── 3. log_fail2ban (merged: status, ban, unban, reload, audit) ───────
-
-  server.tool(
-    "log_fail2ban",
-    "Fail2ban management: check status, ban/unban IPs, reload config, or audit jail configurations.",
-    {
-      action: z.enum(["status", "ban", "unban", "reload", "audit"]).describe("Action: status, ban, unban, reload, audit"),
-      // status/ban/unban params
-      jail: z.string().min(1).regex(/^[a-zA-Z0-9._-]+$/).optional().describe("Jail name (status: optional, ban/unban: required)"),
-      ip: z.string().min(1).optional().describe("IP address to ban or unban (ban/unban action)"),
-      // shared
-      dry_run: z.boolean().optional().describe("Preview without executing"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        case "status": {
+        // ── fail2ban_status ────────────────────────────────────────────────
+        case "fail2ban_status": {
           const { jail } = params;
           try {
             const args: string[] = ["fail2ban-client", "status"];
             if (jail) { sanitizeArgs([jail]); args.push(jail); }
 
-            const result = await executeCommand({ command: "sudo", args, toolName: "log_fail2ban", timeout: getToolTimeout("auditd") });
+            const result = await executeCommand({ command: "sudo", args, toolName: "log_management", timeout: getToolTimeout("auditd") });
             if (result.exitCode !== 0) return { content: [createErrorContent(`fail2ban status failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
 
             if (jail) {
@@ -282,50 +945,53 @@ export function registerLoggingTools(server: McpServer): void {
           }
         }
 
-        case "ban":
-        case "unban": {
+        // ── fail2ban_ban / fail2ban_unban ──────────────────────────────────
+        case "fail2ban_ban":
+        case "fail2ban_unban": {
           const { jail, ip, dry_run } = params;
+          const f2bAction = action === "fail2ban_ban" ? "ban" : "unban";
           try {
-            if (!jail) return { content: [createErrorContent(`Jail name is required for '${action}' action`)], isError: true };
-            if (!ip) return { content: [createErrorContent(`IP address is required for '${action}' action`)], isError: true };
+            if (!jail) return { content: [createErrorContent(`Jail name is required for '${f2bAction}' action`)], isError: true };
+            if (!ip) return { content: [createErrorContent(`IP address is required for '${f2bAction}' action`)], isError: true };
 
             sanitizeArgs([jail]);
             validateTarget(ip);
 
-            const subcommand = action === "ban" ? "banip" : "unbanip";
+            const subcommand = f2bAction === "ban" ? "banip" : "unbanip";
             const args = ["fail2ban-client", "set", jail, subcommand, ip];
             const fullCmd = `sudo ${args.join(" ")}`;
-            const rollbackCmd = action === "ban" ? `sudo fail2ban-client set ${jail} unbanip ${ip}` : `sudo fail2ban-client set ${jail} banip ${ip}`;
+            const rollbackCmd = f2bAction === "ban" ? `sudo fail2ban-client set ${jail} unbanip ${ip}` : `sudo fail2ban-client set ${jail} banip ${ip}`;
 
             if (dry_run ?? getConfig().dryRun) {
-              logChange(createChangeEntry({ tool: "log_fail2ban", action: `[DRY-RUN] ${action} IP in fail2ban`, target: `${jail}/${ip}`, after: fullCmd, dryRun: true, success: true, rollbackCommand: rollbackCmd }));
+              logChange(createChangeEntry({ tool: "log_management", action: `[DRY-RUN] ${f2bAction} IP in fail2ban`, target: `${jail}/${ip}`, after: fullCmd, dryRun: true, success: true, rollbackCommand: rollbackCmd }));
               return { content: [createTextContent(`[DRY-RUN] Would execute:\n  ${fullCmd}\n\nRollback command:\n  ${rollbackCmd}`)] };
             }
 
-            const result = await executeCommand({ command: "sudo", args, toolName: "log_fail2ban", timeout: getToolTimeout("auditd") });
+            const result = await executeCommand({ command: "sudo", args, toolName: "log_management", timeout: getToolTimeout("auditd") });
             const ok = result.exitCode === 0;
-            logChange(createChangeEntry({ tool: "log_fail2ban", action: `${action} IP in fail2ban`, target: `${jail}/${ip}`, after: fullCmd, dryRun: false, success: ok, error: ok ? undefined : result.stderr, rollbackCommand: rollbackCmd }));
+            logChange(createChangeEntry({ tool: "log_management", action: `${f2bAction} IP in fail2ban`, target: `${jail}/${ip}`, after: fullCmd, dryRun: false, success: ok, error: ok ? undefined : result.stderr, rollbackCommand: rollbackCmd }));
 
-            if (!ok) return { content: [createErrorContent(`fail2ban ${action} failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
-            return { content: [createTextContent(`IP ${ip} ${action === "ban" ? "banned" : "unbanned"} in jail ${jail}.\nRollback: ${rollbackCmd}`)] };
+            if (!ok) return { content: [createErrorContent(`fail2ban ${f2bAction} failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
+            return { content: [createTextContent(`IP ${ip} ${f2bAction === "ban" ? "banned" : "unbanned"} in jail ${jail}.\nRollback: ${rollbackCmd}`)] };
           } catch (err: unknown) {
             return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
           }
         }
 
-        case "reload": {
+        // ── fail2ban_reload ────────────────────────────────────────────────
+        case "fail2ban_reload": {
           const { dry_run } = params;
           try {
             const fullCmd = "sudo fail2ban-client reload";
 
             if (dry_run ?? getConfig().dryRun) {
-              logChange(createChangeEntry({ tool: "log_fail2ban", action: "[DRY-RUN] Reload fail2ban", target: "fail2ban", after: fullCmd, dryRun: true, success: true }));
+              logChange(createChangeEntry({ tool: "log_management", action: "[DRY-RUN] Reload fail2ban", target: "fail2ban", after: fullCmd, dryRun: true, success: true }));
               return { content: [createTextContent(`[DRY-RUN] Would execute:\n  ${fullCmd}`)] };
             }
 
-            const result = await executeCommand({ command: "sudo", args: ["fail2ban-client", "reload"], toolName: "log_fail2ban", timeout: getToolTimeout("auditd") });
+            const result = await executeCommand({ command: "sudo", args: ["fail2ban-client", "reload"], toolName: "log_management", timeout: getToolTimeout("auditd") });
             const ok = result.exitCode === 0;
-            logChange(createChangeEntry({ tool: "log_fail2ban", action: "Reload fail2ban", target: "fail2ban", after: fullCmd, dryRun: false, success: ok, error: ok ? undefined : result.stderr }));
+            logChange(createChangeEntry({ tool: "log_management", action: "Reload fail2ban", target: "fail2ban", after: fullCmd, dryRun: false, success: ok, error: ok ? undefined : result.stderr }));
 
             if (!ok) return { content: [createErrorContent(`fail2ban reload failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
             return { content: [createTextContent("fail2ban reloaded successfully.")] };
@@ -334,9 +1000,10 @@ export function registerLoggingTools(server: McpServer): void {
           }
         }
 
-        case "audit": {
+        // ── fail2ban_audit ─────────────────────────────────────────────────
+        case "fail2ban_audit": {
           try {
-            const statusResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "status"], timeout: 10000, toolName: "log_fail2ban" });
+            const statusResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "status"], timeout: 10000, toolName: "log_management" });
             if (statusResult.exitCode !== 0) {
               return { content: [createTextContent(JSON.stringify({ installed: false, recommendation: "Install fail2ban: sudo apt install fail2ban && sudo systemctl enable fail2ban" }, null, 2))] };
             }
@@ -347,15 +1014,15 @@ export function registerLoggingTools(server: McpServer): void {
             const findings: Array<{jail: string, setting: string, value: string, status: string, recommendation: string}> = [];
 
             for (const jail of jails) {
-              const jailResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "get", jail, "bantime"], timeout: 5000, toolName: "log_fail2ban" });
+              const jailResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "get", jail, "bantime"], timeout: 5000, toolName: "log_management" });
               const bantime = parseInt(jailResult.stdout.trim()) || 0;
               findings.push({ jail, setting: "bantime", value: `${bantime}s`, status: bantime >= 600 ? "PASS" : "WARN", recommendation: bantime < 600 ? "Increase bantime to at least 600s (10 min)" : "OK" });
 
-              const maxRetryResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "get", jail, "maxretry"], timeout: 5000, toolName: "log_fail2ban" });
+              const maxRetryResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "get", jail, "maxretry"], timeout: 5000, toolName: "log_management" });
               const maxRetry = parseInt(maxRetryResult.stdout.trim()) || 0;
               findings.push({ jail, setting: "maxretry", value: String(maxRetry), status: maxRetry <= 5 ? "PASS" : "WARN", recommendation: maxRetry > 5 ? "Reduce maxretry to 5 or less" : "OK" });
 
-              const findtimeResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "get", jail, "findtime"], timeout: 5000, toolName: "log_fail2ban" });
+              const findtimeResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "get", jail, "findtime"], timeout: 5000, toolName: "log_management" });
               const findtime = parseInt(findtimeResult.stdout.trim()) || 0;
               findings.push({ jail, setting: "findtime", value: `${findtime}s`, status: findtime >= 300 ? "PASS" : "WARN", recommendation: findtime < 300 ? "Increase findtime to at least 300s" : "OK" });
             }
@@ -369,34 +1036,12 @@ export function registerLoggingTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 4. log_system (merged: syslog_analyze + rotation_audit) ───────────
-
-  server.tool(
-    "log_system",
-    "System log analysis: analyze syslog for security events or audit log rotation configuration.",
-    {
-      action: z.enum(["analyze", "rotation_audit"]).describe("Action: analyze=analyze syslog, rotation_audit=audit logrotate/journald"),
-      // analyze params
-      log_file: z.string().optional().describe("Path to the log file (analyze action)"),
-      pattern: z.enum(["auth_failures", "ssh_brute", "privilege_escalation", "service_changes", "all"]).optional().default("all").describe("Security event pattern (analyze action)"),
-      lines: z.number().optional().default(500).describe("Maximum number of matching lines (analyze action)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        case "analyze": {
-          const { log_file, pattern, lines: maxLines } = params;
+        // ── syslog_analyze ─────────────────────────────────────────────────
+        case "syslog_analyze": {
+          const { log_file, pattern = "all", lines: maxLines = 500 } = params;
           try {
             let effectiveLogFile: string;
             if (log_file) {
-              // TOOL-015: Validate user-supplied log file path against traversal
               effectiveLogFile = validateToolPath(log_file, ALLOWED_LOG_DIRS, "Log file path");
             } else {
               const adapterPath = (await getDistroAdapter()).paths.syslog;
@@ -406,7 +1051,7 @@ export function registerLoggingTools(server: McpServer): void {
 
               const found = candidates.find((p) => existsSync(p));
               if (!found) {
-                return { content: [createErrorContent(`No syslog file found (tried: ${candidates.join(", ")}). This system may use journald exclusively — use log_journalctl_query instead.`)], isError: true };
+                return { content: [createErrorContent(`No syslog file found (tried: ${candidates.join(", ")}). This system may use journald exclusively — use log_management with action journalctl_query instead.`)], isError: true };
               }
               effectiveLogFile = found;
             }
@@ -421,7 +1066,7 @@ export function registerLoggingTools(server: McpServer): void {
             const grepPattern = pattern === "all" ? Object.values(patterns).join("|") : (patterns[pattern!] ?? patterns.auth_failures);
             const args = ["-E", grepPattern, effectiveLogFile, "-m", String(maxLines)];
 
-            const result = await executeCommand({ command: "grep", args, toolName: "log_system", timeout: getToolTimeout("auditd") });
+            const result = await executeCommand({ command: "grep", args, toolName: "log_management", timeout: getToolTimeout("auditd") });
 
             if (result.exitCode === 1 && result.stdout.trim() === "") {
               return { content: [createTextContent(`No matching security events found in ${effectiveLogFile} for pattern '${pattern}'.`)] };
@@ -438,11 +1083,12 @@ export function registerLoggingTools(server: McpServer): void {
           }
         }
 
+        // ── rotation_audit ─────────────────────────────────────────────────
         case "rotation_audit": {
           try {
             const findings: Array<{check: string, status: string, value: string, description: string}> = [];
 
-            const lrResult = await executeCommand({ command: "cat", args: ["/etc/logrotate.conf"], timeout: 5000, toolName: "log_system" });
+            const lrResult = await executeCommand({ command: "cat", args: ["/etc/logrotate.conf"], timeout: 5000, toolName: "log_management" });
             findings.push({ check: "logrotate_config", status: lrResult.exitCode === 0 ? "PASS" : "FAIL", value: lrResult.exitCode === 0 ? "present" : "missing", description: "logrotate main configuration" });
 
             if (lrResult.exitCode === 0) {
@@ -454,7 +1100,7 @@ export function registerLoggingTools(server: McpServer): void {
               }
             }
 
-            const journaldResult = await executeCommand({ command: "cat", args: ["/etc/systemd/journald.conf"], timeout: 5000, toolName: "log_system" });
+            const journaldResult = await executeCommand({ command: "cat", args: ["/etc/systemd/journald.conf"], timeout: 5000, toolName: "log_management" });
             if (journaldResult.exitCode === 0) {
               const hasPersistent = journaldResult.stdout.includes("Storage=persistent");
               findings.push({ check: "journald_persistent", status: hasPersistent ? "PASS" : "WARN", value: hasPersistent ? "persistent" : "auto/volatile", description: "journald persistent storage (CIS recommends Storage=persistent)" });
@@ -462,13 +1108,253 @@ export function registerLoggingTools(server: McpServer): void {
               findings.push({ check: "journald_compress", status: !compressMatch || compressMatch[1] === "yes" ? "PASS" : "WARN", value: compressMatch ? compressMatch[1] : "default (yes)", description: "journald compression" });
             }
 
-            const logPerms = await executeCommand({ command: "stat", args: ["-c", "%a %U:%G", "/var/log"], timeout: 5000, toolName: "log_system" });
+            const logPerms = await executeCommand({ command: "stat", args: ["-c", "%a %U:%G", "/var/log"], timeout: 5000, toolName: "log_management" });
             findings.push({ check: "var_log_permissions", status: logPerms.stdout.trim().startsWith("755") || logPerms.stdout.trim().startsWith("750") ? "PASS" : "WARN", value: logPerms.stdout.trim(), description: "/var/log directory permissions" });
 
             const passCount = findings.filter(f => f.status === "PASS").length;
             return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
+          }
+        }
+
+        // ── siem_syslog_forward ────────────────────────────────────────────
+        case "siem_syslog_forward": {
+          const outputFormat = params.output_format ?? "text";
+          try {
+            const syslog = await configureSyslogForward(
+              params.siem_host,
+              params.siem_port,
+              params.protocol,
+              params.log_sources,
+            );
+
+            const output = {
+              action: "siem_syslog_forward",
+              syslogDaemon: syslog.syslogDaemon,
+              daemonInstalled: syslog.daemonInstalled,
+              existingForwardingRules: syslog.existingForwardingRules,
+              rsyslogModules: syslog.rsyslogModules,
+              tlsSupport: syslog.tlsSupport,
+              recommendedConfig: syslog.recommendedConfig,
+              recommendations: syslog.recommendations,
+            };
+
+            if (outputFormat === "json") {
+              return { content: [formatToolOutput(output)] };
+            }
+
+            let text = "SIEM Integration — Syslog Forwarding Configuration\n\n";
+            text += `Syslog Daemon: ${syslog.syslogDaemon}\n`;
+            text += `Daemon Installed: ${syslog.daemonInstalled ? "yes" : "no"}\n`;
+            text += `TLS Support: ${syslog.tlsSupport ? "available" : "not available"}\n`;
+            text += `Modules — imtcp: ${syslog.rsyslogModules.imtcp ? "loaded" : "not loaded"}, imudp: ${syslog.rsyslogModules.imudp ? "loaded" : "not loaded"}\n`;
+
+            if (syslog.existingForwardingRules.length > 0) {
+              text += `\nExisting Forwarding Rules (${syslog.existingForwardingRules.length}):\n`;
+              for (const rule of syslog.existingForwardingRules) { text += `  • ${rule}\n`; }
+            } else {
+              text += "\nExisting Forwarding Rules: none\n";
+            }
+
+            if (syslog.recommendedConfig) {
+              text += `\nRecommended Configuration:\n${syslog.recommendedConfig}\n`;
+            }
+
+            if (syslog.recommendations.length > 0) {
+              text += "\nRecommendations:\n";
+              for (const rec of syslog.recommendations) { text += `  • ${rec}\n`; }
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`siem_syslog_forward failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── siem_filebeat ──────────────────────────────────────────────────
+        case "siem_filebeat": {
+          const outputFormat = params.output_format ?? "text";
+          try {
+            const filebeat = await configureFilebeat(params.siem_host, params.siem_port);
+
+            const output = {
+              action: "siem_filebeat",
+              installed: filebeat.installed,
+              version: filebeat.version,
+              enabledModules: filebeat.enabledModules,
+              disabledModules: filebeat.disabledModules,
+              serviceRunning: filebeat.serviceRunning,
+              serviceStatus: filebeat.serviceStatus,
+              configPath: filebeat.configPath,
+              recommendedConfig: filebeat.recommendedConfig,
+              recommendations: filebeat.recommendations,
+            };
+
+            if (outputFormat === "json") {
+              return { content: [formatToolOutput(output)] };
+            }
+
+            let text = "SIEM Integration — Filebeat Configuration\n\n";
+            text += `Installed: ${filebeat.installed ? "yes" : "no"}\n`;
+
+            if (!filebeat.installed) {
+              text += "\nFilebeat is not installed.\n";
+            } else {
+              text += `Version: ${filebeat.version}\n`;
+              text += `Service Running: ${filebeat.serviceRunning ? "yes ✓" : "no ⚠"}\n`;
+              text += `Config Path: ${filebeat.configPath}\n`;
+
+              if (filebeat.enabledModules.length > 0) {
+                text += `\nEnabled Modules (${filebeat.enabledModules.length}):\n`;
+                for (const mod of filebeat.enabledModules) { text += `  • ${mod}\n`; }
+              } else {
+                text += "\nEnabled Modules: none\n";
+              }
+
+              if (filebeat.disabledModules.length > 0) {
+                text += `\nDisabled Modules (${filebeat.disabledModules.length}):\n`;
+                for (const mod of filebeat.disabledModules.slice(0, 10)) { text += `  • ${mod}\n`; }
+                if (filebeat.disabledModules.length > 10) {
+                  text += `  ... and ${filebeat.disabledModules.length - 10} more\n`;
+                }
+              }
+            }
+
+            if (filebeat.recommendedConfig) {
+              text += `\nRecommended Output Configuration:\n${filebeat.recommendedConfig}\n`;
+            }
+
+            if (filebeat.recommendations.length > 0) {
+              text += "\nRecommendations:\n";
+              for (const rec of filebeat.recommendations) { text += `  • ${rec}\n`; }
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`siem_filebeat failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── siem_audit_forwarding ──────────────────────────────────────────
+        case "siem_audit_forwarding": {
+          const outputFormat = params.output_format ?? "text";
+          try {
+            const audit = await auditForwarding(params.log_sources);
+
+            const output = {
+              action: "siem_audit_forwarding",
+              rsyslogForwarding: audit.rsyslogForwarding,
+              rsyslogRules: audit.rsyslogRules,
+              filebeatRunning: audit.filebeatRunning,
+              criticalSourcesCovered: audit.criticalSourcesCovered,
+              missingSourcesCount: audit.missingSourcesCount,
+              logRotationInterferes: audit.logRotationInterferes,
+              cisBenchmark: audit.cisBenchmark,
+              cisCompliant: audit.cisCompliant,
+              recommendations: audit.recommendations,
+            };
+
+            if (outputFormat === "json") {
+              return { content: [formatToolOutput(output)] };
+            }
+
+            let text = "SIEM Integration — Log Forwarding Audit\n\n";
+            text += `CIS Reference: ${audit.cisBenchmark}\n`;
+            text += `CIS Compliant: ${audit.cisCompliant ? "YES ✓" : "NO ⚠"}\n\n`;
+            text += `Rsyslog Forwarding: ${audit.rsyslogForwarding ? "configured" : "not configured"}\n`;
+            text += `Filebeat Running: ${audit.filebeatRunning ? "yes" : "no"}\n`;
+
+            if (audit.rsyslogRules.length > 0) {
+              text += `\nRsyslog Forwarding Rules (${audit.rsyslogRules.length}):\n`;
+              for (const rule of audit.rsyslogRules) { text += `  • ${rule}\n`; }
+            }
+
+            text += `\nCritical Log Source Coverage:\n`;
+            for (const source of audit.criticalSourcesCovered) {
+              text += `  • ${source.source} (${source.path}): ${source.forwarded ? "forwarded ✓" : "NOT forwarded ⚠"}\n`;
+            }
+
+            if (audit.missingSourcesCount > 0) {
+              text += `\n⚠ Missing Sources: ${audit.missingSourcesCount}\n`;
+            }
+            if (audit.logRotationInterferes) {
+              text += "\n⚠ Log rotation may interfere with forwarding\n";
+            }
+            if (audit.recommendations.length > 0) {
+              text += "\nRecommendations:\n";
+              for (const rec of audit.recommendations) { text += `  • ${rec}\n`; }
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`siem_audit_forwarding failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── siem_test_connectivity ─────────────────────────────────────────
+        case "siem_test_connectivity": {
+          const outputFormat = params.output_format ?? "text";
+          try {
+            if (!params.siem_host) {
+              return { content: [createErrorContent("test_connectivity requires siem_host parameter")], isError: true };
+            }
+            if (!validateSiemHost(params.siem_host)) {
+              return { content: [createErrorContent(`Invalid siem_host format: ${params.siem_host}`)], isError: true };
+            }
+
+            const connectivity = await testConnectivity(
+              params.siem_host,
+              params.siem_port,
+              params.protocol,
+            );
+
+            const output = {
+              action: "siem_test_connectivity",
+              siemHost: connectivity.siemHost,
+              siemPort: connectivity.siemPort,
+              protocol: connectivity.protocol,
+              tcpConnectivity: connectivity.tcpConnectivity,
+              tcpMessage: connectivity.tcpMessage,
+              tlsVerification: connectivity.tlsVerification,
+              tlsMessage: connectivity.tlsMessage,
+              dnsResolution: connectivity.dnsResolution,
+              dnsResult: connectivity.dnsResult,
+              firewallStatus: connectivity.firewallStatus,
+              firewallBlocked: connectivity.firewallBlocked,
+              testMessageSent: connectivity.testMessageSent,
+              testMessageResult: connectivity.testMessageResult,
+              recommendations: connectivity.recommendations,
+            };
+
+            if (outputFormat === "json") {
+              return { content: [formatToolOutput(output)] };
+            }
+
+            let text = "SIEM Integration — Connectivity Test\n\n";
+            text += `Target: ${connectivity.siemHost}:${connectivity.siemPort} (${connectivity.protocol})\n\n`;
+            text += `DNS Resolution: ${connectivity.dnsResolution ? "✓ " : "✗ "}${connectivity.dnsResult}\n`;
+            text += `TCP Connectivity: ${connectivity.tcpConnectivity ? "✓ " : "✗ "}${connectivity.tcpMessage}\n`;
+
+            if (connectivity.protocol === "tls") {
+              text += `TLS Verification: ${connectivity.tlsVerification ? "✓ " : "✗ "}${connectivity.tlsMessage}\n`;
+            }
+
+            text += `Firewall: ${connectivity.firewallBlocked ? "⚠ BLOCKED" : connectivity.firewallStatus}\n`;
+            text += `Test Message: ${connectivity.testMessageSent ? "✓ " : "✗ "}${connectivity.testMessageResult}\n`;
+
+            if (connectivity.recommendations.length > 0) {
+              text += "\nRecommendations:\n";
+              for (const rec of connectivity.recommendations) { text += `  • ${rec}\n`; }
+            }
+
+            return { content: [createTextContent(text)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`siem_test_connectivity failed: ${msg}`)], isError: true };
           }
         }
 

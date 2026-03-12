@@ -177,7 +177,7 @@ describe("ToolRegistry", () => {
     expect(reg).toBe(ToolRegistry.instance());
 
     // Should have entries from DEFAULT_MANIFESTS overlayed
-    const fw = reg.getManifest("firewall_iptables");
+    const fw = reg.getManifest("firewall");
     if (fw) {
       expect(fw.sudo).toBe("conditional");
     }
@@ -205,11 +205,11 @@ describe("ToolRegistry", () => {
     const find = (name: string) =>
       DEFAULT_MANIFESTS.find((m) => m.toolName === name);
 
-    expect(find("firewall_iptables")?.category).toBe("firewall");
-    expect(find("harden_sysctl")?.category).toBe("hardening");
-    expect(find("log_auditd")?.category).toBe("logging");
-    expect(find("malware_clamav")?.category).toBe("malware");
+    expect(find("firewall")?.category).toBe("firewall");
+    expect(find("harden_kernel")?.category).toBe("hardening");
+    expect(find("log_management")?.category).toBe("logging");
+    expect(find("malware")?.category).toBe("malware");
     expect(find("container_docker")?.category).toBe("container");
-    expect(find("secrets_scan")?.category).toBe("secrets");
+    expect(find("secrets")?.category).toBe("secrets");
   });
 });

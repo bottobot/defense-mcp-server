@@ -1,13 +1,12 @@
 /**
  * Container and mandatory access control security tools for Kali Defense MCP Server.
  *
- * Registers 6 tools:
- *   container_docker (actions: audit, bench, seccomp, daemon)
- *   container_apparmor (actions: status, list, enforce, complain, disable, install, apply_container)
- *   container_security_config (actions: seccomp_profile, rootless)
- *   container_selinux_manage (kept as-is)
- *   container_namespace_check (kept as-is)
- *   container_image_scan (kept as-is)
+ * Registers 2 tools:
+ *   container_docker (actions: audit, bench, seccomp, daemon, image_scan)
+ *   container_isolation (actions: apparmor_status, apparmor_list, apparmor_enforce,
+ *     apparmor_complain, apparmor_disable, apparmor_install, apparmor_apply_container,
+ *     selinux_status, selinux_getenforce, selinux_setenforce, selinux_booleans, selinux_audit,
+ *     namespace_check, seccomp_profile, rootless_setup)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -33,13 +32,13 @@ const SECCOMP_PROFILE_DIR = "/tmp/kali-defense/seccomp";
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerContainerSecurityTools(server: McpServer): void {
-  // ── 1. container_docker (merged: audit + bench + seccomp + daemon) ─────
+  // ── 1. container_docker (audit + bench + seccomp + daemon + image_scan) ─
 
   server.tool(
     "container_docker",
-    "Docker security: audit configuration, run CIS benchmarks, audit seccomp profiles, or configure daemon settings.",
+    "Docker security: audit configuration, run CIS benchmarks, audit seccomp profiles, configure daemon settings, or scan images for vulnerabilities.",
     {
-      action: z.enum(["audit", "bench", "seccomp", "daemon"]).describe("Action: audit=security audit, bench=CIS benchmark, seccomp=seccomp audit, daemon=configure daemon"),
+      action: z.enum(["audit", "bench", "seccomp", "daemon", "image_scan"]).describe("Action: audit=security audit, bench=CIS benchmark, seccomp=seccomp audit, daemon=configure daemon, image_scan=scan image for vulnerabilities"),
       // audit params
       check_type: z.enum(["daemon", "images", "containers", "network", "all"]).optional().default("all").describe("Docker check type (audit action)"),
       // bench params
@@ -56,6 +55,9 @@ export function registerContainerSecurityTools(server: McpServer): void {
         log_max_size: z.string().optional().default("10m"),
         log_max_file: z.string().optional().default("3"),
       }).optional().describe("Settings to apply (daemon action with daemon_action=apply)"),
+      // image_scan params
+      image: z.string().optional().describe("Docker image name/ID to scan, e.g. 'nginx:latest' (image_scan action)"),
+      severity: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "ALL"]).optional().default("HIGH").describe("Minimum severity to report (image_scan action)"),
       // shared
       dry_run: z.boolean().optional().describe("Preview changes without executing"),
     },
@@ -326,47 +328,101 @@ export function registerContainerSecurityTools(server: McpServer): void {
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
+        // ── image_scan ──────────────────────────────────────────────
+        case "image_scan": {
+          const { image, severity } = params;
+          try {
+            if (!image) {
+              return { content: [createErrorContent("image is required for image_scan action")], isError: true };
+            }
+
+            const trivyResult = await executeCommand({
+              command: "trivy",
+              args: ["image", "--severity", severity === "ALL" ? "CRITICAL,HIGH,MEDIUM,LOW" : `CRITICAL${severity !== "CRITICAL" ? ",HIGH" : ""}${severity === "MEDIUM" || severity === "LOW" ? ",MEDIUM" : ""}${severity === "LOW" ? ",LOW" : ""}`, "--format", "json", image],
+              timeout: 300000, toolName: "container_docker",
+            });
+            if (trivyResult.exitCode === 0) return { content: [createTextContent(`Trivy scan results for ${image}:\n${trivyResult.stdout.substring(0, 8000)}`)] };
+
+            const grypeResult = await executeCommand({ command: "grype", args: [image, "-o", "json"], timeout: 300000, toolName: "container_docker" });
+            if (grypeResult.exitCode === 0) return { content: [createTextContent(`Grype scan results for ${image}:\n${grypeResult.stdout.substring(0, 8000)}`)] };
+
+            return { content: [createTextContent(JSON.stringify({ error: "Neither Trivy nor Grype is installed", recommendation: "Install Trivy or Grype" }, null, 2))] };
+          } catch (error) { return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true }; }
+        }
+
         default:
           return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
     }
   );
 
-  // ── 2. container_apparmor (merged: manage + install + apply_container) ──
+  // ── 2. container_isolation (apparmor + selinux + namespace + security_config) ──
 
   server.tool(
-    "container_apparmor",
-    "AppArmor management: check status, list/enforce/complain/disable profiles, install profile packages, or generate container profiles.",
+    "container_isolation",
+    "Container isolation management: AppArmor profiles, SELinux settings, namespace checks, seccomp profile generation, and rootless container setup.",
     {
-      action: z.enum(["status", "list", "enforce", "complain", "disable", "install", "apply_container"]).describe("Action"),
-      // enforce/complain/disable params
-      profile: z.string().optional().describe("Profile name (enforce/complain/disable action)"),
-      // apply_container params
-      profileName: z.string().optional().describe("AppArmor profile name (apply_container action)"),
-      containerName: z.string().optional().describe("Container name for context (apply_container action)"),
-      allowNetwork: z.boolean().optional().default(true).describe("Allow network access (apply_container action)"),
-      allowWrite: z.array(z.string()).optional().default([]).describe("Writable paths (apply_container action)"),
+      action: z.enum([
+        "apparmor_status",
+        "apparmor_list",
+        "apparmor_enforce",
+        "apparmor_complain",
+        "apparmor_disable",
+        "apparmor_install",
+        "apparmor_apply_container",
+        "selinux_status",
+        "selinux_getenforce",
+        "selinux_setenforce",
+        "selinux_booleans",
+        "selinux_audit",
+        "namespace_check",
+        "seccomp_profile",
+        "rootless_setup",
+      ]).describe("Action to perform"),
+      // apparmor enforce/complain/disable params
+      profile: z.string().optional().describe("Profile name (apparmor_enforce/apparmor_complain/apparmor_disable)"),
+      // apparmor_apply_container params
+      profileName: z.string().optional().describe("AppArmor profile name (apparmor_apply_container / seccomp_profile)"),
+      containerName: z.string().optional().describe("Container name for context (apparmor_apply_container)"),
+      allowNetwork: z.boolean().optional().default(true).describe("Allow network access (apparmor_apply_container)"),
+      allowWrite: z.array(z.string()).optional().default([]).describe("Writable paths (apparmor_apply_container)"),
+      // selinux params
+      mode: z.enum(["enforcing", "permissive", "disabled"]).optional().describe("SELinux mode (selinux_setenforce)"),
+      boolean_name: z.string().optional().describe("SELinux boolean name (selinux_booleans)"),
+      boolean_value: z.enum(["on", "off"]).optional().describe("SELinux boolean value (selinux_booleans)"),
+      // namespace_check params
+      pid: z.number().optional().describe("Process ID to inspect namespaces for (namespace_check)"),
+      check_type: z.enum(["user", "network", "pid", "mount", "all"]).optional().default("all").describe("Type of namespace check (namespace_check)"),
+      // seccomp_profile params
+      allowedSyscalls: z.array(z.string()).optional().describe("List of syscall names to allow (seccomp_profile)"),
+      defaultAction: z.enum(["SCMP_ACT_ERRNO", "SCMP_ACT_KILL", "SCMP_ACT_LOG"]).optional().default("SCMP_ACT_ERRNO").describe("Default action for unlisted syscalls (seccomp_profile)"),
+      outputPath: z.string().optional().describe("Path to write the profile (seccomp_profile)"),
+      // rootless_setup params
+      username: z.string().optional().describe("Username to configure (rootless_setup)"),
+      subuidCount: z.number().optional().default(65536).describe("Number of subordinate UIDs (rootless_setup)"),
       // shared
       dry_run: z.boolean().optional().describe("Preview changes without executing"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only (seccomp_profile / rootless_setup)"),
     },
     async (params) => {
       const { action } = params;
 
       switch (action) {
-        case "status": {
+        // ── apparmor_status ─────────────────────────────────────────
+        case "apparmor_status": {
           try {
             const sections: string[] = ["🛡️ AppArmor System Status", "=".repeat(40)];
-            const enabledResult = await executeCommand({ command: "aa-enabled", args: [], toolName: "container_apparmor", timeout: 5000 });
+            const enabledResult = await executeCommand({ command: "aa-enabled", args: [], toolName: "container_isolation", timeout: 5000 });
             const aaEnabled = enabledResult.exitCode === 0 && enabledResult.stdout.trim() === "Yes";
             sections.push(`\n  AppArmor enabled: ${aaEnabled ? "✅ Yes" : "❌ No"}`);
 
-            const moduleResult = await executeCommand({ command: "cat", args: ["/sys/module/apparmor/parameters/enabled"], toolName: "container_apparmor", timeout: 5000 });
+            const moduleResult = await executeCommand({ command: "cat", args: ["/sys/module/apparmor/parameters/enabled"], toolName: "container_isolation", timeout: 5000 });
             if (moduleResult.exitCode === 0) sections.push(`  Kernel module: ${moduleResult.stdout.trim() === "Y" ? "✅ Loaded" : "❌ Not loaded"}`);
 
             const pkgChecks = ["apparmor-profiles", "apparmor-profiles-extra", "apparmor-utils"];
             sections.push("\n  Profile Packages:");
             for (const pkg of pkgChecks) {
-              const dpkgResult = await executeCommand({ command: "dpkg", args: ["-s", pkg], toolName: "container_apparmor", timeout: 5000 });
+              const dpkgResult = await executeCommand({ command: "dpkg", args: ["-s", pkg], toolName: "container_isolation", timeout: 5000 });
               const installed = dpkgResult.exitCode === 0 && dpkgResult.stdout.includes("Status: install ok installed");
               sections.push(`    ${pkg}: ${installed ? "✅ Installed" : "❌ Not installed"}`);
             }
@@ -374,11 +430,12 @@ export function registerContainerSecurityTools(server: McpServer): void {
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
-        case "list": {
+        // ── apparmor_list ───────────────────────────────────────────
+        case "apparmor_list": {
           try {
             const sections: string[] = ["🛡️ AppArmor Profiles", "=".repeat(40)];
-            let result = await executeCommand({ command: "sudo", args: ["aa-status"], toolName: "container_apparmor", timeout: getToolTimeout("container_apparmor_manage") });
-            if (result.exitCode !== 0) result = await executeCommand({ command: "sudo", args: ["apparmor_status"], toolName: "container_apparmor", timeout: getToolTimeout("container_apparmor_manage") });
+            let result = await executeCommand({ command: "sudo", args: ["aa-status"], toolName: "container_isolation", timeout: getToolTimeout("container_apparmor_manage") });
+            if (result.exitCode !== 0) result = await executeCommand({ command: "sudo", args: ["apparmor_status"], toolName: "container_isolation", timeout: getToolTimeout("container_apparmor_manage") });
             if (result.exitCode !== 0) { sections.push("\n⚠️ Cannot list AppArmor profiles."); return { content: [createTextContent(sections.join("\n"))] }; }
 
             const output = result.stdout;
@@ -395,30 +452,33 @@ export function registerContainerSecurityTools(server: McpServer): void {
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
-        case "enforce":
-        case "complain":
-        case "disable": {
+        // ── apparmor_enforce / apparmor_complain / apparmor_disable ──
+        case "apparmor_enforce":
+        case "apparmor_complain":
+        case "apparmor_disable": {
           const { profile, dry_run } = params;
           try {
             if (!profile) return { content: [createErrorContent(`profile name is required for '${action}' action`)], isError: true };
             sanitizeArgs([profile]);
 
+            const baseAction = action.replace("apparmor_", "") as "enforce" | "complain" | "disable";
             const cmdMap: Record<string, string> = { enforce: "aa-enforce", complain: "aa-complain", disable: "aa-disable" };
-            const cmd = cmdMap[action];
+            const cmd = cmdMap[baseAction];
 
             if (dry_run ?? getConfig().dryRun) {
-              return { content: [createTextContent(`[DRY RUN] Would set profile '${profile}' to ${action} mode.\n  Command: sudo ${cmd} ${profile}`)] };
+              return { content: [createTextContent(`[DRY RUN] Would set profile '${profile}' to ${baseAction} mode.\n  Command: sudo ${cmd} ${profile}`)] };
             }
 
-            const result = await executeCommand({ command: "sudo", args: [cmd, profile], toolName: "container_apparmor", timeout: getToolTimeout("container_apparmor_manage") });
-            if (result.exitCode !== 0) return { content: [createErrorContent(`Failed to ${action} profile '${profile}': ${result.stderr}`)], isError: true };
+            const result = await executeCommand({ command: "sudo", args: [cmd, profile], toolName: "container_isolation", timeout: getToolTimeout("container_apparmor_manage") });
+            if (result.exitCode !== 0) return { content: [createErrorContent(`Failed to ${baseAction} profile '${profile}': ${result.stderr}`)], isError: true };
 
-            logChange(createChangeEntry({ tool: "container_apparmor", action, target: profile, after: `${action} mode`, dryRun: false, success: true, rollbackCommand: action === "disable" ? `sudo aa-enforce ${profile}` : undefined }));
-            return { content: [createTextContent(`✅ Profile '${profile}' set to ${action} mode.\n${result.stdout || result.stderr}`)] };
+            logChange(createChangeEntry({ tool: "container_isolation", action: baseAction, target: profile, after: `${baseAction} mode`, dryRun: false, success: true, rollbackCommand: baseAction === "disable" ? `sudo aa-enforce ${profile}` : undefined }));
+            return { content: [createTextContent(`✅ Profile '${profile}' set to ${baseAction} mode.\n${result.stdout || result.stderr}`)] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
-        case "install": {
+        // ── apparmor_install ────────────────────────────────────────
+        case "apparmor_install": {
           const { dry_run } = params;
           try {
             const isDryRun = dry_run ?? getConfig().dryRun;
@@ -428,18 +488,19 @@ export function registerContainerSecurityTools(server: McpServer): void {
               return { content: [createTextContent(`[DRY RUN] Would install: ${packages.join(", ")}\n  Command: sudo apt-get install -y ${packages.join(" ")}`)] };
             }
 
-            const installResult = await executeCommand({ command: "sudo", args: ["apt-get", "install", "-y", ...packages], toolName: "container_apparmor", timeout: 120000 });
+            const installResult = await executeCommand({ command: "sudo", args: ["apt-get", "install", "-y", ...packages], toolName: "container_isolation", timeout: 120000 });
             if (installResult.exitCode !== 0) return { content: [createErrorContent(`Failed to install: ${installResult.stderr}`)], isError: true };
 
-            logChange(createChangeEntry({ tool: "container_apparmor", action: "install_profiles", target: packages.join(", "), after: "installed", dryRun: false, success: true, rollbackCommand: `sudo apt-get remove -y ${packages.join(" ")}` }));
+            logChange(createChangeEntry({ tool: "container_isolation", action: "install_profiles", target: packages.join(", "), after: "installed", dryRun: false, success: true, rollbackCommand: `sudo apt-get remove -y ${packages.join(" ")}` }));
             return { content: [createTextContent(`✅ Successfully installed: ${packages.join(", ")}`)] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
-        case "apply_container": {
+        // ── apparmor_apply_container ────────────────────────────────
+        case "apparmor_apply_container": {
           const { profileName, containerName, allowNetwork, allowWrite, dry_run } = params;
           try {
-            if (!profileName) return { content: [createErrorContent("profileName is required for apply_container action")], isError: true };
+            if (!profileName) return { content: [createErrorContent("profileName is required for apparmor_apply_container action")], isError: true };
 
             const writeRules = (allowWrite ?? []).map((p) => `  ${p} rw,`).join("\n");
             const networkRule = allowNetwork ? "  network,\n" : "  deny network,\n";
@@ -457,39 +518,143 @@ export function registerContainerSecurityTools(server: McpServer): void {
 
             const result = await executeCommand({ command: "apparmor_parser", args: ["-r", profilePath], timeout: 15000 });
 
-            logChange(createChangeEntry({ tool: "container_apparmor", action: `Create AppArmor profile ${profileName}`, target: profilePath, dryRun: false, success: result.exitCode === 0, rollbackCommand: `apparmor_parser -R ${profilePath} && rm ${profilePath}` }));
+            logChange(createChangeEntry({ tool: "container_isolation", action: `Create AppArmor profile ${profileName}`, target: profilePath, dryRun: false, success: result.exitCode === 0, rollbackCommand: `apparmor_parser -R ${profilePath} && rm ${profilePath}` }));
 
             return { content: [formatToolOutput({ success: result.exitCode === 0, profilePath, loaded: result.exitCode === 0, output: result.stdout || result.stderr })] };
           } catch (err: unknown) { return { content: [createErrorContent(`AppArmor profile failed: ${err instanceof Error ? err.message : String(err)}`)], isError: true }; }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
+        // ── selinux_status ──────────────────────────────────────────
+        case "selinux_status": {
+          try {
+            const sections: string[] = [`🛡️ SELinux Management: status`, "=".repeat(40)];
+            const result = await executeCommand({ command: "sestatus", args: [], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
+            if (result.exitCode !== 0) { sections.push("\n⚠️ SELinux may not be installed."); sections.push(result.stderr || result.stdout); }
+            else sections.push("\n" + result.stdout);
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
+        }
 
-  // ── 3. container_security_config (merged: seccomp_profile + rootless) ──
+        // ── selinux_getenforce ──────────────────────────────────────
+        case "selinux_getenforce": {
+          try {
+            const sections: string[] = [`🛡️ SELinux Management: getenforce`, "=".repeat(40)];
+            const result = await executeCommand({ command: "getenforce", args: [], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
+            if (result.exitCode !== 0) sections.push("\n⚠️ getenforce not available.");
+            else sections.push(`\nCurrent SELinux mode: ${result.stdout.trim()}`);
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
+        }
 
-  server.tool(
-    "container_security_config",
-    "Container security configuration: generate seccomp profiles or set up rootless container support.",
-    {
-      action: z.enum(["seccomp_profile", "rootless"]).describe("Action: seccomp_profile=generate seccomp profile, rootless=setup rootless containers"),
-      // seccomp_profile params
-      allowedSyscalls: z.array(z.string()).optional().describe("List of syscall names to allow (seccomp_profile action)"),
-      defaultAction: z.enum(["SCMP_ACT_ERRNO", "SCMP_ACT_KILL", "SCMP_ACT_LOG"]).optional().default("SCMP_ACT_ERRNO").describe("Default action for unlisted syscalls (seccomp_profile action)"),
-      outputPath: z.string().optional().describe("Path to write the profile (seccomp_profile action)"),
-      // rootless params
-      username: z.string().optional().describe("Username to configure (rootless action)"),
-      subuidCount: z.number().optional().default(65536).describe("Number of subordinate UIDs (rootless action)"),
-      // shared
-      dryRun: z.boolean().optional().default(true).describe("Preview only"),
-    },
-    async (params) => {
-      const { action } = params;
+        // ── selinux_setenforce ──────────────────────────────────────
+        case "selinux_setenforce": {
+          const { mode, dry_run } = params;
+          try {
+            const sections: string[] = [`🛡️ SELinux Management: setenforce`, "=".repeat(40)];
+            if (!mode) return { content: [createErrorContent("mode is required for selinux_setenforce")], isError: true };
+            if (mode === "disabled") { sections.push("\n⚠️ Cannot disable SELinux at runtime."); return { content: [createTextContent(sections.join("\n"))] }; }
+            const modeValue = mode === "enforcing" ? "1" : "0";
+            if (dry_run ?? getConfig().dryRun) { sections.push(`\n[DRY RUN] Would set SELinux to ${mode}.`); return { content: [createTextContent(sections.join("\n"))] }; }
+            const result = await executeCommand({ command: "sudo", args: ["setenforce", modeValue], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
+            if (result.exitCode !== 0) return { content: [createErrorContent(`Failed: ${result.stderr}`)], isError: true };
+            sections.push(`\n✅ SELinux mode set to ${mode}.`);
+            logChange(createChangeEntry({ tool: "container_isolation", action: "setenforce", target: "SELinux", after: mode, dryRun: false, success: true, rollbackCommand: `sudo setenforce ${mode === "enforcing" ? "0" : "1"}` }));
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
+        }
 
-      switch (action) {
+        // ── selinux_booleans ────────────────────────────────────────
+        case "selinux_booleans": {
+          const { boolean_name, boolean_value, dry_run } = params;
+          try {
+            const sections: string[] = [`🛡️ SELinux Management: booleans`, "=".repeat(40)];
+            if (boolean_name && boolean_value) {
+              sanitizeArgs([boolean_name]);
+              if (dry_run ?? getConfig().dryRun) { sections.push(`\n[DRY RUN] Would set '${boolean_name}' to ${boolean_value}.`); return { content: [createTextContent(sections.join("\n"))] }; }
+              const result = await executeCommand({ command: "sudo", args: ["setsebool", "-P", boolean_name, boolean_value], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
+              if (result.exitCode !== 0) return { content: [createErrorContent(`Failed: ${result.stderr}`)], isError: true };
+              sections.push(`\n✅ Boolean '${boolean_name}' set to ${boolean_value}.`);
+              logChange(createChangeEntry({ tool: "container_isolation", action: "set_boolean", target: boolean_name, after: boolean_value, dryRun: false, success: true, rollbackCommand: `sudo setsebool -P ${boolean_name} ${boolean_value === "on" ? "off" : "on"}` }));
+            } else if (boolean_name) {
+              sanitizeArgs([boolean_name]);
+              const result = await executeCommand({ command: "getsebool", args: [boolean_name], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
+              if (result.exitCode !== 0) return { content: [createErrorContent(`Failed: ${result.stderr}`)], isError: true };
+              sections.push(`\n${result.stdout.trim()}`);
+            } else {
+              const result = await executeCommand({ command: "getsebool", args: ["-a"], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
+              if (result.exitCode !== 0) sections.push("\n⚠️ Cannot list booleans.");
+              else sections.push(result.stdout);
+            }
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
+        }
+
+        // ── selinux_audit ───────────────────────────────────────────
+        case "selinux_audit": {
+          try {
+            const sections: string[] = [`🛡️ SELinux Management: audit`, "=".repeat(40)];
+            const result = await executeCommand({ command: "sudo", args: ["ausearch", "-m", "AVC", "-ts", "recent"], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
+            if (result.exitCode !== 0 && (result.stderr.includes("no matches") || result.stdout.includes("no matches"))) sections.push("\n✅ No recent SELinux AVC denials.");
+            else if (result.exitCode !== 0) sections.push("\n⚠️ Could not search audit logs.");
+            else sections.push(`\n⚠️ Recent SELinux AVC Denials:\n${result.stdout}`);
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
+        }
+
+        // ── namespace_check ─────────────────────────────────────────
+        case "namespace_check": {
+          const { pid, check_type } = params;
+          try {
+            const sections: string[] = ["📦 Namespace Isolation Check", "=".repeat(40)];
+
+            if (pid !== undefined) {
+              sections.push(`\nProcess PID: ${pid}`);
+              const nsResult = await executeCommand({ command: "ls", args: ["-la", `/proc/${pid}/ns/`], toolName: "container_isolation", timeout: getToolTimeout("container_namespace_check") });
+              if (nsResult.exitCode !== 0) return { content: [createErrorContent(`Cannot read namespaces for PID ${pid}: ${nsResult.stderr}`)], isError: true };
+              sections.push("\nNamespace symlinks:");
+              sections.push(nsResult.stdout);
+            } else {
+              sections.push("\n── System Namespace Configuration ──");
+
+              if (check_type === "user" || check_type === "all") {
+                sections.push("\n🔑 User Namespaces:");
+                const maxNsResult = await executeCommand({ command: "cat", args: ["/proc/sys/user/max_user_namespaces"], toolName: "container_isolation", timeout: 5000 });
+                if (maxNsResult.exitCode === 0) {
+                  const maxNs = maxNsResult.stdout.trim();
+                  sections.push(`  max_user_namespaces: ${maxNs}`);
+                  sections.push(maxNs === "0" ? "  ⚠️ User namespaces are disabled" : "  ✅ User namespaces are enabled");
+                }
+              }
+
+              if (check_type === "network" || check_type === "all") {
+                sections.push("\n🌐 Network Namespaces:");
+                const netnsResult = await executeCommand({ command: "ip", args: ["netns", "list"], toolName: "container_isolation", timeout: getToolTimeout("container_namespace_check") });
+                if (netnsResult.exitCode === 0 && netnsResult.stdout.trim()) {
+                  const namespaces = netnsResult.stdout.trim().split("\n").filter((l) => l.trim());
+                  sections.push(`  Named network namespaces: ${namespaces.length}`);
+                  for (const ns of namespaces) sections.push(`    - ${ns.trim()}`);
+                } else sections.push("  No named network namespaces found.");
+              }
+
+              if (check_type === "all" || check_type === "pid") {
+                sections.push("\n📋 All Active Namespaces (lsns):");
+                let lsnsResult = await executeCommand({ command: "lsns", args: [], toolName: "container_isolation", timeout: getToolTimeout("container_namespace_check") });
+                if (lsnsResult.exitCode !== 0) lsnsResult = await executeCommand({ command: "sudo", args: ["lsns"], toolName: "container_isolation", timeout: getToolTimeout("container_namespace_check") });
+                if (lsnsResult.exitCode === 0) sections.push(lsnsResult.stdout);
+                else sections.push("  ⚠️ Cannot list namespaces.");
+              }
+
+              if (check_type === "mount" || check_type === "all") {
+                sections.push("\n📁 Mount Namespace Info:");
+                const mountInfoResult = await executeCommand({ command: "cat", args: ["/proc/self/mountinfo"], toolName: "container_isolation", timeout: 5000 });
+                if (mountInfoResult.exitCode === 0) sections.push(`  Current mount namespace has ${mountInfoResult.stdout.trim().split("\n").length} mount points`);
+              }
+            }
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
+        }
+
+        // ── seccomp_profile ─────────────────────────────────────────
         case "seccomp_profile": {
           const { allowedSyscalls, defaultAction, outputPath, dryRun } = params;
           try {
@@ -519,7 +684,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
               const safePath = resolve(safeBaseDir, filename);
               if (!existsSync(safeBaseDir)) mkdirSync(safeBaseDir, { recursive: true });
               secureWriteFileSync(safePath, json, "utf-8");
-              logChange(createChangeEntry({ tool: "container_security_config", action: "Create seccomp profile (path restricted to safe directory)", target: safePath, dryRun: false, success: true }));
+              logChange(createChangeEntry({ tool: "container_isolation", action: "Create seccomp profile (path restricted to safe directory)", target: safePath, dryRun: false, success: true }));
               return { content: [formatToolOutput({ success: true, outputPath: safePath, note: `Output path was restricted to safe directory: ${SECCOMP_PROFILE_DIR}`, syscallCount: allowedSyscalls.length, defaultAction })] };
             }
 
@@ -527,15 +692,16 @@ export function registerContainerSecurityTools(server: McpServer): void {
             // TOOL-011: Use secure-fs for the write operation
             secureWriteFileSync(resolvedOutput, json, "utf-8");
 
-            logChange(createChangeEntry({ tool: "container_security_config", action: "Create seccomp profile", target: resolvedOutput, dryRun: false, success: true }));
+            logChange(createChangeEntry({ tool: "container_isolation", action: "Create seccomp profile", target: resolvedOutput, dryRun: false, success: true }));
             return { content: [formatToolOutput({ success: true, outputPath: resolvedOutput, syscallCount: allowedSyscalls.length, defaultAction })] };
           } catch (err: unknown) { return { content: [createErrorContent(`Seccomp profile generation failed: ${err instanceof Error ? err.message : String(err)}`)], isError: true }; }
         }
 
-        case "rootless": {
+        // ── rootless_setup ──────────────────────────────────────────
+        case "rootless_setup": {
           const { username, subuidCount, dryRun } = params;
           try {
-            if (!username) return { content: [createErrorContent("username is required for rootless action")], isError: true };
+            if (!username) return { content: [createErrorContent("username is required for rootless_setup action")], isError: true };
 
             const safety = await SafeguardRegistry.getInstance().checkSafety("setup_rootless_containers", { username });
             const checks: Record<string, unknown> = {};
@@ -563,7 +729,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
               results.push({ step: "Enable user namespaces", success: r.exitCode === 0, output: r.stdout });
             }
 
-            logChange(createChangeEntry({ tool: "container_security_config", action: `Configure rootless containers for ${username}`, target: username, dryRun: false, success: results.every((r) => r.success) }));
+            logChange(createChangeEntry({ tool: "container_isolation", action: `Configure rootless containers for ${username}`, target: username, dryRun: false, success: results.every((r) => r.success) }));
             return { content: [formatToolOutput({ username, results, checks })] };
           } catch (err: unknown) { return { content: [createErrorContent(`Rootless setup failed: ${err instanceof Error ? err.message : String(err)}`)], isError: true }; }
         }
@@ -571,166 +737,6 @@ export function registerContainerSecurityTools(server: McpServer): void {
         default:
           return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
-    }
-  );
-
-  // ── 4. container_selinux_manage (kept as-is) ─────────────────────────────
-
-  server.tool(
-    "container_selinux_manage",
-    "Manage SELinux settings: check status, get/set enforcement mode, manage booleans, audit denials",
-    {
-      action: z.enum(["status", "getenforce", "setenforce", "booleans", "audit"]).describe("SELinux management action"),
-      mode: z.enum(["enforcing", "permissive", "disabled"]).optional().describe("SELinux mode (for setenforce)"),
-      boolean_name: z.string().optional().describe("SELinux boolean name"),
-      boolean_value: z.enum(["on", "off"]).optional().describe("SELinux boolean value"),
-      dry_run: z.boolean().optional().describe("Preview changes"),
-    },
-    async ({ action, mode, boolean_name, boolean_value, dry_run }) => {
-      try {
-        const sections: string[] = [`🛡️ SELinux Management: ${action}`, "=".repeat(40)];
-
-        switch (action) {
-          case "status": {
-            const result = await executeCommand({ command: "sestatus", args: [], toolName: "container_selinux_manage", timeout: getToolTimeout("container_selinux_manage") });
-            if (result.exitCode !== 0) { sections.push("\n⚠️ SELinux may not be installed."); sections.push(result.stderr || result.stdout); }
-            else sections.push("\n" + result.stdout);
-            break;
-          }
-          case "getenforce": {
-            const result = await executeCommand({ command: "getenforce", args: [], toolName: "container_selinux_manage", timeout: getToolTimeout("container_selinux_manage") });
-            if (result.exitCode !== 0) sections.push("\n⚠️ getenforce not available.");
-            else sections.push(`\nCurrent SELinux mode: ${result.stdout.trim()}`);
-            break;
-          }
-          case "setenforce": {
-            if (!mode) return { content: [createErrorContent("mode is required for setenforce")], isError: true };
-            if (mode === "disabled") { sections.push("\n⚠️ Cannot disable SELinux at runtime."); break; }
-            const modeValue = mode === "enforcing" ? "1" : "0";
-            if (dry_run ?? getConfig().dryRun) { sections.push(`\n[DRY RUN] Would set SELinux to ${mode}.`); break; }
-            const result = await executeCommand({ command: "sudo", args: ["setenforce", modeValue], toolName: "container_selinux_manage", timeout: getToolTimeout("container_selinux_manage") });
-            if (result.exitCode !== 0) return { content: [createErrorContent(`Failed: ${result.stderr}`)], isError: true };
-            sections.push(`\n✅ SELinux mode set to ${mode}.`);
-            logChange(createChangeEntry({ tool: "container_selinux_manage", action: "setenforce", target: "SELinux", after: mode, dryRun: false, success: true, rollbackCommand: `sudo setenforce ${mode === "enforcing" ? "0" : "1"}` }));
-            break;
-          }
-          case "booleans": {
-            if (boolean_name && boolean_value) {
-              sanitizeArgs([boolean_name]);
-              if (dry_run ?? getConfig().dryRun) { sections.push(`\n[DRY RUN] Would set '${boolean_name}' to ${boolean_value}.`); break; }
-              const result = await executeCommand({ command: "sudo", args: ["setsebool", "-P", boolean_name, boolean_value], toolName: "container_selinux_manage", timeout: getToolTimeout("container_selinux_manage") });
-              if (result.exitCode !== 0) return { content: [createErrorContent(`Failed: ${result.stderr}`)], isError: true };
-              sections.push(`\n✅ Boolean '${boolean_name}' set to ${boolean_value}.`);
-              logChange(createChangeEntry({ tool: "container_selinux_manage", action: "set_boolean", target: boolean_name, after: boolean_value, dryRun: false, success: true, rollbackCommand: `sudo setsebool -P ${boolean_name} ${boolean_value === "on" ? "off" : "on"}` }));
-            } else if (boolean_name) {
-              sanitizeArgs([boolean_name]);
-              const result = await executeCommand({ command: "getsebool", args: [boolean_name], toolName: "container_selinux_manage", timeout: getToolTimeout("container_selinux_manage") });
-              if (result.exitCode !== 0) return { content: [createErrorContent(`Failed: ${result.stderr}`)], isError: true };
-              sections.push(`\n${result.stdout.trim()}`);
-            } else {
-              const result = await executeCommand({ command: "getsebool", args: ["-a"], toolName: "container_selinux_manage", timeout: getToolTimeout("container_selinux_manage") });
-              if (result.exitCode !== 0) sections.push("\n⚠️ Cannot list booleans.");
-              else sections.push(result.stdout);
-            }
-            break;
-          }
-          case "audit": {
-            const result = await executeCommand({ command: "sudo", args: ["ausearch", "-m", "AVC", "-ts", "recent"], toolName: "container_selinux_manage", timeout: getToolTimeout("container_selinux_manage") });
-            if (result.exitCode !== 0 && (result.stderr.includes("no matches") || result.stdout.includes("no matches"))) sections.push("\n✅ No recent SELinux AVC denials.");
-            else if (result.exitCode !== 0) sections.push("\n⚠️ Could not search audit logs.");
-            else sections.push(`\n⚠️ Recent SELinux AVC Denials:\n${result.stdout}`);
-            break;
-          }
-        }
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
-    }
-  );
-
-  // ── 5. container_namespace_check (kept as-is) ────────────────────────────
-
-  server.tool(
-    "container_namespace_check",
-    "Check Linux namespace isolation for processes and system-wide namespace configuration",
-    {
-      pid: z.number().optional().describe("Process ID to inspect namespaces for"),
-      check_type: z.enum(["user", "network", "pid", "mount", "all"]).optional().default("all").describe("Type of namespace check"),
-    },
-    async ({ pid, check_type }) => {
-      try {
-        const sections: string[] = ["📦 Namespace Isolation Check", "=".repeat(40)];
-
-        if (pid !== undefined) {
-          sections.push(`\nProcess PID: ${pid}`);
-          const nsResult = await executeCommand({ command: "ls", args: ["-la", `/proc/${pid}/ns/`], toolName: "container_namespace_check", timeout: getToolTimeout("container_namespace_check") });
-          if (nsResult.exitCode !== 0) return { content: [createErrorContent(`Cannot read namespaces for PID ${pid}: ${nsResult.stderr}`)], isError: true };
-          sections.push("\nNamespace symlinks:");
-          sections.push(nsResult.stdout);
-        } else {
-          sections.push("\n── System Namespace Configuration ──");
-
-          if (check_type === "user" || check_type === "all") {
-            sections.push("\n🔑 User Namespaces:");
-            const maxNsResult = await executeCommand({ command: "cat", args: ["/proc/sys/user/max_user_namespaces"], toolName: "container_namespace_check", timeout: 5000 });
-            if (maxNsResult.exitCode === 0) {
-              const maxNs = maxNsResult.stdout.trim();
-              sections.push(`  max_user_namespaces: ${maxNs}`);
-              sections.push(maxNs === "0" ? "  ⚠️ User namespaces are disabled" : "  ✅ User namespaces are enabled");
-            }
-          }
-
-          if (check_type === "network" || check_type === "all") {
-            sections.push("\n🌐 Network Namespaces:");
-            const netnsResult = await executeCommand({ command: "ip", args: ["netns", "list"], toolName: "container_namespace_check", timeout: getToolTimeout("container_namespace_check") });
-            if (netnsResult.exitCode === 0 && netnsResult.stdout.trim()) {
-              const namespaces = netnsResult.stdout.trim().split("\n").filter((l) => l.trim());
-              sections.push(`  Named network namespaces: ${namespaces.length}`);
-              for (const ns of namespaces) sections.push(`    - ${ns.trim()}`);
-            } else sections.push("  No named network namespaces found.");
-          }
-
-          if (check_type === "all" || check_type === "pid") {
-            sections.push("\n📋 All Active Namespaces (lsns):");
-            let lsnsResult = await executeCommand({ command: "lsns", args: [], toolName: "container_namespace_check", timeout: getToolTimeout("container_namespace_check") });
-            if (lsnsResult.exitCode !== 0) lsnsResult = await executeCommand({ command: "sudo", args: ["lsns"], toolName: "container_namespace_check", timeout: getToolTimeout("container_namespace_check") });
-            if (lsnsResult.exitCode === 0) sections.push(lsnsResult.stdout);
-            else sections.push("  ⚠️ Cannot list namespaces.");
-          }
-
-          if (check_type === "mount" || check_type === "all") {
-            sections.push("\n📁 Mount Namespace Info:");
-            const mountInfoResult = await executeCommand({ command: "cat", args: ["/proc/self/mountinfo"], toolName: "container_namespace_check", timeout: 5000 });
-            if (mountInfoResult.exitCode === 0) sections.push(`  Current mount namespace has ${mountInfoResult.stdout.trim().split("\n").length} mount points`);
-          }
-        }
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
-    }
-  );
-
-  // ── 6. container_image_scan (kept as-is) ─────────────────────────────────
-
-  server.tool(
-    "container_image_scan",
-    "Scan Docker container images for known vulnerabilities using Trivy or Grype (if installed).",
-    {
-      image: z.string().describe("Docker image name/ID to scan, e.g. 'nginx:latest'"),
-      severity: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "ALL"]).optional().default("HIGH").describe("Minimum severity to report"),
-    },
-    async (params) => {
-      try {
-        const trivyResult = await executeCommand({
-          command: "trivy",
-          args: ["image", "--severity", params.severity === "ALL" ? "CRITICAL,HIGH,MEDIUM,LOW" : `CRITICAL${params.severity !== "CRITICAL" ? ",HIGH" : ""}${params.severity === "MEDIUM" || params.severity === "LOW" ? ",MEDIUM" : ""}${params.severity === "LOW" ? ",LOW" : ""}`, "--format", "json", params.image],
-          timeout: 300000, toolName: "container_image_scan",
-        });
-        if (trivyResult.exitCode === 0) return { content: [createTextContent(`Trivy scan results for ${params.image}:\n${trivyResult.stdout.substring(0, 8000)}`)] };
-
-        const grypeResult = await executeCommand({ command: "grype", args: [params.image, "-o", "json"], timeout: 300000, toolName: "container_image_scan" });
-        if (grypeResult.exitCode === 0) return { content: [createTextContent(`Grype scan results for ${params.image}:\n${grypeResult.stdout.substring(0, 8000)}`)] };
-
-        return { content: [createTextContent(JSON.stringify({ error: "Neither Trivy nor Grype is installed", recommendation: "Install Trivy or Grype" }, null, 2))] };
-      } catch (error) { return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true }; }
     }
   );
 }
