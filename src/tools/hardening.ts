@@ -1,9 +1,7 @@
 /**
  * System hardening tools for Kali Defense MCP Server.
  *
- * Registers 8 tools: harden_sysctl, harden_service, harden_permissions,
- * harden_systemd, harden_kernel, harden_bootloader, harden_misc,
- * memory_protection.
+ * Registers 2 tools: harden_kernel, harden_host.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -316,41 +314,63 @@ function saveUsbWhitelist(entries: UsbWhitelistEntry[]): void {
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerHardeningTools(server: McpServer): void {
-  // ── 1. harden_sysctl (merged: harden_sysctl_get, harden_sysctl_set, harden_sysctl_audit) ──
+
+  // ── Tool 1: harden_kernel ─────────────────────────────────────────────────
+  // Merges: harden_sysctl, harden_kernel (old), harden_bootloader, harden_memory
 
   server.tool(
-    "harden_sysctl",
-    "Manage sysctl kernel parameters. Actions: get=read value(s), set=write value, audit=security check against CIS/STIG",
+    "harden_kernel",
+    "Kernel security hardening. Actions: sysctl_get/sysctl_set/sysctl_audit=sysctl management, kernel_audit/kernel_modules/kernel_coredump=kernel security, bootloader_audit/bootloader_configure=bootloader hardening, memory_audit/memory_enforce_aslr/memory_report=memory protections",
     {
       action: z
-        .enum(["get", "set", "audit"])
-        .describe("Action: get=read value, set=write value, audit=security check"),
-      // get params
-      key: z.string().optional().describe("Sysctl key (required for get single/set)"),
-      all: z.boolean().optional().default(false).describe("Return all sysctl values (for get)"),
-      pattern: z.string().optional().describe("Filter keys matching substring (for get)"),
-      // set params
-      value: z.string().optional().describe("Value to set (required for set)"),
-      persistent: z.boolean().optional().default(false).describe("Write to /etc/sysctl.d/99-kali-defense.conf (for set)"),
-      // audit params
-      category: z.enum(["network", "kernel", "fs", "all"]).optional().default("all").describe("Category of settings to audit (for audit)"),
+        .enum([
+          "sysctl_get", "sysctl_set", "sysctl_audit",
+          "kernel_audit", "kernel_modules", "kernel_coredump",
+          "bootloader_audit", "bootloader_configure",
+          "memory_audit", "memory_enforce_aslr", "memory_report",
+        ])
+        .describe("Action to perform"),
+      // sysctl params
+      key: z.string().optional().describe("Sysctl key (required for sysctl_get single/sysctl_set)"),
+      all: z.boolean().optional().default(false).describe("Return all sysctl values (for sysctl_get)"),
+      pattern: z.string().optional().describe("Filter keys matching substring (for sysctl_get)"),
+      value: z.string().optional().describe("Value to set (required for sysctl_set)"),
+      persistent: z.boolean().optional().default(false).describe("Write to /etc/sysctl.d/99-kali-defense.conf (for sysctl_set)"),
+      category: z.enum(["network", "kernel", "fs", "all"]).optional().default("all").describe("Category of settings to audit (for sysctl_audit)"),
+      // kernel params
+      check_type: z
+        .enum(["cpu_vulns", "lsm", "lockdown", "features", "all"])
+        .optional()
+        .default("all")
+        .describe("Type of kernel security check (for kernel_audit)"),
+      // bootloader params
+      configure_action: z
+        .enum(["add_kernel_params", "status"])
+        .optional()
+        .describe("Configure sub-action (required for bootloader_configure)"),
+      kernel_params: z
+        .string()
+        .optional()
+        .describe("Space-separated kernel parameters to add (for bootloader_configure action=add_kernel_params)"),
+      // memory params
+      binaries: z.array(z.string()).optional().describe("Binary paths to check (for memory_audit)"),
       // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview changes (for set)"),
+      dry_run: z.boolean().optional().default(true).describe("Preview changes"),
     },
     async (params) => {
       const { action } = params;
 
       switch (action) {
-        // ── get ──────────────────────────────────────────────────────
-        case "get": {
+        // ── sysctl_get ────────────────────────────────────────────────
+        case "sysctl_get": {
           try {
             if (params.key) {
               const validatedKey = validateSysctlKey(params.key);
               const result = await executeCommand({
                 command: "sysctl",
                 args: [validatedKey],
-                toolName: "harden_sysctl",
-                timeout: getToolTimeout("harden_sysctl"),
+                toolName: "harden_kernel",
+                timeout: getToolTimeout("harden_kernel"),
               });
 
               if (result.exitCode !== 0) {
@@ -372,8 +392,8 @@ export function registerHardeningTools(server: McpServer): void {
               const result = await executeCommand({
                 command: "sysctl",
                 args: ["-a"],
-                toolName: "harden_sysctl",
-                timeout: getToolTimeout("harden_sysctl"),
+                toolName: "harden_kernel",
+                timeout: getToolTimeout("harden_kernel"),
               });
 
               if (result.exitCode !== 0) {
@@ -421,14 +441,14 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        // ── set ──────────────────────────────────────────────────────
-        case "set": {
+        // ── sysctl_set ────────────────────────────────────────────────
+        case "sysctl_set": {
           try {
             if (!params.key) {
-              return { content: [createErrorContent("Error: 'key' is required for set action")], isError: true };
+              return { content: [createErrorContent("Error: 'key' is required for sysctl_set action")], isError: true };
             }
             if (!params.value) {
-              return { content: [createErrorContent("Error: 'value' is required for set action")], isError: true };
+              return { content: [createErrorContent("Error: 'value' is required for sysctl_set action")], isError: true };
             }
 
             // TOOL-019: Pre-execution privilege check for sysctl set
@@ -444,7 +464,7 @@ export function registerHardeningTools(server: McpServer): void {
             const currentResult = await executeCommand({
               command: "sysctl",
               args: [validatedKey],
-              toolName: "harden_sysctl",
+              toolName: "harden_kernel",
             });
 
             const beforeValue = currentResult.stdout.trim();
@@ -458,7 +478,7 @@ export function registerHardeningTools(server: McpServer): void {
               }
 
               const entry = createChangeEntry({
-                tool: "harden_sysctl",
+                tool: "harden_kernel",
                 action: `[DRY-RUN] Set sysctl ${validatedKey}`,
                 target: validatedKey,
                 before: beforeValue,
@@ -478,8 +498,8 @@ export function registerHardeningTools(server: McpServer): void {
             const result = await executeCommand({
               command: "sudo",
               args: ["sysctl", "-w", `${validatedKey}=${params.value}`],
-              toolName: "harden_sysctl",
-              timeout: getToolTimeout("harden_sysctl"),
+              toolName: "harden_kernel",
+              timeout: getToolTimeout("harden_kernel"),
             });
 
             const success = result.exitCode === 0;
@@ -496,20 +516,20 @@ export function registerHardeningTools(server: McpServer): void {
               await executeCommand({
                 command: "sudo",
                 args: ["mkdir", "-p", "/etc/sysctl.d"],
-                toolName: "harden_sysctl",
+                toolName: "harden_kernel",
               });
 
               await executeCommand({
                 command: "sudo",
                 args: ["sed", "-i", `/^${validatedKey}\\s*=/d`, persistPath],
-                toolName: "harden_sysctl",
+                toolName: "harden_kernel",
               });
 
               const appendResult = await executeCommand({
                 command: "sudo",
                 args: ["tee", "-a", persistPath],
                 stdin: `${validatedKey} = ${params.value}\n`,
-                toolName: "harden_sysctl",
+                toolName: "harden_kernel",
               });
 
               persistResult = appendResult.exitCode === 0
@@ -522,7 +542,7 @@ export function registerHardeningTools(server: McpServer): void {
               : undefined;
 
             const entry = createChangeEntry({
-              tool: "harden_sysctl",
+              tool: "harden_kernel",
               action: `Set sysctl ${validatedKey}=${params.value}`,
               target: validatedKey,
               before: beforeValue,
@@ -558,14 +578,14 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
+        // ── sysctl_audit ──────────────────────────────────────────────
+        case "sysctl_audit": {
           try {
             const result = await executeCommand({
               command: "sysctl",
               args: ["-a"],
-              toolName: "harden_sysctl",
-              timeout: getToolTimeout("harden_sysctl"),
+              toolName: "harden_kernel",
+              timeout: getToolTimeout("harden_kernel"),
             });
 
             if (result.exitCode !== 0) {
@@ -658,817 +678,8 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 2. harden_service (merged: harden_service_manage, harden_service_audit) ──
-
-  server.tool(
-    "harden_service",
-    "Manage and audit systemd services. Actions: manage=enable/disable/start/stop/restart/mask/unmask/status, audit=check for unnecessary services",
-    {
-      action: z
-        .enum(["manage", "audit"])
-        .describe("Action: manage=control service, audit=find unnecessary services"),
-      // manage params
-      service: z.string().optional().describe("Service name, e.g. 'ssh.service' (required for manage)"),
-      service_action: z
-        .enum(["enable", "disable", "stop", "start", "restart", "mask", "unmask", "status"])
-        .optional()
-        .describe("Service action (required for manage)"),
-      // audit params
-      show_all: z.boolean().optional().default(false).describe("Show all running services, not just flagged (for audit)"),
-      // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview changes (for manage)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── manage ───────────────────────────────────────────────────
-        case "manage": {
-          try {
-            if (!params.service) {
-              return { content: [createErrorContent("Error: 'service' is required for manage action")], isError: true };
-            }
-            if (!params.service_action) {
-              return { content: [createErrorContent("Error: 'service_action' is required for manage action")], isError: true };
-            }
-
-            const validatedService = validateServiceName(params.service);
-            const svcAction = params.service_action;
-            const fullCmd = `sudo systemctl ${svcAction} ${validatedService}`;
-
-            // Status is always read-only, skip dry_run check
-            if (svcAction === "status") {
-              const result = await executeCommand({
-                command: "systemctl",
-                args: ["status", validatedService],
-                toolName: "harden_service",
-                timeout: getToolTimeout("harden_service"),
-              });
-
-              return {
-                content: [
-                  createTextContent(
-                    `Service: ${validatedService}\n\n${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`
-                  ),
-                ],
-              };
-            }
-
-            // Determine rollback action
-            const rollbackActions: Record<string, string> = {
-              enable: "disable",
-              disable: "enable",
-              stop: "start",
-              start: "stop",
-              restart: "restart",
-              mask: "unmask",
-              unmask: "mask",
-            };
-            const rollbackCmd = `sudo systemctl ${rollbackActions[svcAction]} ${validatedService}`;
-
-            if (params.dry_run ?? getConfig().dryRun) {
-              const entry = createChangeEntry({
-                tool: "harden_service",
-                action: `[DRY-RUN] ${svcAction} service`,
-                target: validatedService,
-                dryRun: true,
-                success: true,
-                rollbackCommand: rollbackCmd,
-              });
-              logChange(entry);
-
-              return {
-                content: [
-                  createTextContent(
-                    `[DRY-RUN] Would execute:\n  ${fullCmd}\n\nRollback:\n  ${rollbackCmd}`
-                  ),
-                ],
-              };
-            }
-
-            // Get before state
-            const beforeResult = await executeCommand({
-              command: "systemctl",
-              args: ["is-active", validatedService],
-              toolName: "harden_service",
-            });
-            const beforeState = beforeResult.stdout.trim();
-
-            const result = await executeCommand({
-              command: "sudo",
-              args: ["systemctl", svcAction, validatedService],
-              toolName: "harden_service",
-              timeout: getToolTimeout("harden_service"),
-            });
-
-            const success = result.exitCode === 0;
-
-            // Get after state
-            const afterResult = await executeCommand({
-              command: "systemctl",
-              args: ["is-active", validatedService],
-              toolName: "harden_service",
-            });
-            const afterState = afterResult.stdout.trim();
-
-            const entry = createChangeEntry({
-              tool: "harden_service",
-              action: `${svcAction} service`,
-              target: validatedService,
-              before: beforeState,
-              after: afterState,
-              dryRun: false,
-              success,
-              error: success ? undefined : result.stderr,
-              rollbackCommand: rollbackCmd,
-            });
-            logChange(entry);
-
-            if (!success) {
-              return {
-                content: [
-                  createErrorContent(
-                    `systemctl ${svcAction} failed (exit ${result.exitCode}): ${result.stderr}`
-                  ),
-                ],
-                isError: true,
-              };
-            }
-
-            return {
-              content: [
-                createTextContent(
-                  `Service ${validatedService}: ${svcAction} completed.\nBefore: ${beforeState}\nAfter: ${afterState}\nRollback: ${rollbackCmd}\n\n${result.stdout}`
-                ),
-              ],
-            };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(msg)], isError: true };
-          }
-        }
-
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
-          try {
-            const result = await executeCommand({
-              command: "systemctl",
-              args: [
-                "list-units",
-                "--type=service",
-                "--state=running",
-                "--no-pager",
-                "--no-legend",
-              ],
-              toolName: "harden_service",
-              timeout: getToolTimeout("harden_service"),
-            });
-
-            if (result.exitCode !== 0) {
-              return {
-                content: [
-                  createErrorContent(
-                    `systemctl list-units failed (exit ${result.exitCode}): ${result.stderr}`
-                  ),
-                ],
-                isError: true,
-              };
-            }
-
-            const units = parseSystemctlOutput(result.stdout);
-            const runningServices = units.map((u) => u.unit);
-
-            const flagged: Array<{
-              service: string;
-              reason: string;
-              running: boolean;
-            }> = [];
-
-            for (const check of UNNECESSARY_SERVICES) {
-              const isRunning = runningServices.some(
-                (s) =>
-                  s === check.name ||
-                  s.startsWith(check.name.replace(".service", "").replace(".socket", ""))
-              );
-              if (isRunning) {
-                flagged.push({
-                  service: check.name,
-                  reason: check.reason,
-                  running: true,
-                });
-              }
-            }
-
-            const output: Record<string, unknown> = {
-              totalRunning: runningServices.length,
-              flaggedCount: flagged.length,
-              flaggedServices: flagged,
-            };
-
-            if (params.show_all) {
-              output.allRunningServices = units;
-            }
-
-            if (flagged.length === 0) {
-              output.assessment =
-                "No known unnecessary or dangerous services detected running.";
-            } else {
-              output.assessment = `Found ${flagged.length} potentially unnecessary service(s). Review and consider disabling with harden_service action=manage.`;
-            }
-
-            return { content: [formatToolOutput(output)] };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(msg)], isError: true };
-          }
-        }
-
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 3. harden_permissions (merged: harden_file_permissions, harden_permissions_audit) ──
-
-  server.tool(
-    "harden_permissions",
-    "Manage file permissions. Actions: check=audit a specific path, fix=change permissions/ownership, audit=CIS benchmark audit of critical system files",
-    {
-      action: z
-        .enum(["check", "fix", "audit"])
-        .describe("Action: check=audit path, fix=change perms/owner, audit=CIS benchmark check"),
-      // check/fix params
-      path: z.string().optional().describe("File or directory path (required for check/fix)"),
-      mode: z.string().optional().describe("Desired octal permissions, e.g. '600' (for fix)"),
-      owner: z.string().optional().describe("Desired owner, e.g. 'root' (for fix)"),
-      group: z.string().optional().describe("Desired group, e.g. 'root' (for fix)"),
-      recursive: z.boolean().optional().default(false).describe("Apply changes recursively (for fix)"),
-      // audit params
-      scope: z
-        .enum(["passwd", "shadow", "ssh", "cron", "critical", "all"])
-        .optional()
-        .default("all")
-        .describe("Scope of files to audit (for audit)"),
-      // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview changes (for fix)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── check ────────────────────────────────────────────────────
-        case "check": {
-          try {
-            if (!params.path) {
-              return { content: [createErrorContent("Error: 'path' is required for check action")], isError: true };
-            }
-
-            // TOOL-007: Validate path is within allowed directories
-            const validatedCheckPath = validatePathWithinAllowed(params.path);
-
-            const statResult = await executeCommand({
-              command: "stat",
-              args: ["-c", "%a %U %G %n", validatedCheckPath],
-              toolName: "harden_permissions",
-            });
-
-            const beforeState = statResult.stdout.trim();
-
-            const lsResult = await executeCommand({
-              command: "ls",
-              args: ["-la", validatedCheckPath],
-              toolName: "harden_permissions",
-            });
-
-            return {
-              content: [
-                createTextContent(
-                  `File permissions audit for: ${validatedCheckPath}\n\nstat: ${beforeState}\n\n${lsResult.stdout}`
-                ),
-              ],
-            };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(msg)], isError: true };
-          }
-        }
-
-        // ── fix ──────────────────────────────────────────────────────
-        case "fix": {
-          try {
-            if (!params.path) {
-              return { content: [createErrorContent("Error: 'path' is required for fix action")], isError: true };
-            }
-
-            // TOOL-007: Validate path is within allowed directories (before privilege check)
-            const validatedFixPath = validatePathWithinAllowed(params.path);
-            if (!params.mode && !params.owner && !params.group) {
-              return { content: [createErrorContent("Error: at least one of 'mode', 'owner', or 'group' is required for fix action")], isError: true };
-            }
-
-            // TOOL-019: Pre-execution privilege check for chmod/chown on system files
-            if (!(params.dry_run ?? getConfig().dryRun)) {
-              const privCheckFix = checkPrivileges();
-              if (!privCheckFix.ok) {
-                return { content: [createErrorContent(`Cannot change permissions: ${privCheckFix.message}`)], isError: true };
-              }
-            }
-
-            // Get current permissions
-            const statResult = await executeCommand({
-              command: "stat",
-              args: ["-c", "%a %U %G %n", validatedFixPath],
-              toolName: "harden_permissions",
-            });
-
-            const beforeState = statResult.stdout.trim();
-            const commands: string[] = [];
-
-            if (params.mode) {
-              sanitizeArgs([params.mode]);
-              const chmodArgs = params.recursive ? ["-R", params.mode, validatedFixPath] : [params.mode, validatedFixPath];
-              commands.push(`sudo chmod ${chmodArgs.join(" ")}`);
-            }
-
-            if (params.owner || params.group) {
-              const ownerGroup = `${params.owner ?? ""}${params.group ? `:${params.group}` : ""}`;
-              sanitizeArgs([ownerGroup]);
-              const chownArgs = params.recursive
-                ? ["-R", ownerGroup, validatedFixPath]
-                : [ownerGroup, validatedFixPath];
-              commands.push(`sudo chown ${chownArgs.join(" ")}`);
-            }
-
-            if (params.dry_run ?? getConfig().dryRun) {
-              const entry = createChangeEntry({
-                tool: "harden_permissions",
-                action: `[DRY-RUN] Change permissions`,
-                target: validatedFixPath,
-                before: beforeState,
-                dryRun: true,
-                success: true,
-              });
-              logChange(entry);
-
-              return {
-                content: [
-                  createTextContent(
-                    `[DRY-RUN] Current: ${beforeState}\n\nWould execute:\n${commands.map((c) => `  ${c}`).join("\n")}`
-                  ),
-                ],
-              };
-            }
-
-            // Execute chmod if needed
-            if (params.mode) {
-              const chmodArgs = params.recursive
-                ? ["chmod", "-R", params.mode, validatedFixPath]
-                : ["chmod", params.mode, validatedFixPath];
-              const chmodResult = await executeCommand({
-                command: "sudo",
-                args: chmodArgs,
-                toolName: "harden_permissions",
-                timeout: getToolTimeout("harden_permissions"),
-              });
-              if (chmodResult.exitCode !== 0) {
-                return {
-                  content: [
-                    createErrorContent(
-                      `chmod failed (exit ${chmodResult.exitCode}): ${chmodResult.stderr}`
-                    ),
-                  ],
-                  isError: true,
-                };
-              }
-            }
-
-            // Execute chown if needed
-            if (params.owner || params.group) {
-              const ownerGroup = `${params.owner ?? ""}${params.group ? `:${params.group}` : ""}`;
-              const chownArgs = params.recursive
-                ? ["chown", "-R", ownerGroup, validatedFixPath]
-                : ["chown", ownerGroup, validatedFixPath];
-              const chownResult = await executeCommand({
-                command: "sudo",
-                args: chownArgs,
-                toolName: "harden_permissions",
-                timeout: getToolTimeout("harden_permissions"),
-              });
-              if (chownResult.exitCode !== 0) {
-                return {
-                  content: [
-                    createErrorContent(
-                      `chown failed (exit ${chownResult.exitCode}): ${chownResult.stderr}`
-                    ),
-                  ],
-                  isError: true,
-                };
-              }
-            }
-
-            // Get after state
-            const afterStatResult = await executeCommand({
-              command: "stat",
-              args: ["-c", "%a %U %G %n", validatedFixPath],
-              toolName: "harden_permissions",
-            });
-            const afterState = afterStatResult.stdout.trim();
-
-            const entry = createChangeEntry({
-              tool: "harden_permissions",
-              action: `Change permissions`,
-              target: validatedFixPath,
-              before: beforeState,
-              after: afterState,
-              dryRun: false,
-              success: true,
-            });
-            logChange(entry);
-
-            return {
-              content: [
-                createTextContent(
-                  `Permissions updated for ${validatedFixPath}\nBefore: ${beforeState}\nAfter: ${afterState}\nCommands: ${commands.join("; ")}`
-                ),
-              ],
-            };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(msg)], isError: true };
-          }
-        }
-
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
-          try {
-            const scope = params.scope ?? "all";
-            const checks =
-              scope === "all"
-                ? PERMISSION_CHECKS
-                : PERMISSION_CHECKS.filter((c) => c.scope === scope);
-
-            const results: Array<{
-              path: string;
-              description: string;
-              expected: string;
-              actual: string;
-              compliant: boolean;
-              exists: boolean;
-            }> = [];
-
-            let compliantCount = 0;
-            let nonCompliantCount = 0;
-            let missingCount = 0;
-
-            for (const check of checks) {
-              const statResult = await executeCommand({
-                command: "stat",
-                args: ["-c", "%a %U %G", check.path],
-                toolName: "harden_permissions",
-              });
-
-              if (statResult.exitCode !== 0) {
-                missingCount++;
-                results.push({
-                  path: check.path,
-                  description: check.description,
-                  expected: `${check.expectedMode} ${check.expectedOwner}:${check.expectedGroup}`,
-                  actual: "FILE NOT FOUND",
-                  compliant: false,
-                  exists: false,
-                });
-                continue;
-              }
-
-              const parts = statResult.stdout.trim().split(" ");
-              const actualMode = parts[0] ?? "";
-              const actualOwner = parts[1] ?? "";
-              const actualGroup = parts[2] ?? "";
-
-              const modeOk = actualMode === check.expectedMode;
-              const ownerOk = actualOwner === check.expectedOwner;
-              const groupOk = actualGroup === check.expectedGroup;
-              const compliant = modeOk && ownerOk && groupOk;
-
-              if (compliant) {
-                compliantCount++;
-              } else {
-                nonCompliantCount++;
-              }
-
-              results.push({
-                path: check.path,
-                description: check.description,
-                expected: `${check.expectedMode} ${check.expectedOwner}:${check.expectedGroup}`,
-                actual: `${actualMode} ${actualOwner}:${actualGroup}`,
-                compliant,
-                exists: true,
-              });
-            }
-
-            const total = checks.length;
-            const output = {
-              scope,
-              summary: {
-                total,
-                compliant: compliantCount,
-                nonCompliant: nonCompliantCount,
-                missing: missingCount,
-                compliancePercent:
-                  total > 0
-                    ? Math.round((compliantCount / total) * 100)
-                    : 0,
-              },
-              results,
-            };
-
-            return { content: [formatToolOutput(output)] };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(msg)], isError: true };
-          }
-        }
-
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 4. harden_systemd (merged: harden_systemd_audit, harden_systemd_apply) ──
-
-  server.tool(
-    "harden_systemd",
-    "Audit or apply systemd service security hardening. Actions: audit=score security properties, apply=create hardening overrides",
-    {
-      action: z
-        .enum(["audit", "apply"])
-        .describe("Action: audit=security analysis, apply=create hardening overrides"),
-      // audit params
-      service: z.string().optional().describe("Service to audit/apply, e.g. 'sshd' or 'sshd.service'"),
-      threshold: z.number().optional().default(5).describe("Exposure score threshold 0-10 (for audit)"),
-      // apply params
-      hardening_level: z.enum(["basic", "strict"]).optional().describe("Preset hardening level (required for apply)"),
-      // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview changes (for apply)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
-          try {
-            if (params.service) {
-              const result = await executeCommand({
-                command: "systemd-analyze",
-                args: ["security", params.service],
-                timeout: 30000,
-                toolName: "harden_systemd",
-              });
-
-              const lines = (result.stdout + result.stderr).split("\n");
-              const exposureLine = lines.find(l => l.includes("EXPOSURE"));
-              let score = "unknown";
-              let rating = "unknown";
-              if (exposureLine) {
-                const match = exposureLine.match(/(\d+\.?\d*)\s+(OK|EXPOSED|MEDIUM|UNSAFE)/i);
-                if (match) { score = match[1]; rating = match[2]; }
-              }
-
-              const findings: Array<{property: string, status: string, description: string}> = [];
-              for (const line of lines) {
-                const checkMatch = line.match(/^[✓✗→◌]\s+(\S+)=?\s+(.*)/);
-                if (checkMatch && (line.startsWith("✗") || line.startsWith("→"))) {
-                  findings.push({
-                    property: checkMatch[1].replace(/=$/, ""),
-                    status: line.startsWith("✗") ? "FAIL" : "WARNING",
-                    description: checkMatch[2].trim(),
-                  });
-                }
-              }
-
-              return {
-                content: [createTextContent(JSON.stringify({
-                  service: params.service,
-                  exposureScore: parseFloat(score) || 0,
-                  rating,
-                  totalFindings: findings.length,
-                  findings: findings.slice(0, 50),
-                  rawExposureLine: exposureLine || "Not found",
-                }, null, 2))],
-              };
-            } else {
-              const result = await executeCommand({
-                command: "systemd-analyze",
-                args: ["security", "--no-pager"],
-                timeout: 60000,
-                toolName: "harden_systemd",
-              });
-
-              const lines = (result.stdout + result.stderr).split("\n").filter(l => l.trim());
-              const services: Array<{unit: string, exposure: number, rating: string, flagged: boolean}> = [];
-
-              for (const line of lines) {
-                const match = line.match(/^(\S+\.service)\s+(\d+\.?\d*)\s+(\S+)\s+/);
-                if (match) {
-                  const exposure = parseFloat(match[2]);
-                  services.push({
-                    unit: match[1],
-                    exposure,
-                    rating: match[3],
-                    flagged: exposure > params.threshold,
-                  });
-                }
-              }
-
-              services.sort((a, b) => b.exposure - a.exposure);
-              const flagged = services.filter(s => s.flagged);
-
-              return {
-                content: [createTextContent(JSON.stringify({
-                  summary: {
-                    totalServices: services.length,
-                    flaggedAboveThreshold: flagged.length,
-                    threshold: params.threshold,
-                    averageExposure: services.length > 0
-                      ? (services.reduce((sum, s) => sum + s.exposure, 0) / services.length).toFixed(1)
-                      : 0,
-                  },
-                  flaggedServices: flagged,
-                  allServices: services,
-                }, null, 2))],
-              };
-            }
-          } catch (error) {
-            return {
-              content: [createErrorContent(error instanceof Error ? error.message : String(error))],
-              isError: true,
-            };
-          }
-        }
-
-        // ── apply ────────────────────────────────────────────────────
-        case "apply": {
-          try {
-            if (!params.service) {
-              return { content: [createErrorContent("Error: 'service' is required for apply action")], isError: true };
-            }
-            if (!params.hardening_level) {
-              return { content: [createErrorContent("Error: 'hardening_level' is required for apply action")], isError: true };
-            }
-
-            const service = params.service;
-            const hardening_level = params.hardening_level;
-            const isDryRun = params.dry_run ?? getConfig().dryRun;
-
-            // Validate service name format
-            if (!/^[a-zA-Z0-9_-]+\.service$/.test(service)) {
-              return { content: [createErrorContent("Invalid service name. Must match format: name.service")], isError: true };
-            }
-
-            const basicDirectives = [
-              "ProtectSystem=full",
-              "ProtectHome=yes",
-              "PrivateTmp=yes",
-              "NoNewPrivileges=yes",
-            ];
-
-            const strictDirectives = [
-              "ProtectSystem=strict",
-              "ProtectHome=yes",
-              "PrivateTmp=yes",
-              "NoNewPrivileges=yes",
-              "ProtectKernelTunables=yes",
-              "ProtectKernelModules=yes",
-              "ProtectControlGroups=yes",
-              "RestrictSUIDSGID=yes",
-              "MemoryDenyWriteExecute=yes",
-            ];
-
-            const directives = hardening_level === "strict" ? strictDirectives : basicDirectives;
-            const overrideDir = `/etc/systemd/system/${service}.d`;
-            const overrideFile = `${overrideDir}/security.conf`;
-            const overrideContent = `[Service]\n${directives.join("\n")}`;
-
-            if (isDryRun) {
-              const entry = createChangeEntry({
-                tool: "harden_systemd",
-                action: `[DRY-RUN] Apply ${hardening_level} hardening to ${service}`,
-                target: service,
-                after: overrideContent,
-                dryRun: true,
-                success: true,
-              });
-              logChange(entry);
-
-              return {
-                content: [formatToolOutput({
-                  service,
-                  hardening_level,
-                  dryRun: true,
-                  overrideFile,
-                  content: overrideContent,
-                  directives,
-                })],
-              };
-            }
-
-            // Create override directory
-            await executeCommand({
-              command: "sudo",
-              args: ["mkdir", "-p", overrideDir],
-              toolName: "harden_systemd",
-            });
-
-            // Backup existing override if present
-            try { backupFile(overrideFile); } catch { /* may not exist */ }
-
-            // Write security.conf using sudo tee with stdin
-            const writeResult = await executeCommand({
-              command: "sudo",
-              args: ["tee", overrideFile],
-              stdin: overrideContent + "\n",
-              toolName: "harden_systemd",
-            });
-
-            if (writeResult.exitCode !== 0) {
-              return { content: [createErrorContent(`Failed to write override: ${writeResult.stderr}`)], isError: true };
-            }
-
-            // Reload systemd daemon to pick up changes
-            const reloadResult = await executeCommand({
-              command: "sudo",
-              args: ["systemctl", "daemon-reload"],
-              toolName: "harden_systemd",
-              timeout: 15000,
-            });
-
-            const entry = createChangeEntry({
-              tool: "harden_systemd",
-              action: `Apply ${hardening_level} hardening to ${service}`,
-              target: service,
-              after: overrideContent,
-              dryRun: false,
-              success: reloadResult.exitCode === 0,
-              error: reloadResult.exitCode !== 0 ? reloadResult.stderr : undefined,
-              rollbackCommand: `sudo rm ${overrideFile} && sudo systemctl daemon-reload`,
-            });
-            logChange(entry);
-
-            return {
-              content: [formatToolOutput({
-                service,
-                hardening_level,
-                dryRun: false,
-                overrideFile,
-                directives,
-                daemonReload: reloadResult.exitCode === 0 ? "success" : "failed",
-              })],
-            };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(msg)], isError: true };
-          }
-        }
-
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 5. harden_kernel (merged: harden_kernel_security_audit, harden_module_audit, harden_coredump_disable) ──
-
-  server.tool(
-    "harden_kernel",
-    "Kernel security hardening. Actions: audit=CPU vulns/LSM/lockdown/features, modules=audit kernel module blacklisting, coredump=disable core dumps",
-    {
-      action: z
-        .enum(["audit", "modules", "coredump"])
-        .describe("Action: audit=kernel security features, modules=module blacklist audit, coredump=disable core dumps"),
-      // audit params
-      check_type: z
-        .enum(["cpu_vulns", "lsm", "lockdown", "features", "all"])
-        .optional()
-        .default("all")
-        .describe("Type of kernel security check (for audit)"),
-      // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview changes (for coredump)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
+        // ── kernel_audit ──────────────────────────────────────────────
+        case "kernel_audit": {
           try {
             const findings: Array<{check: string, status: string, value: string, description: string}> = [];
             const checkType = params.check_type ?? "all";
@@ -1614,8 +825,8 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        // ── modules ──────────────────────────────────────────────────
-        case "modules": {
+        // ── kernel_modules ────────────────────────────────────────────
+        case "kernel_modules": {
           try {
             const MODULES_TO_DISABLE = [
               { name: "cramfs", description: "CramFS filesystem", cis: "1.1.1.1" },
@@ -1648,8 +859,8 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        // ── coredump ─────────────────────────────────────────────────
-        case "coredump": {
+        // ── kernel_coredump ───────────────────────────────────────────
+        case "kernel_coredump": {
           try {
             const isDryRun = params.dry_run ?? getConfig().dryRun;
             const actions: Array<{ target: string; action: string; status: string }> = [];
@@ -1738,39 +949,8 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 6. harden_bootloader (merged: harden_bootloader_audit, harden_bootloader_configure) ──
-
-  server.tool(
-    "harden_bootloader",
-    "Bootloader security. Actions: audit=check GRUB security config, configure=add kernel security parameters",
-    {
-      action: z
-        .enum(["audit", "configure"])
-        .describe("Action: audit=check GRUB security, configure=add kernel params"),
-      // configure params
-      configure_action: z
-        .enum(["add_kernel_params", "status"])
-        .optional()
-        .describe("Configure sub-action (required for configure)"),
-      kernel_params: z
-        .string()
-        .optional()
-        .describe("Space-separated kernel parameters to add (for configure action=add_kernel_params)"),
-      // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview changes (for configure)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
+        // ── bootloader_audit ──────────────────────────────────────────
+        case "bootloader_audit": {
           try {
             const findings: Array<{check: string, status: string, value: string, description: string}> = [];
 
@@ -1779,7 +959,7 @@ export function registerHardeningTools(server: McpServer): void {
               command: "sudo",
               args: ["grep", "-r", "password", "/etc/grub.d/", "/boot/grub/grub.cfg"],
               timeout: 10000,
-              toolName: "harden_bootloader",
+              toolName: "harden_kernel",
             });
             findings.push({
               check: "grub_password",
@@ -1793,7 +973,7 @@ export function registerHardeningTools(server: McpServer): void {
               command: "stat",
               args: ["-c", "%a %U:%G", "/boot/grub/grub.cfg"],
               timeout: 5000,
-              toolName: "harden_bootloader",
+              toolName: "harden_kernel",
             });
             const permsValue = grubPerms.stdout.trim();
             const permOk = permsValue.startsWith("400") || permsValue.startsWith("600");
@@ -1809,7 +989,7 @@ export function registerHardeningTools(server: McpServer): void {
               command: "cat",
               args: ["/proc/cmdline"],
               timeout: 5000,
-              toolName: "harden_bootloader",
+              toolName: "harden_kernel",
             });
             const cmd = cmdline.stdout.trim();
 
@@ -1849,7 +1029,7 @@ export function registerHardeningTools(server: McpServer): void {
               command: "mokutil",
               args: ["--sb-state"],
               timeout: 5000,
-              toolName: "harden_bootloader",
+              toolName: "harden_kernel",
             });
             const sbState = (secboot.stdout + secboot.stderr).trim();
             findings.push({
@@ -1883,11 +1063,11 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        // ── configure ────────────────────────────────────────────────
-        case "configure": {
+        // ── bootloader_configure ──────────────────────────────────────
+        case "bootloader_configure": {
           try {
             if (!params.configure_action) {
-              return { content: [createErrorContent("Error: 'configure_action' is required for configure (add_kernel_params or status)")], isError: true };
+              return { content: [createErrorContent("Error: 'configure_action' is required for bootloader_configure (add_kernel_params or status)")], isError: true };
             }
 
             const isDryRun = params.dry_run ?? getConfig().dryRun;
@@ -1903,7 +1083,7 @@ export function registerHardeningTools(server: McpServer): void {
               const readResult = await executeCommand({
                 command: "grep",
                 args: ["^GRUB_CMDLINE_LINUX_DEFAULT", grubFile],
-                toolName: "harden_bootloader",
+                toolName: "harden_kernel",
               });
 
               const currentLine = readResult.stdout.trim();
@@ -1958,7 +1138,7 @@ export function registerHardeningTools(server: McpServer): void {
             const readResult = await executeCommand({
               command: "grep",
               args: ["^GRUB_CMDLINE_LINUX_DEFAULT", grubFile],
-              toolName: "harden_bootloader",
+              toolName: "harden_kernel",
             });
 
             const currentLine = readResult.stdout.trim();
@@ -1982,7 +1162,7 @@ export function registerHardeningTools(server: McpServer): void {
 
             if (isDryRun) {
               const entry = createChangeEntry({
-                tool: "harden_bootloader",
+                tool: "harden_kernel",
                 action: "[DRY-RUN] Add kernel params",
                 target: grubFile,
                 before: currentLine,
@@ -2012,19 +1192,19 @@ export function registerHardeningTools(server: McpServer): void {
             await executeCommand({
               command: "sudo",
               args: ["sed", "-i", `s/${escapedCurrent}/${escapedNew}/`, grubFile],
-              toolName: "harden_bootloader",
+              toolName: "harden_kernel",
             });
 
             // Run update-grub to apply changes
             const updateResult = await executeCommand({
               command: "sudo",
               args: ["update-grub"],
-              toolName: "harden_bootloader",
+              toolName: "harden_kernel",
               timeout: 30000,
             });
 
             const entry = createChangeEntry({
-              tool: "harden_bootloader",
+              tool: "harden_kernel",
               action: "Add kernel params",
               target: grubFile,
               before: currentLine,
@@ -2051,336 +1231,8 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 7. harden_misc (merged: harden_cron_audit, harden_umask_audit, harden_umask_set, harden_banner_audit, harden_banner_set) ──
-
-  server.tool(
-    "harden_misc",
-    "Miscellaneous hardening. Actions: cron_audit=audit cron/at access, umask_audit=check umask config, umask_set=set umask, banner_audit=check login banners, banner_set=set login banners",
-    {
-      action: z
-        .enum(["cron_audit", "umask_audit", "umask_set", "banner_audit", "banner_set"])
-        .describe("Action to perform"),
-      // umask_set params
-      umask_value: z.enum(["027", "077"]).optional().describe("Umask value (required for umask_set)"),
-      targets: z
-        .array(z.enum(["login.defs", "profile", "bashrc"]))
-        .optional()
-        .describe("Files to update for umask_set (default: all)"),
-      // banner_set params
-      banner_text: z.string().optional().describe("Custom banner text (for banner_set; uses CIS default if omitted)"),
-      banner_targets: z
-        .array(z.enum(["issue", "issue.net", "motd"]))
-        .optional()
-        .describe("Banner files to update (for banner_set; default: all)"),
-      // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview changes (for umask_set/banner_set)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── cron_audit ───────────────────────────────────────────────
-        case "cron_audit": {
-          try {
-            const findings: Array<{check: string, status: string, value: string, description: string}> = [];
-
-            const cronDeny = await executeCommand({ command: "ls", args: ["-la", "/etc/cron.deny"], timeout: 5000, toolName: "harden_misc" });
-            const cronAllow = await executeCommand({ command: "ls", args: ["-la", "/etc/cron.allow"], timeout: 5000, toolName: "harden_misc" });
-            findings.push({ check: "cron_deny", status: cronDeny.exitCode !== 0 ? "PASS" : "WARN", value: cronDeny.exitCode === 0 ? "exists" : "not present", description: "CIS: /etc/cron.deny should not exist (use cron.allow instead)" });
-            findings.push({ check: "cron_allow", status: cronAllow.exitCode === 0 ? "PASS" : "WARN", value: cronAllow.exitCode === 0 ? "exists" : "not present", description: "CIS: /etc/cron.allow should exist to restrict cron access" });
-
-            if (cronAllow.exitCode === 0) {
-              const permsResult = await executeCommand({ command: "stat", args: ["-c", "%a %U:%G", "/etc/cron.allow"], timeout: 5000, toolName: "harden_misc" });
-              findings.push({ check: "cron_allow_perms", status: permsResult.stdout.trim().startsWith("600") ? "PASS" : "WARN", value: permsResult.stdout.trim(), description: "cron.allow permissions (should be 600 root:root)" });
-            }
-
-            const atDeny = await executeCommand({ command: "ls", args: ["-la", "/etc/at.deny"], timeout: 5000, toolName: "harden_misc" });
-            const atAllow = await executeCommand({ command: "ls", args: ["-la", "/etc/at.allow"], timeout: 5000, toolName: "harden_misc" });
-            findings.push({ check: "at_deny", status: atDeny.exitCode !== 0 ? "PASS" : "WARN", value: atDeny.exitCode === 0 ? "exists" : "not present", description: "CIS: /etc/at.deny should not exist" });
-            findings.push({ check: "at_allow", status: atAllow.exitCode === 0 ? "PASS" : "WARN", value: atAllow.exitCode === 0 ? "exists" : "not present", description: "CIS: /etc/at.allow should exist" });
-
-            const cronDirs = ["/etc/crontab", "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly", "/etc/cron.d"];
-            for (const dir of cronDirs) {
-              const perms = await executeCommand({ command: "stat", args: ["-c", "%a %U:%G", dir], timeout: 5000, toolName: "harden_misc" });
-              if (perms.exitCode === 0) {
-                const perm = perms.stdout.trim().split(" ")[0];
-                const isFile = dir === "/etc/crontab";
-                const expected = isFile ? "600" : "700";
-                findings.push({ check: `perms_${dir.replace(/\//g, "_")}`, status: perm === expected ? "PASS" : "WARN", value: perms.stdout.trim(), description: `${dir} permissions (should be ${expected} root:root)` });
-              }
-            }
-
-            const passCount = findings.filter(f => f.status === "PASS").length;
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
-          } catch (error) {
-            return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
-          }
-        }
-
-        // ── umask_audit ──────────────────────────────────────────────
-        case "umask_audit": {
-          try {
-            const findings: Array<{check: string, status: string, value: string, description: string}> = [];
-            const files = [
-              { path: "/etc/login.defs", pattern: "UMASK" },
-              { path: "/etc/profile", pattern: "umask" },
-              { path: "/etc/bash.bashrc", pattern: "umask" },
-              { path: "/etc/profile.d/", pattern: "umask" },
-            ];
-
-            for (const file of files) {
-              if (file.path.endsWith("/")) {
-                const grepResult = await executeCommand({ command: "grep", args: ["-r", file.pattern, file.path], timeout: 5000, toolName: "harden_misc" });
-                findings.push({ check: `umask_${file.path.replace(/\//g, "_")}`, status: grepResult.stdout.includes("027") || grepResult.stdout.includes("077") ? "PASS" : "WARN", value: grepResult.stdout.trim().substring(0, 200) || "not set", description: `umask in ${file.path} (should be 027 or more restrictive)` });
-              } else {
-                const grepResult = await executeCommand({ command: "grep", args: ["-i", file.pattern, file.path], timeout: 5000, toolName: "harden_misc" });
-                const lines = grepResult.stdout.split("\n").filter((l: string) => !l.trim().startsWith("#") && l.includes("mask"));
-                const hasSecure = lines.some((l: string) => l.includes("027") || l.includes("077"));
-                findings.push({ check: `umask_${file.path.replace(/\//g, "_")}`, status: hasSecure ? "PASS" : "WARN", value: lines.join("; ").substring(0, 200) || "not explicitly set", description: `umask in ${file.path} (should be 027 or 077)` });
-              }
-            }
-
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, warn: findings.filter(f => f.status === "WARN").length }, findings, recommendation: "Set umask 027 in /etc/profile and /etc/login.defs for CIS compliance" }, null, 2))] };
-          } catch (error) {
-            return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
-          }
-        }
-
-        // ── umask_set ────────────────────────────────────────────────
-        case "umask_set": {
-          try {
-            if (!params.umask_value) {
-              return { content: [createErrorContent("Error: 'umask_value' is required for umask_set action")], isError: true };
-            }
-
-            const umask_value = params.umask_value;
-            const allTargets = params.targets ?? ["login.defs", "profile", "bashrc"];
-            const results: Array<{ target: string; action: string; status: string }> = [];
-            const isDryRun = params.dry_run ?? getConfig().dryRun;
-
-            const targetMap: Record<string, string> = {
-              "login.defs": "/etc/login.defs",
-              "profile": "/etc/profile",
-              "bashrc": "/etc/bash.bashrc",
-            };
-
-            for (const target of allTargets) {
-              const filePath = targetMap[target];
-              if (!filePath) continue;
-
-              if (isDryRun) {
-                results.push({ target: filePath, action: `[DRY-RUN] Would set umask to ${umask_value}`, status: "preview" });
-                continue;
-              }
-
-              try { backupFile(filePath); } catch { /* file may not exist */ }
-
-              if (target === "login.defs") {
-                const grepResult = await executeCommand({
-                  command: "grep",
-                  args: ["-c", "^UMASK", filePath],
-                  toolName: "harden_misc",
-                });
-                if (parseInt(grepResult.stdout.trim()) > 0) {
-                  await executeCommand({
-                    command: "sudo",
-                    args: ["sed", "-i", `s/^UMASK.*/UMASK\t\t${umask_value}/`, filePath],
-                    toolName: "harden_misc",
-                  });
-                  results.push({ target: filePath, action: `Updated UMASK to ${umask_value}`, status: "updated" });
-                } else {
-                  await executeCommand({
-                    command: "sudo",
-                    args: ["tee", "-a", filePath],
-                    stdin: `UMASK\t\t${umask_value}\n`,
-                    toolName: "harden_misc",
-                  });
-                  results.push({ target: filePath, action: `Appended UMASK ${umask_value}`, status: "appended" });
-                }
-              } else {
-                const grepResult = await executeCommand({
-                  command: "grep",
-                  args: ["-c", "^umask [0-9]", filePath],
-                  toolName: "harden_misc",
-                });
-                if (parseInt(grepResult.stdout.trim()) > 0) {
-                  await executeCommand({
-                    command: "sudo",
-                    args: ["sed", "-i", `s/^umask [0-9]*/umask ${umask_value}/`, filePath],
-                    toolName: "harden_misc",
-                  });
-                  results.push({ target: filePath, action: `Updated umask to ${umask_value}`, status: "updated" });
-                } else {
-                  await executeCommand({
-                    command: "sudo",
-                    args: ["tee", "-a", filePath],
-                    stdin: `umask ${umask_value}\n`,
-                    toolName: "harden_misc",
-                  });
-                  results.push({ target: filePath, action: `Appended umask ${umask_value}`, status: "appended" });
-                }
-              }
-
-              const entry = createChangeEntry({
-                tool: "harden_misc",
-                action: `Set umask ${umask_value} in ${filePath}`,
-                target: filePath,
-                dryRun: false,
-                success: true,
-              });
-              logChange(entry);
-            }
-
-            if (isDryRun) {
-              const entry = createChangeEntry({
-                tool: "harden_misc",
-                action: `[DRY-RUN] Set umask ${umask_value}`,
-                target: allTargets.join(", "),
-                dryRun: true,
-                success: true,
-              });
-              logChange(entry);
-            }
-
-            return { content: [formatToolOutput({ umask_value, results, dryRun: isDryRun })] };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(msg)], isError: true };
-          }
-        }
-
-        // ── banner_audit ─────────────────────────────────────────────
-        case "banner_audit": {
-          try {
-            const findings: Array<{check: string, status: string, value: string, description: string}> = [];
-            const bannerFiles = [
-              { path: "/etc/issue", description: "Local login banner" },
-              { path: "/etc/issue.net", description: "Remote login banner" },
-              { path: "/etc/motd", description: "Message of the day" },
-            ];
-
-            for (const banner of bannerFiles) {
-              const result = await executeCommand({ command: "cat", args: [banner.path], timeout: 5000, toolName: "harden_misc" });
-              const content = result.stdout.trim();
-              const hasContent = content.length > 10;
-              const hasOsInfo = /\\[mrsv]/.test(content);
-              findings.push({ check: `${banner.path.replace(/\//g, "_")}_exists`, status: hasContent ? "PASS" : "WARN", value: hasContent ? `${content.length} chars` : "empty or missing", description: `${banner.description} should contain a warning` });
-              if (hasContent) {
-                findings.push({ check: `${banner.path.replace(/\//g, "_")}_no_os_info`, status: hasOsInfo ? "FAIL" : "PASS", value: hasOsInfo ? "contains OS info" : "clean", description: `${banner.description} should NOT contain OS version info (\\m, \\r, \\s, \\v)` });
-              }
-              const perms = await executeCommand({ command: "stat", args: ["-c", "%a %U:%G", banner.path], timeout: 5000, toolName: "harden_misc" });
-              if (perms.exitCode === 0) {
-                findings.push({ check: `${banner.path.replace(/\//g, "_")}_perms`, status: perms.stdout.trim().startsWith("644") ? "PASS" : "WARN", value: perms.stdout.trim(), description: `${banner.description} permissions (should be 644 root:root)` });
-              }
-            }
-
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
-          } catch (error) {
-            return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
-          }
-        }
-
-        // ── banner_set ───────────────────────────────────────────────
-        case "banner_set": {
-          try {
-            const isDryRun = params.dry_run ?? getConfig().dryRun;
-            const allTargets = params.banner_targets ?? ["issue", "issue.net", "motd"];
-
-            const defaultBanner = "Authorized uses only. All activity may be monitored and reported.";
-            const text = params.banner_text ?? defaultBanner;
-
-            if (text.length > 2000) {
-              return { content: [createErrorContent("Banner text exceeds maximum length of 2000 characters")], isError: true };
-            }
-            if (!/^[\x20-\x7E\n\r\t]*$/.test(text)) {
-              return { content: [createErrorContent("Banner text contains invalid characters. Only printable ASCII, newlines, and common punctuation are allowed.")], isError: true };
-            }
-
-            const results: Array<{ target: string; action: string; status: string }> = [];
-
-            for (const target of allTargets) {
-              const filePath = `/etc/${target}`;
-
-              if (isDryRun) {
-                results.push({ target: filePath, action: `[DRY-RUN] Would write banner text (${text.length} chars)`, status: "preview" });
-                continue;
-              }
-
-              try { backupFile(filePath); } catch { /* may not exist */ }
-
-              const writeResult = await executeCommand({
-                command: "sudo",
-                args: ["tee", filePath],
-                stdin: text + "\n",
-                toolName: "harden_misc",
-              });
-
-              if (writeResult.exitCode === 0) {
-                results.push({ target: filePath, action: `Written banner (${text.length} chars)`, status: "applied" });
-                const entry = createChangeEntry({
-                  tool: "harden_misc",
-                  action: `Set login banner`,
-                  target: filePath,
-                  after: text.substring(0, 100),
-                  dryRun: false,
-                  success: true,
-                });
-                logChange(entry);
-              } else {
-                results.push({ target: filePath, action: `Failed: ${writeResult.stderr}`, status: "error" });
-              }
-            }
-
-            if (isDryRun) {
-              const entry = createChangeEntry({
-                tool: "harden_misc",
-                action: "[DRY-RUN] Set login banners",
-                target: allTargets.join(", "),
-                dryRun: true,
-                success: true,
-              });
-              logChange(entry);
-            }
-
-            return { content: [formatToolOutput({ targets: allTargets, bannerLength: text.length, results, dryRun: isDryRun })] };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(msg)], isError: true };
-          }
-        }
-
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 8. memory_protection (merged: audit_memory_protections, enforce_aslr, report_exploit_mitigations) ──
-
-  server.tool(
-    "harden_memory",
-    "Memory and exploit mitigations. Actions: audit=check ASLR/PIE/RELRO/NX/canary on binaries, enforce_aslr=enable full ASLR, report=system-wide mitigation status",
-    {
-      action: z
-        .enum(["audit", "enforce_aslr", "report"])
-        .describe("Action: audit=binary protections, enforce_aslr=enable ASLR, report=system mitigations"),
-      // audit params
-      binaries: z.array(z.string()).optional().describe("Binary paths to check (for audit)"),
-      // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview only (for enforce_aslr)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── audit ────────────────────────────────────────────────────
-        case "audit": {
+        // ── memory_audit ──────────────────────────────────────────────
+        case "memory_audit": {
           try {
             const findings: Record<string, unknown>[] = [];
 
@@ -2471,10 +1323,10 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        // ── enforce_aslr ─────────────────────────────────────────────
-        case "enforce_aslr": {
+        // ── memory_enforce_aslr ───────────────────────────────────────
+        case "memory_enforce_aslr": {
           try {
-            const safety = await SafeguardRegistry.getInstance().checkSafety("harden_memory", {});
+            const safety = await SafeguardRegistry.getInstance().checkSafety("harden_kernel", {});
 
             let currentValue = "unknown";
             try {
@@ -2503,7 +1355,7 @@ export function registerHardeningTools(server: McpServer): void {
             });
 
             const entry = createChangeEntry({
-              tool: "harden_memory",
+              tool: "harden_kernel",
               action: "Set ASLR to full (2)",
               target: "kernel.randomize_va_space",
               before: currentValue,
@@ -2529,8 +1381,8 @@ export function registerHardeningTools(server: McpServer): void {
           }
         }
 
-        // ── report ───────────────────────────────────────────────────
-        case "report": {
+        // ── memory_report ─────────────────────────────────────────────
+        case "memory_report": {
           try {
             const mitigations: Record<string, string> = {};
 
@@ -2594,19 +1446,59 @@ export function registerHardeningTools(server: McpServer): void {
     }
   );
 
-  // ── 9. usb_device_control ────────────────────────────────────────────────
+  // ── Tool 2: harden_host ───────────────────────────────────────────────────
+  // Merges: harden_service, harden_permissions, harden_systemd, harden_misc, usb_device_control
 
   server.tool(
-    "usb_device_control",
-    "USB device security control. Actions: audit_devices=audit connected USB devices, block_storage=block USB mass storage, whitelist=manage USB device whitelist, monitor=check recent USB events",
+    "harden_host",
+    "Host hardening. Actions: service_manage/service_audit=service control, permissions_check/permissions_fix/permissions_audit=file permissions, systemd_audit/systemd_apply=systemd hardening, cron_audit/umask_audit/umask_set/banner_audit/banner_set=misc hardening, usb_audit_devices/usb_block_storage/usb_whitelist/usb_monitor=USB control",
     {
       action: z
-        .enum(["audit_devices", "block_storage", "whitelist", "monitor"])
-        .describe("Action: audit_devices=list/audit USB, block_storage=block USB storage, whitelist=manage allowed devices, monitor=check USB events"),
+        .enum([
+          "service_manage", "service_audit",
+          "permissions_check", "permissions_fix", "permissions_audit",
+          "systemd_audit", "systemd_apply",
+          "cron_audit", "umask_audit", "umask_set", "banner_audit", "banner_set",
+          "usb_audit_devices", "usb_block_storage", "usb_whitelist", "usb_monitor",
+        ])
+        .describe("Action to perform"),
+      // service params
+      service: z.string().optional().describe("Service name, e.g. 'ssh.service'"),
+      service_action: z
+        .enum(["enable", "disable", "stop", "start", "restart", "mask", "unmask", "status"])
+        .optional()
+        .describe("Service action (required for service_manage)"),
+      show_all: z.boolean().optional().default(false).describe("Show all running services, not just flagged (for service_audit)"),
+      // permissions params
+      path: z.string().optional().describe("File or directory path (required for permissions_check/permissions_fix)"),
+      mode: z.string().optional().describe("Desired octal permissions, e.g. '600' (for permissions_fix)"),
+      owner: z.string().optional().describe("Desired owner, e.g. 'root' (for permissions_fix)"),
+      group: z.string().optional().describe("Desired group, e.g. 'root' (for permissions_fix)"),
+      recursive: z.boolean().optional().default(false).describe("Apply changes recursively (for permissions_fix)"),
+      scope: z
+        .enum(["passwd", "shadow", "ssh", "cron", "critical", "all"])
+        .optional()
+        .default("all")
+        .describe("Scope of files to audit (for permissions_audit)"),
+      // systemd params
+      threshold: z.number().optional().default(5).describe("Exposure score threshold 0-10 (for systemd_audit)"),
+      hardening_level: z.enum(["basic", "strict"]).optional().describe("Preset hardening level (required for systemd_apply)"),
+      // misc params
+      umask_value: z.enum(["027", "077"]).optional().describe("Umask value (required for umask_set)"),
+      targets: z
+        .array(z.enum(["login.defs", "profile", "bashrc"]))
+        .optional()
+        .describe("Files to update for umask_set (default: all)"),
+      banner_text: z.string().optional().describe("Custom banner text (for banner_set; uses CIS default if omitted)"),
+      banner_targets: z
+        .array(z.enum(["issue", "issue.net", "motd"]))
+        .optional()
+        .describe("Banner files to update (for banner_set; default: all)"),
+      // usb params
       device_id: z
         .string()
         .optional()
-        .describe("USB device ID in vendor:product format (for whitelist action)"),
+        .describe("USB device ID in vendor:product format (for usb_whitelist action)"),
       block_method: z
         .enum(["modprobe", "udev"])
         .optional()
@@ -2617,14 +1509,976 @@ export function registerHardeningTools(server: McpServer): void {
         .optional()
         .default("text")
         .describe("Output format (default text)"),
+      // shared
+      dry_run: z.boolean().optional().default(true).describe("Preview changes"),
     },
     async (params) => {
       const { action } = params;
-      const outputFormat = params.output_format ?? "text";
 
       switch (action) {
-        // ── audit_devices ────────────────────────────────────────────
-        case "audit_devices": {
+        // ── service_manage ────────────────────────────────────────────
+        case "service_manage": {
+          try {
+            if (!params.service) {
+              return { content: [createErrorContent("Error: 'service' is required for service_manage action")], isError: true };
+            }
+            if (!params.service_action) {
+              return { content: [createErrorContent("Error: 'service_action' is required for service_manage action")], isError: true };
+            }
+
+            const validatedService = validateServiceName(params.service);
+            const svcAction = params.service_action;
+            const fullCmd = `sudo systemctl ${svcAction} ${validatedService}`;
+
+            // Status is always read-only, skip dry_run check
+            if (svcAction === "status") {
+              const result = await executeCommand({
+                command: "systemctl",
+                args: ["status", validatedService],
+                toolName: "harden_host",
+                timeout: getToolTimeout("harden_host"),
+              });
+
+              return {
+                content: [
+                  createTextContent(
+                    `Service: ${validatedService}\n\n${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`
+                  ),
+                ],
+              };
+            }
+
+            // Determine rollback action
+            const rollbackActions: Record<string, string> = {
+              enable: "disable",
+              disable: "enable",
+              stop: "start",
+              start: "stop",
+              restart: "restart",
+              mask: "unmask",
+              unmask: "mask",
+            };
+            const rollbackCmd = `sudo systemctl ${rollbackActions[svcAction]} ${validatedService}`;
+
+            if (params.dry_run ?? getConfig().dryRun) {
+              const entry = createChangeEntry({
+                tool: "harden_host",
+                action: `[DRY-RUN] ${svcAction} service`,
+                target: validatedService,
+                dryRun: true,
+                success: true,
+                rollbackCommand: rollbackCmd,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `[DRY-RUN] Would execute:\n  ${fullCmd}\n\nRollback:\n  ${rollbackCmd}`
+                  ),
+                ],
+              };
+            }
+
+            // Get before state
+            const beforeResult = await executeCommand({
+              command: "systemctl",
+              args: ["is-active", validatedService],
+              toolName: "harden_host",
+            });
+            const beforeState = beforeResult.stdout.trim();
+
+            const result = await executeCommand({
+              command: "sudo",
+              args: ["systemctl", svcAction, validatedService],
+              toolName: "harden_host",
+              timeout: getToolTimeout("harden_host"),
+            });
+
+            const success = result.exitCode === 0;
+
+            // Get after state
+            const afterResult = await executeCommand({
+              command: "systemctl",
+              args: ["is-active", validatedService],
+              toolName: "harden_host",
+            });
+            const afterState = afterResult.stdout.trim();
+
+            const entry = createChangeEntry({
+              tool: "harden_host",
+              action: `${svcAction} service`,
+              target: validatedService,
+              before: beforeState,
+              after: afterState,
+              dryRun: false,
+              success,
+              error: success ? undefined : result.stderr,
+              rollbackCommand: rollbackCmd,
+            });
+            logChange(entry);
+
+            if (!success) {
+              return {
+                content: [
+                  createErrorContent(
+                    `systemctl ${svcAction} failed (exit ${result.exitCode}): ${result.stderr}`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            return {
+              content: [
+                createTextContent(
+                  `Service ${validatedService}: ${svcAction} completed.\nBefore: ${beforeState}\nAfter: ${afterState}\nRollback: ${rollbackCmd}\n\n${result.stdout}`
+                ),
+              ],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── service_audit ─────────────────────────────────────────────
+        case "service_audit": {
+          try {
+            const result = await executeCommand({
+              command: "systemctl",
+              args: [
+                "list-units",
+                "--type=service",
+                "--state=running",
+                "--no-pager",
+                "--no-legend",
+              ],
+              toolName: "harden_host",
+              timeout: getToolTimeout("harden_host"),
+            });
+
+            if (result.exitCode !== 0) {
+              return {
+                content: [
+                  createErrorContent(
+                    `systemctl list-units failed (exit ${result.exitCode}): ${result.stderr}`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const units = parseSystemctlOutput(result.stdout);
+            const runningServices = units.map((u) => u.unit);
+
+            const flagged: Array<{
+              service: string;
+              reason: string;
+              running: boolean;
+            }> = [];
+
+            for (const check of UNNECESSARY_SERVICES) {
+              const isRunning = runningServices.some(
+                (s) =>
+                  s === check.name ||
+                  s.startsWith(check.name.replace(".service", "").replace(".socket", ""))
+              );
+              if (isRunning) {
+                flagged.push({
+                  service: check.name,
+                  reason: check.reason,
+                  running: true,
+                });
+              }
+            }
+
+            const output: Record<string, unknown> = {
+              totalRunning: runningServices.length,
+              flaggedCount: flagged.length,
+              flaggedServices: flagged,
+            };
+
+            if (params.show_all) {
+              output.allRunningServices = units;
+            }
+
+            if (flagged.length === 0) {
+              output.assessment =
+                "No known unnecessary or dangerous services detected running.";
+            } else {
+              output.assessment = `Found ${flagged.length} potentially unnecessary service(s). Review and consider disabling with harden_service action=manage.`;
+            }
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── permissions_check ─────────────────────────────────────────
+        case "permissions_check": {
+          try {
+            if (!params.path) {
+              return { content: [createErrorContent("Error: 'path' is required for permissions_check action")], isError: true };
+            }
+
+            // TOOL-007: Validate path is within allowed directories
+            const validatedCheckPath = validatePathWithinAllowed(params.path);
+
+            const statResult = await executeCommand({
+              command: "stat",
+              args: ["-c", "%a %U %G %n", validatedCheckPath],
+              toolName: "harden_host",
+            });
+
+            const beforeState = statResult.stdout.trim();
+
+            const lsResult = await executeCommand({
+              command: "ls",
+              args: ["-la", validatedCheckPath],
+              toolName: "harden_host",
+            });
+
+            return {
+              content: [
+                createTextContent(
+                  `File permissions audit for: ${validatedCheckPath}\n\nstat: ${beforeState}\n\n${lsResult.stdout}`
+                ),
+              ],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── permissions_fix ───────────────────────────────────────────
+        case "permissions_fix": {
+          try {
+            if (!params.path) {
+              return { content: [createErrorContent("Error: 'path' is required for permissions_fix action")], isError: true };
+            }
+
+            // TOOL-007: Validate path is within allowed directories (before privilege check)
+            const validatedFixPath = validatePathWithinAllowed(params.path);
+            if (!params.mode && !params.owner && !params.group) {
+              return { content: [createErrorContent("Error: at least one of 'mode', 'owner', or 'group' is required for permissions_fix action")], isError: true };
+            }
+
+            // TOOL-019: Pre-execution privilege check for chmod/chown on system files
+            if (!(params.dry_run ?? getConfig().dryRun)) {
+              const privCheckFix = checkPrivileges();
+              if (!privCheckFix.ok) {
+                return { content: [createErrorContent(`Cannot change permissions: ${privCheckFix.message}`)], isError: true };
+              }
+            }
+
+            // Get current permissions
+            const statResult = await executeCommand({
+              command: "stat",
+              args: ["-c", "%a %U %G %n", validatedFixPath],
+              toolName: "harden_host",
+            });
+
+            const beforeState = statResult.stdout.trim();
+            const commands: string[] = [];
+
+            if (params.mode) {
+              sanitizeArgs([params.mode]);
+              const chmodArgs = params.recursive ? ["-R", params.mode, validatedFixPath] : [params.mode, validatedFixPath];
+              commands.push(`sudo chmod ${chmodArgs.join(" ")}`);
+            }
+
+            if (params.owner || params.group) {
+              const ownerGroup = `${params.owner ?? ""}${params.group ? `:${params.group}` : ""}`;
+              sanitizeArgs([ownerGroup]);
+              const chownArgs = params.recursive
+                ? ["-R", ownerGroup, validatedFixPath]
+                : [ownerGroup, validatedFixPath];
+              commands.push(`sudo chown ${chownArgs.join(" ")}`);
+            }
+
+            if (params.dry_run ?? getConfig().dryRun) {
+              const entry = createChangeEntry({
+                tool: "harden_host",
+                action: `[DRY-RUN] Change permissions`,
+                target: validatedFixPath,
+                before: beforeState,
+                dryRun: true,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `[DRY-RUN] Current: ${beforeState}\n\nWould execute:\n${commands.map((c) => `  ${c}`).join("\n")}`
+                  ),
+                ],
+              };
+            }
+
+            // Execute chmod if needed
+            if (params.mode) {
+              const chmodArgs = params.recursive
+                ? ["chmod", "-R", params.mode, validatedFixPath]
+                : ["chmod", params.mode, validatedFixPath];
+              const chmodResult = await executeCommand({
+                command: "sudo",
+                args: chmodArgs,
+                toolName: "harden_host",
+                timeout: getToolTimeout("harden_host"),
+              });
+              if (chmodResult.exitCode !== 0) {
+                return {
+                  content: [
+                    createErrorContent(
+                      `chmod failed (exit ${chmodResult.exitCode}): ${chmodResult.stderr}`
+                    ),
+                  ],
+                  isError: true,
+                };
+              }
+            }
+
+            // Execute chown if needed
+            if (params.owner || params.group) {
+              const ownerGroup = `${params.owner ?? ""}${params.group ? `:${params.group}` : ""}`;
+              const chownArgs = params.recursive
+                ? ["chown", "-R", ownerGroup, validatedFixPath]
+                : ["chown", ownerGroup, validatedFixPath];
+              const chownResult = await executeCommand({
+                command: "sudo",
+                args: chownArgs,
+                toolName: "harden_host",
+                timeout: getToolTimeout("harden_host"),
+              });
+              if (chownResult.exitCode !== 0) {
+                return {
+                  content: [
+                    createErrorContent(
+                      `chown failed (exit ${chownResult.exitCode}): ${chownResult.stderr}`
+                    ),
+                  ],
+                  isError: true,
+                };
+              }
+            }
+
+            // Get after state
+            const afterStatResult = await executeCommand({
+              command: "stat",
+              args: ["-c", "%a %U %G %n", validatedFixPath],
+              toolName: "harden_host",
+            });
+            const afterState = afterStatResult.stdout.trim();
+
+            const entry = createChangeEntry({
+              tool: "harden_host",
+              action: `Change permissions`,
+              target: validatedFixPath,
+              before: beforeState,
+              after: afterState,
+              dryRun: false,
+              success: true,
+            });
+            logChange(entry);
+
+            return {
+              content: [
+                createTextContent(
+                  `Permissions updated for ${validatedFixPath}\nBefore: ${beforeState}\nAfter: ${afterState}\nCommands: ${commands.join("; ")}`
+                ),
+              ],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── permissions_audit ─────────────────────────────────────────
+        case "permissions_audit": {
+          try {
+            const scope = params.scope ?? "all";
+            const checks =
+              scope === "all"
+                ? PERMISSION_CHECKS
+                : PERMISSION_CHECKS.filter((c) => c.scope === scope);
+
+            const results: Array<{
+              path: string;
+              description: string;
+              expected: string;
+              actual: string;
+              compliant: boolean;
+              exists: boolean;
+            }> = [];
+
+            let compliantCount = 0;
+            let nonCompliantCount = 0;
+            let missingCount = 0;
+
+            for (const check of checks) {
+              const statResult = await executeCommand({
+                command: "stat",
+                args: ["-c", "%a %U %G", check.path],
+                toolName: "harden_host",
+              });
+
+              if (statResult.exitCode !== 0) {
+                missingCount++;
+                results.push({
+                  path: check.path,
+                  description: check.description,
+                  expected: `${check.expectedMode} ${check.expectedOwner}:${check.expectedGroup}`,
+                  actual: "FILE NOT FOUND",
+                  compliant: false,
+                  exists: false,
+                });
+                continue;
+              }
+
+              const parts = statResult.stdout.trim().split(" ");
+              const actualMode = parts[0] ?? "";
+              const actualOwner = parts[1] ?? "";
+              const actualGroup = parts[2] ?? "";
+
+              const modeOk = actualMode === check.expectedMode;
+              const ownerOk = actualOwner === check.expectedOwner;
+              const groupOk = actualGroup === check.expectedGroup;
+              const compliant = modeOk && ownerOk && groupOk;
+
+              if (compliant) {
+                compliantCount++;
+              } else {
+                nonCompliantCount++;
+              }
+
+              results.push({
+                path: check.path,
+                description: check.description,
+                expected: `${check.expectedMode} ${check.expectedOwner}:${check.expectedGroup}`,
+                actual: `${actualMode} ${actualOwner}:${actualGroup}`,
+                compliant,
+                exists: true,
+              });
+            }
+
+            const total = checks.length;
+            const output = {
+              scope,
+              summary: {
+                total,
+                compliant: compliantCount,
+                nonCompliant: nonCompliantCount,
+                missing: missingCount,
+                compliancePercent:
+                  total > 0
+                    ? Math.round((compliantCount / total) * 100)
+                    : 0,
+              },
+              results,
+            };
+
+            return { content: [formatToolOutput(output)] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── systemd_audit ─────────────────────────────────────────────
+        case "systemd_audit": {
+          try {
+            if (params.service) {
+              const result = await executeCommand({
+                command: "systemd-analyze",
+                args: ["security", params.service],
+                timeout: 30000,
+                toolName: "harden_host",
+              });
+
+              const lines = (result.stdout + result.stderr).split("\n");
+              const exposureLine = lines.find(l => l.includes("EXPOSURE"));
+              let score = "unknown";
+              let rating = "unknown";
+              if (exposureLine) {
+                const match = exposureLine.match(/(\d+\.?\d*)\s+(OK|EXPOSED|MEDIUM|UNSAFE)/i);
+                if (match) { score = match[1]; rating = match[2]; }
+              }
+
+              const findings: Array<{property: string, status: string, description: string}> = [];
+              for (const line of lines) {
+                const checkMatch = line.match(/^[✓✗→◌]\s+(\S+)=?\s+(.*)/);
+                if (checkMatch && (line.startsWith("✗") || line.startsWith("→"))) {
+                  findings.push({
+                    property: checkMatch[1].replace(/=$/, ""),
+                    status: line.startsWith("✗") ? "FAIL" : "WARNING",
+                    description: checkMatch[2].trim(),
+                  });
+                }
+              }
+
+              return {
+                content: [createTextContent(JSON.stringify({
+                  service: params.service,
+                  exposureScore: parseFloat(score) || 0,
+                  rating,
+                  totalFindings: findings.length,
+                  findings: findings.slice(0, 50),
+                  rawExposureLine: exposureLine || "Not found",
+                }, null, 2))],
+              };
+            } else {
+              const result = await executeCommand({
+                command: "systemd-analyze",
+                args: ["security", "--no-pager"],
+                timeout: 60000,
+                toolName: "harden_host",
+              });
+
+              const lines = (result.stdout + result.stderr).split("\n").filter(l => l.trim());
+              const services: Array<{unit: string, exposure: number, rating: string, flagged: boolean}> = [];
+
+              for (const line of lines) {
+                const match = line.match(/^(\S+\.service)\s+(\d+\.?\d*)\s+(\S+)\s+/);
+                if (match) {
+                  const exposure = parseFloat(match[2]);
+                  services.push({
+                    unit: match[1],
+                    exposure,
+                    rating: match[3],
+                    flagged: exposure > params.threshold,
+                  });
+                }
+              }
+
+              services.sort((a, b) => b.exposure - a.exposure);
+              const flagged = services.filter(s => s.flagged);
+
+              return {
+                content: [createTextContent(JSON.stringify({
+                  summary: {
+                    totalServices: services.length,
+                    flaggedAboveThreshold: flagged.length,
+                    threshold: params.threshold,
+                    averageExposure: services.length > 0
+                      ? (services.reduce((sum, s) => sum + s.exposure, 0) / services.length).toFixed(1)
+                      : 0,
+                  },
+                  flaggedServices: flagged,
+                  allServices: services,
+                }, null, 2))],
+              };
+            }
+          } catch (error) {
+            return {
+              content: [createErrorContent(error instanceof Error ? error.message : String(error))],
+              isError: true,
+            };
+          }
+        }
+
+        // ── systemd_apply ─────────────────────────────────────────────
+        case "systemd_apply": {
+          try {
+            if (!params.service) {
+              return { content: [createErrorContent("Error: 'service' is required for systemd_apply action")], isError: true };
+            }
+            if (!params.hardening_level) {
+              return { content: [createErrorContent("Error: 'hardening_level' is required for systemd_apply action")], isError: true };
+            }
+
+            const service = params.service;
+            const hardening_level = params.hardening_level;
+            const isDryRun = params.dry_run ?? getConfig().dryRun;
+
+            // Validate service name format
+            if (!/^[a-zA-Z0-9_-]+\.service$/.test(service)) {
+              return { content: [createErrorContent("Invalid service name. Must match format: name.service")], isError: true };
+            }
+
+            const basicDirectives = [
+              "ProtectSystem=full",
+              "ProtectHome=yes",
+              "PrivateTmp=yes",
+              "NoNewPrivileges=yes",
+            ];
+
+            const strictDirectives = [
+              "ProtectSystem=strict",
+              "ProtectHome=yes",
+              "PrivateTmp=yes",
+              "NoNewPrivileges=yes",
+              "ProtectKernelTunables=yes",
+              "ProtectKernelModules=yes",
+              "ProtectControlGroups=yes",
+              "RestrictSUIDSGID=yes",
+              "MemoryDenyWriteExecute=yes",
+            ];
+
+            const directives = hardening_level === "strict" ? strictDirectives : basicDirectives;
+            const overrideDir = `/etc/systemd/system/${service}.d`;
+            const overrideFile = `${overrideDir}/security.conf`;
+            const overrideContent = `[Service]\n${directives.join("\n")}`;
+
+            if (isDryRun) {
+              const entry = createChangeEntry({
+                tool: "harden_host",
+                action: `[DRY-RUN] Apply ${hardening_level} hardening to ${service}`,
+                target: service,
+                after: overrideContent,
+                dryRun: true,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [formatToolOutput({
+                  service,
+                  hardening_level,
+                  dryRun: true,
+                  overrideFile,
+                  content: overrideContent,
+                  directives,
+                })],
+              };
+            }
+
+            // Create override directory
+            await executeCommand({
+              command: "sudo",
+              args: ["mkdir", "-p", overrideDir],
+              toolName: "harden_host",
+            });
+
+            // Backup existing override if present
+            try { backupFile(overrideFile); } catch { /* may not exist */ }
+
+            // Write security.conf using sudo tee with stdin
+            const writeResult = await executeCommand({
+              command: "sudo",
+              args: ["tee", overrideFile],
+              stdin: overrideContent + "\n",
+              toolName: "harden_host",
+            });
+
+            if (writeResult.exitCode !== 0) {
+              return { content: [createErrorContent(`Failed to write override: ${writeResult.stderr}`)], isError: true };
+            }
+
+            // Reload systemd daemon to pick up changes
+            const reloadResult = await executeCommand({
+              command: "sudo",
+              args: ["systemctl", "daemon-reload"],
+              toolName: "harden_host",
+              timeout: 15000,
+            });
+
+            const entry = createChangeEntry({
+              tool: "harden_host",
+              action: `Apply ${hardening_level} hardening to ${service}`,
+              target: service,
+              after: overrideContent,
+              dryRun: false,
+              success: reloadResult.exitCode === 0,
+              error: reloadResult.exitCode !== 0 ? reloadResult.stderr : undefined,
+              rollbackCommand: `sudo rm ${overrideFile} && sudo systemctl daemon-reload`,
+            });
+            logChange(entry);
+
+            return {
+              content: [formatToolOutput({
+                service,
+                hardening_level,
+                dryRun: false,
+                overrideFile,
+                directives,
+                daemonReload: reloadResult.exitCode === 0 ? "success" : "failed",
+              })],
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── cron_audit ────────────────────────────────────────────────
+        case "cron_audit": {
+          try {
+            const findings: Array<{check: string, status: string, value: string, description: string}> = [];
+
+            const cronDeny = await executeCommand({ command: "ls", args: ["-la", "/etc/cron.deny"], timeout: 5000, toolName: "harden_host" });
+            const cronAllow = await executeCommand({ command: "ls", args: ["-la", "/etc/cron.allow"], timeout: 5000, toolName: "harden_host" });
+            findings.push({ check: "cron_deny", status: cronDeny.exitCode !== 0 ? "PASS" : "WARN", value: cronDeny.exitCode === 0 ? "exists" : "not present", description: "CIS: /etc/cron.deny should not exist (use cron.allow instead)" });
+            findings.push({ check: "cron_allow", status: cronAllow.exitCode === 0 ? "PASS" : "WARN", value: cronAllow.exitCode === 0 ? "exists" : "not present", description: "CIS: /etc/cron.allow should exist to restrict cron access" });
+
+            if (cronAllow.exitCode === 0) {
+              const permsResult = await executeCommand({ command: "stat", args: ["-c", "%a %U:%G", "/etc/cron.allow"], timeout: 5000, toolName: "harden_host" });
+              findings.push({ check: "cron_allow_perms", status: permsResult.stdout.trim().startsWith("600") ? "PASS" : "WARN", value: permsResult.stdout.trim(), description: "cron.allow permissions (should be 600 root:root)" });
+            }
+
+            const atDeny = await executeCommand({ command: "ls", args: ["-la", "/etc/at.deny"], timeout: 5000, toolName: "harden_host" });
+            const atAllow = await executeCommand({ command: "ls", args: ["-la", "/etc/at.allow"], timeout: 5000, toolName: "harden_host" });
+            findings.push({ check: "at_deny", status: atDeny.exitCode !== 0 ? "PASS" : "WARN", value: atDeny.exitCode === 0 ? "exists" : "not present", description: "CIS: /etc/at.deny should not exist" });
+            findings.push({ check: "at_allow", status: atAllow.exitCode === 0 ? "PASS" : "WARN", value: atAllow.exitCode === 0 ? "exists" : "not present", description: "CIS: /etc/at.allow should exist" });
+
+            const cronDirs = ["/etc/crontab", "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly", "/etc/cron.d"];
+            for (const dir of cronDirs) {
+              const perms = await executeCommand({ command: "stat", args: ["-c", "%a %U:%G", dir], timeout: 5000, toolName: "harden_host" });
+              if (perms.exitCode === 0) {
+                const perm = perms.stdout.trim().split(" ")[0];
+                const isFile = dir === "/etc/crontab";
+                const expected = isFile ? "600" : "700";
+                findings.push({ check: `perms_${dir.replace(/\//g, "_")}`, status: perm === expected ? "PASS" : "WARN", value: perms.stdout.trim(), description: `${dir} permissions (should be ${expected} root:root)` });
+              }
+            }
+
+            const passCount = findings.filter(f => f.status === "PASS").length;
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
+          } catch (error) {
+            return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
+          }
+        }
+
+        // ── umask_audit ───────────────────────────────────────────────
+        case "umask_audit": {
+          try {
+            const findings: Array<{check: string, status: string, value: string, description: string}> = [];
+            const files = [
+              { path: "/etc/login.defs", pattern: "UMASK" },
+              { path: "/etc/profile", pattern: "umask" },
+              { path: "/etc/bash.bashrc", pattern: "umask" },
+              { path: "/etc/profile.d/", pattern: "umask" },
+            ];
+
+            for (const file of files) {
+              if (file.path.endsWith("/")) {
+                const grepResult = await executeCommand({ command: "grep", args: ["-r", file.pattern, file.path], timeout: 5000, toolName: "harden_host" });
+                findings.push({ check: `umask_${file.path.replace(/\//g, "_")}`, status: grepResult.stdout.includes("027") || grepResult.stdout.includes("077") ? "PASS" : "WARN", value: grepResult.stdout.trim().substring(0, 200) || "not set", description: `umask in ${file.path} (should be 027 or more restrictive)` });
+              } else {
+                const grepResult = await executeCommand({ command: "grep", args: ["-i", file.pattern, file.path], timeout: 5000, toolName: "harden_host" });
+                const lines = grepResult.stdout.split("\n").filter((l: string) => !l.trim().startsWith("#") && l.includes("mask"));
+                const hasSecure = lines.some((l: string) => l.includes("027") || l.includes("077"));
+                findings.push({ check: `umask_${file.path.replace(/\//g, "_")}`, status: hasSecure ? "PASS" : "WARN", value: lines.join("; ").substring(0, 200) || "not explicitly set", description: `umask in ${file.path} (should be 027 or 077)` });
+              }
+            }
+
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, warn: findings.filter(f => f.status === "WARN").length }, findings, recommendation: "Set umask 027 in /etc/profile and /etc/login.defs for CIS compliance" }, null, 2))] };
+          } catch (error) {
+            return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
+          }
+        }
+
+        // ── umask_set ─────────────────────────────────────────────────
+        case "umask_set": {
+          try {
+            if (!params.umask_value) {
+              return { content: [createErrorContent("Error: 'umask_value' is required for umask_set action")], isError: true };
+            }
+
+            const umask_value = params.umask_value;
+            const allTargets = params.targets ?? ["login.defs", "profile", "bashrc"];
+            const results: Array<{ target: string; action: string; status: string }> = [];
+            const isDryRun = params.dry_run ?? getConfig().dryRun;
+
+            const targetMap: Record<string, string> = {
+              "login.defs": "/etc/login.defs",
+              "profile": "/etc/profile",
+              "bashrc": "/etc/bash.bashrc",
+            };
+
+            for (const target of allTargets) {
+              const filePath = targetMap[target];
+              if (!filePath) continue;
+
+              if (isDryRun) {
+                results.push({ target: filePath, action: `[DRY-RUN] Would set umask to ${umask_value}`, status: "preview" });
+                continue;
+              }
+
+              try { backupFile(filePath); } catch { /* file may not exist */ }
+
+              if (target === "login.defs") {
+                const grepResult = await executeCommand({
+                  command: "grep",
+                  args: ["-c", "^UMASK", filePath],
+                  toolName: "harden_host",
+                });
+                if (parseInt(grepResult.stdout.trim()) > 0) {
+                  await executeCommand({
+                    command: "sudo",
+                    args: ["sed", "-i", `s/^UMASK.*/UMASK\t\t${umask_value}/`, filePath],
+                    toolName: "harden_host",
+                  });
+                  results.push({ target: filePath, action: `Updated UMASK to ${umask_value}`, status: "updated" });
+                } else {
+                  await executeCommand({
+                    command: "sudo",
+                    args: ["tee", "-a", filePath],
+                    stdin: `UMASK\t\t${umask_value}\n`,
+                    toolName: "harden_host",
+                  });
+                  results.push({ target: filePath, action: `Appended UMASK ${umask_value}`, status: "appended" });
+                }
+              } else {
+                const grepResult = await executeCommand({
+                  command: "grep",
+                  args: ["-c", "^umask [0-9]", filePath],
+                  toolName: "harden_host",
+                });
+                if (parseInt(grepResult.stdout.trim()) > 0) {
+                  await executeCommand({
+                    command: "sudo",
+                    args: ["sed", "-i", `s/^umask [0-9]*/umask ${umask_value}/`, filePath],
+                    toolName: "harden_host",
+                  });
+                  results.push({ target: filePath, action: `Updated umask to ${umask_value}`, status: "updated" });
+                } else {
+                  await executeCommand({
+                    command: "sudo",
+                    args: ["tee", "-a", filePath],
+                    stdin: `umask ${umask_value}\n`,
+                    toolName: "harden_host",
+                  });
+                  results.push({ target: filePath, action: `Appended umask ${umask_value}`, status: "appended" });
+                }
+              }
+
+              const entry = createChangeEntry({
+                tool: "harden_host",
+                action: `Set umask ${umask_value} in ${filePath}`,
+                target: filePath,
+                dryRun: false,
+                success: true,
+              });
+              logChange(entry);
+            }
+
+            if (isDryRun) {
+              const entry = createChangeEntry({
+                tool: "harden_host",
+                action: `[DRY-RUN] Set umask ${umask_value}`,
+                target: allTargets.join(", "),
+                dryRun: true,
+                success: true,
+              });
+              logChange(entry);
+            }
+
+            return { content: [formatToolOutput({ umask_value, results, dryRun: isDryRun })] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── banner_audit ──────────────────────────────────────────────
+        case "banner_audit": {
+          try {
+            const findings: Array<{check: string, status: string, value: string, description: string}> = [];
+            const bannerFiles = [
+              { path: "/etc/issue", description: "Local login banner" },
+              { path: "/etc/issue.net", description: "Remote login banner" },
+              { path: "/etc/motd", description: "Message of the day" },
+            ];
+
+            for (const banner of bannerFiles) {
+              const result = await executeCommand({ command: "cat", args: [banner.path], timeout: 5000, toolName: "harden_host" });
+              const content = result.stdout.trim();
+              const hasContent = content.length > 10;
+              const hasOsInfo = /\\[mrsv]/.test(content);
+              findings.push({ check: `${banner.path.replace(/\//g, "_")}_exists`, status: hasContent ? "PASS" : "WARN", value: hasContent ? `${content.length} chars` : "empty or missing", description: `${banner.description} should contain a warning` });
+              if (hasContent) {
+                findings.push({ check: `${banner.path.replace(/\//g, "_")}_no_os_info`, status: hasOsInfo ? "FAIL" : "PASS", value: hasOsInfo ? "contains OS info" : "clean", description: `${banner.description} should NOT contain OS version info (\\m, \\r, \\s, \\v)` });
+              }
+              const perms = await executeCommand({ command: "stat", args: ["-c", "%a %U:%G", banner.path], timeout: 5000, toolName: "harden_host" });
+              if (perms.exitCode === 0) {
+                findings.push({ check: `${banner.path.replace(/\//g, "_")}_perms`, status: perms.stdout.trim().startsWith("644") ? "PASS" : "WARN", value: perms.stdout.trim(), description: `${banner.description} permissions (should be 644 root:root)` });
+              }
+            }
+
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
+          } catch (error) {
+            return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
+          }
+        }
+
+        // ── banner_set ────────────────────────────────────────────────
+        case "banner_set": {
+          try {
+            const isDryRun = params.dry_run ?? getConfig().dryRun;
+            const allTargets = params.banner_targets ?? ["issue", "issue.net", "motd"];
+
+            const defaultBanner = "Authorized uses only. All activity may be monitored and reported.";
+            const text = params.banner_text ?? defaultBanner;
+
+            if (text.length > 2000) {
+              return { content: [createErrorContent("Banner text exceeds maximum length of 2000 characters")], isError: true };
+            }
+            if (!/^[\x20-\x7E\n\r\t]*$/.test(text)) {
+              return { content: [createErrorContent("Banner text contains invalid characters. Only printable ASCII, newlines, and common punctuation are allowed.")], isError: true };
+            }
+
+            const results: Array<{ target: string; action: string; status: string }> = [];
+
+            for (const target of allTargets) {
+              const filePath = `/etc/${target}`;
+
+              if (isDryRun) {
+                results.push({ target: filePath, action: `[DRY-RUN] Would write banner text (${text.length} chars)`, status: "preview" });
+                continue;
+              }
+
+              try { backupFile(filePath); } catch { /* may not exist */ }
+
+              const writeResult = await executeCommand({
+                command: "sudo",
+                args: ["tee", filePath],
+                stdin: text + "\n",
+                toolName: "harden_host",
+              });
+
+              if (writeResult.exitCode === 0) {
+                results.push({ target: filePath, action: `Written banner (${text.length} chars)`, status: "applied" });
+                const entry = createChangeEntry({
+                  tool: "harden_host",
+                  action: `Set login banner`,
+                  target: filePath,
+                  after: text.substring(0, 100),
+                  dryRun: false,
+                  success: true,
+                });
+                logChange(entry);
+              } else {
+                results.push({ target: filePath, action: `Failed: ${writeResult.stderr}`, status: "error" });
+              }
+            }
+
+            if (isDryRun) {
+              const entry = createChangeEntry({
+                tool: "harden_host",
+                action: "[DRY-RUN] Set login banners",
+                target: allTargets.join(", "),
+                dryRun: true,
+                success: true,
+              });
+              logChange(entry);
+            }
+
+            return { content: [formatToolOutput({ targets: allTargets, bannerLength: text.length, results, dryRun: isDryRun })] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── usb_audit_devices ─────────────────────────────────────────
+        case "usb_audit_devices": {
+          const outputFormat = params.output_format ?? "text";
           try {
             const findings: Record<string, unknown> = {};
 
@@ -2731,12 +2585,13 @@ export function registerHardeningTools(server: McpServer): void {
             return { content: [createTextContent(text)] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(`audit_devices failed: ${msg}`)], isError: true };
+            return { content: [createErrorContent(`usb_audit_devices failed: ${msg}`)], isError: true };
           }
         }
 
-        // ── block_storage ────────────────────────────────────────────
-        case "block_storage": {
+        // ── usb_block_storage ─────────────────────────────────────────
+        case "usb_block_storage": {
+          const outputFormat = params.output_format ?? "text";
           try {
             const method = params.block_method ?? "modprobe";
             const results: Array<{ target: string; action: string; status: string }> = [];
@@ -2836,12 +2691,13 @@ export function registerHardeningTools(server: McpServer): void {
             }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(`block_storage failed: ${msg}`)], isError: true };
+            return { content: [createErrorContent(`usb_block_storage failed: ${msg}`)], isError: true };
           }
         }
 
-        // ── whitelist ────────────────────────────────────────────────
-        case "whitelist": {
+        // ── usb_whitelist ─────────────────────────────────────────────
+        case "usb_whitelist": {
+          const outputFormat = params.output_format ?? "text";
           try {
             const whitelist = loadUsbWhitelist();
 
@@ -2940,12 +2796,13 @@ export function registerHardeningTools(server: McpServer): void {
             }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(`whitelist failed: ${msg}`)], isError: true };
+            return { content: [createErrorContent(`usb_whitelist failed: ${msg}`)], isError: true };
           }
         }
 
-        // ── monitor ──────────────────────────────────────────────────
-        case "monitor": {
+        // ── usb_monitor ───────────────────────────────────────────────
+        case "usb_monitor": {
+          const outputFormat = params.output_format ?? "text";
           try {
             const events: Record<string, unknown> = {};
 
@@ -3047,7 +2904,7 @@ export function registerHardeningTools(server: McpServer): void {
             return { content: [createTextContent(text)] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { content: [createErrorContent(`monitor failed: ${msg}`)], isError: true };
+            return { content: [createErrorContent(`usb_monitor failed: ${msg}`)], isError: true };
           }
         }
 

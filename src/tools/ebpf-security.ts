@@ -1,7 +1,7 @@
 /**
  * eBPF and Falco security tools.
  *
- * Registers 2 tools: list_ebpf_programs, falco (actions: status, deploy_rules, events).
+ * Registers 1 tool: ebpf (actions: list_programs, falco_status, falco_deploy_rules, falco_events).
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -61,98 +61,88 @@ export function validateBpfFilter(filter: string): string {
 
 export function registerEbpfSecurityTools(server: McpServer): void {
 
-  // ── list_ebpf_programs (kept as-is) ────────────────────────────────────────
-
   server.tool(
-    "ebpf_list_programs",
-    "List loaded eBPF programs and pinned maps.",
+    "ebpf",
+    "eBPF and Falco security: list loaded eBPF programs, check Falco status, deploy Falco rules, or read recent Falco events.",
     {
-      dryRun: z.boolean().optional().default(true).describe("Preview only"),
-    },
-    async ({ dryRun }) => {
-      try {
-        const results: Record<string, unknown> = {};
-
-        // List BPF filesystem
-        if (existsSync("/sys/fs/bpf")) {
-          const ls = await executeCommand({
-            command: "ls",
-            args: ["-la", "/sys/fs/bpf"],
-            timeout: 5000,
-          });
-          results.bpfFs = ls.stdout.trim().split("\n");
-        } else {
-          results.bpfFs = "Not mounted";
-        }
-
-        // Try bpftool
-        const bpftool = await executeCommand({
-          command: "bpftool",
-          args: ["prog", "list", "--json"],
-          timeout: 10000,
-        });
-
-        if (bpftool.exitCode === 0) {
-          try {
-            results.programs = JSON.parse(bpftool.stdout);
-          } catch {
-            results.programs = bpftool.stdout.split("\n").filter(Boolean);
-          }
-        } else {
-          // Fallback to non-JSON
-          const fallback = await executeCommand({
-            command: "bpftool",
-            args: ["prog", "list"],
-            timeout: 10000,
-          });
-          results.programs = fallback.exitCode === 0
-            ? fallback.stdout.split("\n").filter(Boolean)
-            : "bpftool not available or insufficient permissions";
-        }
-
-        // List maps
-        const maps = await executeCommand({
-          command: "bpftool",
-          args: ["map", "list", "--json"],
-          timeout: 10000,
-        });
-        if (maps.exitCode === 0) {
-          try {
-            results.maps = JSON.parse(maps.stdout);
-          } catch {
-            results.maps = maps.stdout.split("\n").filter(Boolean);
-          }
-        }
-
-        return { content: [formatToolOutput(results)] };
-      } catch (err) {
-        return { content: [createErrorContent(`eBPF listing failed: ${err instanceof Error ? err.message : String(err)}`)], isError: true };
-      }
-    }
-  );
-
-  // ── falco (merged: check_falco + deploy_falco_rules + get_ebpf_events) ────
-
-  server.tool(
-    "ebpf_falco",
-    "Falco runtime security: check status, deploy custom rules, or read recent events.",
-    {
-      action: z.enum(["status", "deploy_rules", "events"]).describe("Action: status=check Falco, deploy_rules=deploy custom rules, events=read recent events"),
-      // deploy_rules params
-      ruleName: z.string().optional().describe("Rule file name without .yaml extension (deploy_rules action)"),
-      ruleContent: z.string().optional().describe("YAML rule content (deploy_rules action)"),
-      // events params
-      lines: z.number().optional().default(50).describe("Number of recent events to return (events action)"),
-      priority: z.enum(["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]).optional().describe("Filter by minimum priority (events action)"),
-      // shared
-      dryRun: z.boolean().optional().default(true).describe("Preview only"),
+      action: z.enum(["list_programs", "falco_status", "falco_deploy_rules", "falco_events"]).describe("Action: list_programs=list eBPF programs, falco_status=check Falco, falco_deploy_rules=deploy custom rules, falco_events=read recent events"),
+      // list_programs params
+      dryRun: z.boolean().optional().default(true).describe("Preview only (list_programs / falco_deploy_rules)"),
+      // falco_deploy_rules params
+      ruleName: z.string().optional().describe("Rule file name without .yaml extension (falco_deploy_rules action)"),
+      ruleContent: z.string().optional().describe("YAML rule content (falco_deploy_rules action)"),
+      // falco_events params
+      lines: z.number().optional().default(50).describe("Number of recent events to return (falco_events action)"),
+      priority: z.enum(["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]).optional().describe("Filter by minimum priority (falco_events action)"),
     },
     async (params) => {
       const { action } = params;
 
       switch (action) {
-        // ── status ──────────────────────────────────────────────────
-        case "status": {
+        // ── list_programs ────────────────────────────────────────────
+        case "list_programs": {
+          try {
+            const results: Record<string, unknown> = {};
+
+            // List BPF filesystem
+            if (existsSync("/sys/fs/bpf")) {
+              const ls = await executeCommand({
+                command: "ls",
+                args: ["-la", "/sys/fs/bpf"],
+                timeout: 5000,
+              });
+              results.bpfFs = ls.stdout.trim().split("\n");
+            } else {
+              results.bpfFs = "Not mounted";
+            }
+
+            // Try bpftool
+            const bpftool = await executeCommand({
+              command: "bpftool",
+              args: ["prog", "list", "--json"],
+              timeout: 10000,
+            });
+
+            if (bpftool.exitCode === 0) {
+              try {
+                results.programs = JSON.parse(bpftool.stdout);
+              } catch {
+                results.programs = bpftool.stdout.split("\n").filter(Boolean);
+              }
+            } else {
+              // Fallback to non-JSON
+              const fallback = await executeCommand({
+                command: "bpftool",
+                args: ["prog", "list"],
+                timeout: 10000,
+              });
+              results.programs = fallback.exitCode === 0
+                ? fallback.stdout.split("\n").filter(Boolean)
+                : "bpftool not available or insufficient permissions";
+            }
+
+            // List maps
+            const maps = await executeCommand({
+              command: "bpftool",
+              args: ["map", "list", "--json"],
+              timeout: 10000,
+            });
+            if (maps.exitCode === 0) {
+              try {
+                results.maps = JSON.parse(maps.stdout);
+              } catch {
+                results.maps = maps.stdout.split("\n").filter(Boolean);
+              }
+            }
+
+            return { content: [formatToolOutput(results)] };
+          } catch (err) {
+            return { content: [createErrorContent(`eBPF listing failed: ${err instanceof Error ? err.message : String(err)}`)], isError: true };
+          }
+        }
+
+        // ── falco_status ─────────────────────────────────────────────
+        case "falco_status": {
           try {
             const info: Record<string, unknown> = {};
 
@@ -199,8 +189,8 @@ export function registerEbpfSecurityTools(server: McpServer): void {
           }
         }
 
-        // ── deploy_rules ────────────────────────────────────────────
-        case "deploy_rules": {
+        // ── falco_deploy_rules ───────────────────────────────────────
+        case "falco_deploy_rules": {
           const { ruleName, ruleContent, dryRun } = params;
           try {
             if (!ruleName) {
@@ -242,7 +232,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
             });
 
             const entry = createChangeEntry({
-              tool: "ebpf_falco",
+              tool: "ebpf",
               action: `Deploy Falco rule ${ruleName}`,
               target: rulePath,
               dryRun: false,
@@ -265,8 +255,8 @@ export function registerEbpfSecurityTools(server: McpServer): void {
           }
         }
 
-        // ── events ──────────────────────────────────────────────────
-        case "events": {
+        // ── falco_events ─────────────────────────────────────────────
+        case "falco_events": {
           const { lines, priority } = params;
           try {
             const logPaths = [

@@ -43,70 +43,75 @@ describe("secrets tools", () => {
     tools = mock.tools;
   });
 
-  it("should register all 4 secrets tools", () => {
-    expect(tools.has("secrets_scan")).toBe(true);
-    expect(tools.has("secrets_env_audit")).toBe(true);
-    expect(tools.has("secrets_ssh_key_sprawl")).toBe(true);
-    expect(tools.has("secrets_git_history_scan")).toBe(true);
+  it("should register 1 secrets tool", () => {
+    expect(tools.has("secrets")).toBe(true);
+    expect(tools.size).toBe(1);
   });
 
-  // ── secrets_scan ──────────────────────────────────────────────────────
+  // ── scan ──────────────────────────────────────────────────────────────
 
   it("should scan for all secret types by default", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "", exitCode: 1 });
-    const handler = tools.get("secrets_scan")!.handler;
-    const result = await handler({ path: "/home", scan_type: "all", max_depth: 3 });
+    const handler = tools.get("secrets")!.handler;
+    const result = await handler({ action: "scan", path: "/home", scan_type: "all", max_depth: 3 });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("Secrets Scan Report");
   });
 
   it("should scan only for api_keys when specified", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "", exitCode: 1 });
-    const handler = tools.get("secrets_scan")!.handler;
-    const result = await handler({ path: "/home", scan_type: "api_keys", max_depth: 3 });
+    const handler = tools.get("secrets")!.handler;
+    const result = await handler({ action: "scan", path: "/home", scan_type: "api_keys", max_depth: 3 });
     expect(result.isError).toBeUndefined();
   });
 
   it("should report no findings when grep returns nothing", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "", exitCode: 1 });
-    const handler = tools.get("secrets_scan")!.handler;
-    const result = await handler({ path: "/home", scan_type: "all", max_depth: 3 });
+    const handler = tools.get("secrets")!.handler;
+    const result = await handler({ action: "scan", path: "/home", scan_type: "all", max_depth: 3 });
     expect(result.content[0].text).toContain("No hardcoded secrets detected");
   });
 
-  // ── secrets_env_audit ─────────────────────────────────────────────────
+  // ── env_audit ─────────────────────────────────────────────────────────
 
   it("should audit environment variables", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "HOME=/home/user\nPATH=/usr/bin\n" });
-    const handler = tools.get("secrets_env_audit")!.handler;
-    const result = await handler({ check_env: true, check_files: false });
+    const handler = tools.get("secrets")!.handler;
+    const result = await handler({ action: "env_audit", check_env: true, check_files: false });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("SENSITIVE ENVIRONMENT VARIABLES");
   });
 
-  // ── secrets_ssh_key_sprawl ────────────────────────────────────────────
+  // ── ssh_key_sprawl ────────────────────────────────────────────────────
 
   it("should scan for SSH private keys", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, stdout: "" });
-    const handler = tools.get("secrets_ssh_key_sprawl")!.handler;
-    const result = await handler({ search_path: "/home", check_authorized_keys: false });
+    const handler = tools.get("secrets")!.handler;
+    const result = await handler({ action: "ssh_key_sprawl", search_path: "/home", check_authorized_keys: false });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("SSH Key Sprawl Report");
   });
 
-  // ── scan_git_history ──────────────────────────────────────────────────
+  // ── git_history_scan ──────────────────────────────────────────────────
+
+  it("should require repoPath for git_history_scan", async () => {
+    const handler = tools.get("secrets")!.handler;
+    const result = await handler({ action: "git_history_scan", dryRun: true });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("repoPath is required");
+  });
 
   it("should preview git history scan in dry_run mode", async () => {
-    const handler = tools.get("secrets_git_history_scan")!.handler;
-    const result = await handler({ repoPath: "/home/user/project", dryRun: true });
+    const handler = tools.get("secrets")!.handler;
+    const result = await handler({ action: "git_history_scan", repoPath: "/home/user/project", dryRun: true });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("dryRun");
   });
 
   it("should report error when no scanning tools available", async () => {
     vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk, exitCode: 1, stdout: "" });
-    const handler = tools.get("secrets_git_history_scan")!.handler;
-    const result = await handler({ repoPath: "/home/user/project", dryRun: false });
+    const handler = tools.get("secrets")!.handler;
+    const result = await handler({ action: "git_history_scan", repoPath: "/home/user/project", dryRun: false });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("truffleHog");
   });

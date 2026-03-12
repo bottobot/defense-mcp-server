@@ -25,12 +25,13 @@ import { initializeRegistry } from './core/tool-registry.js';
 
 // ── Core: Lifecycle management ───────────────────────────────────────────────
 import { SudoSession } from "./core/sudo-session.js";
+import { SudoGuard } from "./core/sudo-guard.js";
 import { logChange, createChangeEntry } from "./core/changelog.js";
 
 // ── Original tool modules ────────────────────────────────────────────────────
 import { registerFirewallTools } from "./tools/firewall.js";
 import { registerHardeningTools } from "./tools/hardening.js";
-import { registerIdsTools } from "./tools/ids.js";
+import { registerIntegrityTools } from "./tools/integrity.js";
 import { registerLoggingTools } from "./tools/logging.js";
 import { registerNetworkDefenseTools } from "./tools/network-defense.js";
 import { registerComplianceTools } from "./tools/compliance.js";
@@ -223,6 +224,25 @@ async function main() {
     console.error(`[startup] Pre-flight registry initialization failed (non-fatal): ${err}`);
   }
 
+  // ── Phase 0.6: Sudoers NOPASSWD security check ───────────────────────────
+  // Detect whether the dangerous 'NOPASSWD: ALL' grant is still present.
+  // If so, emit a CRITICAL security warning — authentication is hollow.
+  // This check is synchronous and best-effort (non-fatal on failure).
+  try {
+    const nopasswdCheck = SudoGuard.checkNopasswdConfiguration();
+    if (nopasswdCheck.nopasswdDetected) {
+      console.error(
+        `[startup] ⚠️  SECURITY CRITICAL: NOPASSWD:ALL detected in sudoers ` +
+        `(${nopasswdCheck.location}). sudo_elevate credential validation is NON-FUNCTIONAL. ` +
+        `Rebuild the Docker image with the updated Dockerfile.`
+      );
+    } else {
+      console.error('[startup] ✅ Sudoers check: NOPASSWD:ALL not detected — credential validation active');
+    }
+  } catch (err) {
+    console.error(`[startup] Sudoers NOPASSWD check failed (non-fatal): ${err}`);
+  }
+
   // Wrap server with pre-flight middleware
   const wrappedServer = createPreflightServer(server);
 
@@ -249,7 +269,7 @@ async function main() {
   // Original tool modules
   safeRegister("firewall", registerFirewallTools);
   safeRegister("hardening", registerHardeningTools);
-  safeRegister("ids", registerIdsTools);
+  safeRegister("integrity", registerIntegrityTools);
   safeRegister("logging", registerLoggingTools);
   safeRegister("network-defense", registerNetworkDefenseTools);
   safeRegister("compliance", registerComplianceTools);
@@ -293,7 +313,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`Defense MCP Server v${VERSION} running on stdio`);
-  console.error(`Registered ${registered} of ${registered + failed} tool modules with ~94 defensive security tools${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`);
+  console.error(`Registered ${registered} of ${registered + failed} tool modules with 31 consolidated defensive security tools${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`);
   console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }
 

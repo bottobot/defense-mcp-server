@@ -129,25 +129,16 @@ describe("createPreflightServer", () => {
 
   // ── Bypass tools ───────────────────────────────────────────────────────────
 
-  it("bypasses pre-flight for sudo management tools", () => {
+  it("bypasses pre-flight for sudo_session tool", () => {
     const server = createFakeMcpServer();
     const proxy = createPreflightServer(server as any, { enabled: true });
 
     const handler = vi.fn(async () => ({ content: [{ type: "text", text: "OK" }] }));
-    (proxy as any).tool("sudo_elevate", {}, handler);
+    (proxy as any).tool("sudo_session", {}, handler);
 
     // The original server.tool should have been called with the ORIGINAL handler
-    // (not wrapped) because sudo_elevate is in the bypass set
-    expect(server.tool).toHaveBeenCalledWith("sudo_elevate", {}, handler);
-  });
-
-  it("bypasses pre-flight for preflight_batch_check", () => {
-    const server = createFakeMcpServer();
-    const proxy = createPreflightServer(server as any, { enabled: true });
-
-    const handler = vi.fn();
-    (proxy as any).tool("preflight_batch_check", {}, handler);
-    expect(server.tool).toHaveBeenCalledWith("preflight_batch_check", {}, handler);
+    // (not wrapped) because sudo_session is in the bypass set
+    expect(server.tool).toHaveBeenCalledWith("sudo_session", {}, handler);
   });
 
   it("bypasses pre-flight for custom additional bypass tools", () => {

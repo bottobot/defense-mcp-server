@@ -36,12 +36,7 @@ import { RateLimiter } from "./rate-limiter.js";
  * itself.  These are checked before manifest lookup for reliability.
  */
 const DEFAULT_BYPASS_TOOLS = new Set<string>([
-  "sudo_elevate",
-  "sudo_elevate_gui",
-  "sudo_status",
-  "sudo_drop",
-  "sudo_extend",
-  "preflight_batch_check",
+  "sudo_session",
 ]);
 
 // ── Types ────────────────────────────────────────────────────────────────────

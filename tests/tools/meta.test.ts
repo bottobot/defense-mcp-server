@@ -1,9 +1,9 @@
 /**
  * Tests for src/tools/meta.ts
  *
- * Covers: TOOL-004 (schedule validation for defense_scheduled_audit),
- * TOOL-005 (defense_workflow safeguard checks), schema validation,
- * and auto_remediate tool (plan, apply, rollback_session, status).
+ * Covers: TOOL-004 (schedule validation for defense_mgmt scheduled_create),
+ * TOOL-005 (defense_mgmt workflow_run safeguard checks), schema validation,
+ * and remediate_* actions (plan, apply, rollback, status).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -55,6 +55,7 @@ vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   readdirSync: vi.fn().mockReturnValue([]),
+  statSync: vi.fn().mockReturnValue({ size: 1024, mtime: new Date("2025-01-01T00:00:00Z") }),
 }));
 vi.mock("node:path", async () => {
   const actual = await vi.importActual("node:path");
@@ -101,67 +102,63 @@ describe("meta tools", () => {
 
   // ── Registration ──────────────────────────────────────────────────────
 
-  it("should register all meta tools", () => {
-    expect(tools.has("defense_check_tools")).toBe(true);
-    expect(tools.has("defense_workflow")).toBe(true);
-    expect(tools.has("defense_change_history")).toBe(true);
-    expect(tools.has("defense_security_posture")).toBe(true);
-    expect(tools.has("defense_scheduled_audit")).toBe(true);
-    expect(tools.has("auto_remediate")).toBe(true);
+  it("should register exactly 1 tool: defense_mgmt", () => {
+    expect(tools.size).toBe(1);
+    expect(tools.has("defense_mgmt")).toBe(true);
   });
 
   // ── TOOL-004: Schedule validation ────────────────────────────────────
 
   it("should reject schedule with shell metacharacters (TOOL-004)", async () => {
-    const handler = tools.get("defense_scheduled_audit")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "create",
+      action: "scheduled_create",
       name: "test-audit",
       command: "lynis audit system",
       schedule: "0 2 * * *; rm -rf /",
       useSystemd: false,
-      dryRun: true,
+      dry_run: true,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("forbidden characters");
   });
 
   it("should reject cron schedule with wrong number of fields (TOOL-004)", async () => {
-    const handler = tools.get("defense_scheduled_audit")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "create",
+      action: "scheduled_create",
       name: "test-audit",
       command: "lynis audit system",
       schedule: "0 2 *",
       useSystemd: false,
-      dryRun: true,
+      dry_run: true,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Expected 5 fields");
   });
 
   it("should accept valid cron schedule (TOOL-004)", async () => {
-    const handler = tools.get("defense_scheduled_audit")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "create",
+      action: "scheduled_create",
       name: "test-audit",
       command: "lynis audit system",
       schedule: "0 2 * * *",
       useSystemd: false,
-      dryRun: true,
+      dry_run: true,
     });
     expect(result.isError).toBeUndefined();
   });
 
   it("should reject schedule with backticks (TOOL-004)", async () => {
-    const handler = tools.get("defense_scheduled_audit")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "create",
+      action: "scheduled_create",
       name: "test-audit",
       command: "lynis audit system",
       schedule: "`rm -rf /` * * * *",
       useSystemd: true,
-      dryRun: true,
+      dry_run: true,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("forbidden characters");
@@ -170,35 +167,35 @@ describe("meta tools", () => {
   // ── Audit name validation ────────────────────────────────────────────
 
   it("should reject audit name with invalid characters", async () => {
-    const handler = tools.get("defense_scheduled_audit")!.handler;
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "create",
+      action: "scheduled_create",
       name: "test audit!",
       command: "lynis audit system",
       schedule: "0 2 * * *",
       useSystemd: true,
-      dryRun: true,
+      dry_run: true,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Invalid audit name");
   });
 
-  // ── TOOL-005: defense_workflow safeguard checks ──────────────────────
+  // ── TOOL-005: workflow_run safeguard checks ──────────────────────────
 
-  it("should require workflow for run action (TOOL-005)", async () => {
-    const handler = tools.get("defense_workflow")!.handler;
+  it("should require workflow for workflow_run action (TOOL-005)", async () => {
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "run",
+      action: "workflow_run",
       dry_run: true,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("workflow is required");
   });
 
-  it("should produce dry-run output for workflow run (TOOL-005)", async () => {
-    const handler = tools.get("defense_workflow")!.handler;
+  it("should produce dry-run output for workflow_run (TOOL-005)", async () => {
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "run",
+      action: "workflow_run",
       workflow: "quick_harden",
       dry_run: true,
     });
@@ -208,26 +205,27 @@ describe("meta tools", () => {
 
   // ── Required params ──────────────────────────────────────────────────
 
-  it("should require name for defense_scheduled_audit create", async () => {
-    const handler = tools.get("defense_scheduled_audit")!.handler;
+  it("should require name for scheduled_create action", async () => {
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "create",
+      action: "scheduled_create",
       command: "lynis audit system",
       schedule: "0 2 * * *",
-      dryRun: true,
+      dry_run: true,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("name is required");
   });
 
-  it("should require objective for workflow suggest", async () => {
-    const handler = tools.get("defense_workflow")!.handler;
+  it("should require objective for workflow_suggest", async () => {
+    const handler = tools.get("defense_mgmt")!.handler;
     const result = await handler({
-      action: "suggest",
+      action: "workflow_suggest",
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("objective is required");
   });
+
   // ── auto_remediate ──────────────────────────────────────────────────────
 
   /**
@@ -317,19 +315,19 @@ describe("meta tools", () => {
     });
   }
 
-  describe("auto_remediate", () => {
-    it("should be registered with correct name", () => {
-      expect(tools.has("auto_remediate")).toBe(true);
+  describe("remediate actions", () => {
+    it("defense_mgmt should be registered", () => {
+      expect(tools.has("defense_mgmt")).toBe(true);
     });
 
-    // ── plan action ──────────────────────────────────────────────────
+    // ── remediate_plan action ──────────────────────────────────────────────
 
-    describe("plan action", () => {
+    describe("remediate_plan action", () => {
       it("should generate findings from multiple sources", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "plan",
+          action: "remediate_plan",
           source: "all",
           severity_filter: "low",
           output_format: "text",
@@ -341,41 +339,38 @@ describe("meta tools", () => {
 
       it("should filter by severity", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "plan",
+          action: "remediate_plan",
           source: "all",
           severity_filter: "critical",
           output_format: "text",
         });
         expect(result.isError).toBeUndefined();
-        // Only critical findings should be present
         expect(result.content[0].text).toContain("ACCESS-001");
-        // Medium severity should NOT be present
         expect(result.content[0].text).not.toContain("HARD-003");
       });
 
       it("should filter by source", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "plan",
+          action: "remediate_plan",
           source: "hardening",
           severity_filter: "low",
           output_format: "text",
         });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("HARD-001");
-        // Access control findings should not be present
         expect(result.content[0].text).not.toContain("ACCESS-001");
         expect(result.content[0].text).not.toContain("FW-001");
       });
 
       it("should return sorted output (severity then risk)", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "plan",
+          action: "remediate_plan",
           source: "all",
           severity_filter: "low",
           output_format: "json",
@@ -383,7 +378,6 @@ describe("meta tools", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.findings.length).toBeGreaterThan(0);
-        // First finding should be critical or high severity
         const firstSev = parsed.findings[0].severity;
         expect(["critical", "high"]).toContain(firstSev);
       });
@@ -406,9 +400,9 @@ describe("meta tools", () => {
           "iptables -L -n": { stdout: "Chain INPUT (policy DROP)\nChain FORWARD (policy DROP)\n", stderr: "", exitCode: 0 },
           "lynis audit": { stdout: "", stderr: "", exitCode: 0 },
         });
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "plan",
+          action: "remediate_plan",
           source: "all",
           severity_filter: "medium",
           output_format: "text",
@@ -419,9 +413,9 @@ describe("meta tools", () => {
 
       it("should return JSON output when format is json", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "plan",
+          action: "remediate_plan",
           source: "hardening",
           severity_filter: "medium",
           output_format: "json",
@@ -434,14 +428,14 @@ describe("meta tools", () => {
       });
     });
 
-    // ── apply action ─────────────────────────────────────────────────
+    // ── remediate_apply action ─────────────────────────────────────────────
 
-    describe("apply action", () => {
+    describe("remediate_apply action", () => {
       it("should show plan but not execute when dry_run=true", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "apply",
+          action: "remediate_apply",
           source: "hardening",
           severity_filter: "medium",
           dry_run: true,
@@ -450,15 +444,14 @@ describe("meta tools", () => {
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("DRY RUN");
         expect(result.content[0].text).toContain("Would execute");
-        // Verify secureWriteFileSync was NOT called (no session saved in dry run)
         expect(mockSecureWriteFileSync).not.toHaveBeenCalled();
       });
 
       it("should return dry_run JSON output", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "apply",
+          action: "remediate_apply",
           source: "hardening",
           severity_filter: "medium",
           dry_run: true,
@@ -473,9 +466,9 @@ describe("meta tools", () => {
 
       it("should execute safe remediations and skip risky ones when dry_run=false", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "apply",
+          action: "remediate_apply",
           source: "all",
           severity_filter: "low",
           dry_run: false,
@@ -484,17 +477,15 @@ describe("meta tools", () => {
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("LIVE EXECUTION");
         expect(result.content[0].text).toContain("Session ID:");
-        // Risky actions should be skipped
         expect(result.content[0].text).toContain("SKIPPED");
-        // Session should be saved
         expect(mockSecureWriteFileSync).toHaveBeenCalled();
       });
 
       it("should create session file with correct structure when dry_run=false", async () => {
         setupRemediateSpawnMocks();
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         await handler({
-          action: "apply",
+          action: "remediate_apply",
           source: "hardening",
           severity_filter: "high",
           dry_run: false,
@@ -502,10 +493,8 @@ describe("meta tools", () => {
         });
         expect(mockSecureWriteFileSync).toHaveBeenCalled();
         const callArgs = mockSecureWriteFileSync.mock.calls[0];
-        // Path should be in remediation-sessions directory
         expect(callArgs[0]).toContain("remediation-sessions");
         expect(callArgs[0]).toContain(".json");
-        // Content should be valid JSON
         const sessionData = JSON.parse(callArgs[1] as string);
         expect(sessionData.session_id).toBeDefined();
         expect(sessionData.created_at).toBeDefined();
@@ -515,18 +504,14 @@ describe("meta tools", () => {
 
       it("should return no findings message when system is clean", async () => {
         setupRemediateSpawnMocks({
-          "sysctl -a": {
-            stdout: "kernel.randomize_va_space = 2\nnet.ipv4.ip_forward = 0\n",
-            stderr: "",
-            exitCode: 0,
-          },
+          "sysctl -a": { stdout: "kernel.randomize_va_space = 2\nnet.ipv4.ip_forward = 0\n", stderr: "", exitCode: 0 },
           "grep -E": { stdout: "PermitRootLogin no\n", stderr: "", exitCode: 0 },
           "iptables -L -n": { stdout: "Chain INPUT (policy DROP)\n", stderr: "", exitCode: 0 },
           "lynis audit": { stdout: "", stderr: "", exitCode: 0 },
         });
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "apply",
+          action: "remediate_apply",
           source: "all",
           severity_filter: "medium",
           dry_run: false,
@@ -537,13 +522,13 @@ describe("meta tools", () => {
       });
     });
 
-    // ── rollback_session action ──────────────────────────────────────
+    // ── remediate_rollback action ──────────────────────────────────────────
 
-    describe("rollback_session action", () => {
+    describe("remediate_rollback action", () => {
       it("should require session_id", async () => {
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "rollback_session",
+          action: "remediate_rollback",
           output_format: "text",
         });
         expect(result.isError).toBe(true);
@@ -552,9 +537,9 @@ describe("meta tools", () => {
 
       it("should error when session not found", async () => {
         mockExistsSync.mockReturnValue(false);
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "rollback_session",
+          action: "remediate_rollback",
           session_id: "rem-nonexistent",
           output_format: "text",
         });
@@ -568,30 +553,8 @@ describe("meta tools", () => {
           created_at: "2025-01-01T00:00:00Z",
           status: "completed",
           actions: [
-            {
-              finding_id: "HARD-001",
-              description: "ASLR not fully enabled",
-              remediation_command: "sysctl",
-              remediation_args: ["-w", "kernel.randomize_va_space=2"],
-              rollback_command: "sysctl",
-              rollback_args: ["-w", "kernel.randomize_va_space=0"],
-              before_state: "0",
-              after_state: "2",
-              status: "success",
-              timestamp: "2025-01-01T00:00:01Z",
-            },
-            {
-              finding_id: "HARD-003",
-              description: "SYN cookies not enabled",
-              remediation_command: "sysctl",
-              remediation_args: ["-w", "net.ipv4.tcp_syncookies=1"],
-              rollback_command: "sysctl",
-              rollback_args: ["-w", "net.ipv4.tcp_syncookies=0"],
-              before_state: "0",
-              after_state: "1",
-              status: "success",
-              timestamp: "2025-01-01T00:00:02Z",
-            },
+            { finding_id: "HARD-001", description: "ASLR not fully enabled", remediation_command: "sysctl", remediation_args: ["-w", "kernel.randomize_va_space=2"], rollback_command: "sysctl", rollback_args: ["-w", "kernel.randomize_va_space=0"], before_state: "0", after_state: "2", status: "success", timestamp: "2025-01-01T00:00:01Z" },
+            { finding_id: "HARD-003", description: "SYN cookies not enabled", remediation_command: "sysctl", remediation_args: ["-w", "net.ipv4.tcp_syncookies=1"], rollback_command: "sysctl", rollback_args: ["-w", "net.ipv4.tcp_syncookies=0"], before_state: "0", after_state: "1", status: "success", timestamp: "2025-01-01T00:00:02Z" },
           ],
           summary: { total: 2, successful: 2, failed: 0, skipped: 0, rolled_back: 0 },
         };
@@ -600,16 +563,15 @@ describe("meta tools", () => {
         mockReadFileSync.mockReturnValue(JSON.stringify(sessionData));
         setupRemediateSpawnMocks();
 
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "rollback_session",
+          action: "remediate_rollback",
           session_id: "rem-123456-abc",
           output_format: "text",
         });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("Rollback Session");
         expect(result.content[0].text).toContain("Rolled back");
-        // Session file should be updated
         expect(mockSecureWriteFileSync).toHaveBeenCalled();
       });
 
@@ -619,18 +581,7 @@ describe("meta tools", () => {
           created_at: "2025-01-01T00:00:00Z",
           status: "completed",
           actions: [
-            {
-              finding_id: "HARD-001",
-              description: "ASLR not fully enabled",
-              remediation_command: "sysctl",
-              remediation_args: ["-w", "kernel.randomize_va_space=2"],
-              rollback_command: "sysctl",
-              rollback_args: ["-w", "kernel.randomize_va_space=0"],
-              before_state: "0",
-              after_state: "2",
-              status: "success",
-              timestamp: "2025-01-01T00:00:01Z",
-            },
+            { finding_id: "HARD-001", description: "ASLR not fully enabled", remediation_command: "sysctl", remediation_args: ["-w", "kernel.randomize_va_space=2"], rollback_command: "sysctl", rollback_args: ["-w", "kernel.randomize_va_space=0"], before_state: "0", after_state: "2", status: "success", timestamp: "2025-01-01T00:00:01Z" },
           ],
           summary: { total: 1, successful: 1, failed: 0, skipped: 0, rolled_back: 0 },
         };
@@ -639,9 +590,9 @@ describe("meta tools", () => {
         mockReadFileSync.mockReturnValue(JSON.stringify(sessionData));
         setupRemediateSpawnMocks();
 
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "rollback_session",
+          action: "remediate_rollback",
           session_id: "rem-123456-abc",
           output_format: "json",
         });
@@ -652,27 +603,16 @@ describe("meta tools", () => {
       });
     });
 
-    // ── status action ────────────────────────────────────────────────
+    // ── remediate_status action ────────────────────────────────────────────
 
-    describe("status action", () => {
+    describe("remediate_status action", () => {
       it("should show specific session details", async () => {
         const sessionData = {
           session_id: "rem-123456-abc",
           created_at: "2025-01-01T00:00:00Z",
           status: "completed",
           actions: [
-            {
-              finding_id: "HARD-001",
-              description: "ASLR not fully enabled",
-              remediation_command: "sysctl",
-              remediation_args: ["-w", "kernel.randomize_va_space=2"],
-              rollback_command: "sysctl",
-              rollback_args: ["-w", "kernel.randomize_va_space=0"],
-              before_state: "0",
-              after_state: "2",
-              status: "success",
-              timestamp: "2025-01-01T00:00:01Z",
-            },
+            { finding_id: "HARD-001", description: "ASLR not fully enabled", remediation_command: "sysctl", remediation_args: ["-w", "kernel.randomize_va_space=2"], rollback_command: "sysctl", rollback_args: ["-w", "kernel.randomize_va_space=0"], before_state: "0", after_state: "2", status: "success", timestamp: "2025-01-01T00:00:01Z" },
           ],
           summary: { total: 1, successful: 1, failed: 0, skipped: 0, rolled_back: 0 },
         };
@@ -680,9 +620,9 @@ describe("meta tools", () => {
         mockExistsSync.mockReturnValue(true);
         mockReadFileSync.mockReturnValue(JSON.stringify(sessionData));
 
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "status",
+          action: "remediate_status",
           session_id: "rem-123456-abc",
           output_format: "text",
         });
@@ -694,9 +634,9 @@ describe("meta tools", () => {
 
       it("should error when specific session not found", async () => {
         mockExistsSync.mockReturnValue(false);
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "status",
+          action: "remediate_status",
           session_id: "rem-nonexistent",
           output_format: "text",
         });
@@ -705,31 +645,18 @@ describe("meta tools", () => {
       });
 
       it("should list all sessions when no session_id", async () => {
-        // First call: existsSync for sessions dir → true
         mockExistsSync.mockReturnValue(true);
         mockReaddirSync.mockReturnValue(["rem-111.json", "rem-222.json"] as any);
         mockReadFileSync.mockImplementation((path: any) => {
           if (String(path).includes("rem-111")) {
-            return JSON.stringify({
-              session_id: "rem-111",
-              created_at: "2025-01-01T00:00:00Z",
-              status: "completed",
-              actions: [],
-              summary: { total: 2, successful: 2, failed: 0, skipped: 0, rolled_back: 0 },
-            });
+            return JSON.stringify({ session_id: "rem-111", created_at: "2025-01-01T00:00:00Z", status: "completed", actions: [], summary: { total: 2, successful: 2, failed: 0, skipped: 0, rolled_back: 0 } });
           }
-          return JSON.stringify({
-            session_id: "rem-222",
-            created_at: "2025-01-02T00:00:00Z",
-            status: "partial",
-            actions: [],
-            summary: { total: 3, successful: 1, failed: 1, skipped: 1, rolled_back: 0 },
-          });
+          return JSON.stringify({ session_id: "rem-222", created_at: "2025-01-02T00:00:00Z", status: "partial", actions: [], summary: { total: 3, successful: 1, failed: 1, skipped: 1, rolled_back: 0 } });
         });
 
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "status",
+          action: "remediate_status",
           output_format: "text",
         });
         expect(result.isError).toBeUndefined();
@@ -740,9 +667,9 @@ describe("meta tools", () => {
 
       it("should show no sessions found when directory missing", async () => {
         mockExistsSync.mockReturnValue(false);
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "status",
+          action: "remediate_status",
           output_format: "text",
         });
         expect(result.isError).toBeUndefined();
@@ -752,9 +679,9 @@ describe("meta tools", () => {
       it("should show no sessions found when directory is empty", async () => {
         mockExistsSync.mockReturnValue(true);
         mockReaddirSync.mockReturnValue([]);
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "status",
+          action: "remediate_status",
           output_format: "text",
         });
         expect(result.isError).toBeUndefined();
@@ -764,17 +691,11 @@ describe("meta tools", () => {
       it("should return JSON session list", async () => {
         mockExistsSync.mockReturnValue(true);
         mockReaddirSync.mockReturnValue(["rem-111.json"] as any);
-        mockReadFileSync.mockReturnValue(JSON.stringify({
-          session_id: "rem-111",
-          created_at: "2025-01-01T00:00:00Z",
-          status: "completed",
-          actions: [],
-          summary: { total: 1, successful: 1, failed: 0, skipped: 0, rolled_back: 0 },
-        }));
+        mockReadFileSync.mockReturnValue(JSON.stringify({ session_id: "rem-111", created_at: "2025-01-01T00:00:00Z", status: "completed", actions: [], summary: { total: 1, successful: 1, failed: 0, skipped: 0, rolled_back: 0 } }));
 
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "status",
+          action: "remediate_status",
           output_format: "json",
         });
         expect(result.isError).toBeUndefined();
@@ -784,33 +705,32 @@ describe("meta tools", () => {
       });
     });
 
-    // ── Error handling ───────────────────────────────────────────────
+    // ── Error handling ─────────────────────────────────────────────────────
 
     describe("error handling", () => {
-      it("should handle command failures gracefully in plan", async () => {
+      it("should handle command failures gracefully in remediate_plan", async () => {
         setupRemediateSpawnMocks({
           "sysctl -a": { stdout: "", stderr: "permission denied", exitCode: 1 },
           "grep -E": { stdout: "", stderr: "no such file", exitCode: 2 },
           "iptables -L -n": { stdout: "", stderr: "permission denied", exitCode: 1 },
           "lynis audit": { stdout: "", stderr: "not found", exitCode: 127 },
         });
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "plan",
+          action: "remediate_plan",
           source: "all",
           severity_filter: "medium",
           output_format: "text",
         });
-        // Should not error — just return no findings
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("No findings");
       });
 
-      it("should handle missing session directory in status", async () => {
+      it("should handle missing session directory in remediate_status", async () => {
         mockExistsSync.mockReturnValue(false);
-        const handler = tools.get("auto_remediate")!.handler;
+        const handler = tools.get("defense_mgmt")!.handler;
         const result = await handler({
-          action: "status",
+          action: "remediate_status",
           output_format: "json",
         });
         expect(result.isError).toBeUndefined();

@@ -138,20 +138,17 @@ describe("hardening tools", () => {
   // ── Registration ──────────────────────────────────────────────────────
 
   it("should register hardening tools", () => {
-    expect(tools.has("harden_sysctl")).toBe(true);
-    expect(tools.has("harden_service")).toBe(true);
-    expect(tools.has("harden_permissions")).toBe(true);
-    expect(tools.has("harden_systemd")).toBe(true);
     expect(tools.has("harden_kernel")).toBe(true);
-    expect(tools.has("harden_bootloader")).toBe(true);
+    expect(tools.has("harden_host")).toBe(true);
+    expect(tools.size).toBe(2);
   });
 
   // ── TOOL-007: Path traversal validation ──────────────────────────────
 
   it("should reject path containing .. sequences (TOOL-007)", async () => {
-    const handler = tools.get("harden_permissions")!.handler;
+    const handler = tools.get("harden_host")!.handler;
     const result = await handler({
-      action: "check",
+      action: "permissions_check",
       path: "/etc/../root/.ssh/authorized_keys",
     });
     expect(result.isError).toBe(true);
@@ -159,9 +156,9 @@ describe("hardening tools", () => {
   });
 
   it("should reject path with encoded .. traversal (TOOL-007)", async () => {
-    const handler = tools.get("harden_permissions")!.handler;
+    const handler = tools.get("harden_host")!.handler;
     const result = await handler({
-      action: "fix",
+      action: "permissions_fix",
       path: "/tmp/../../etc/shadow",
       mode: "600",
     });
@@ -170,9 +167,9 @@ describe("hardening tools", () => {
   });
 
   it("should reject path outside allowed directories (TOOL-007)", async () => {
-    const handler = tools.get("harden_permissions")!.handler;
+    const handler = tools.get("harden_host")!.handler;
     const result = await handler({
-      action: "check",
+      action: "permissions_check",
       path: "/proc/self/environ",
     });
     expect(result.isError).toBe(true);
@@ -180,18 +177,18 @@ describe("hardening tools", () => {
   });
 
   it("should accept path within /etc (TOOL-007)", async () => {
-    const handler = tools.get("harden_permissions")!.handler;
+    const handler = tools.get("harden_host")!.handler;
     const result = await handler({
-      action: "check",
+      action: "permissions_check",
       path: "/etc/ssh/sshd_config",
     });
     expect(result.isError).toBeUndefined();
   });
 
   it("should accept path within /var (TOOL-007)", async () => {
-    const handler = tools.get("harden_permissions")!.handler;
+    const handler = tools.get("harden_host")!.handler;
     const result = await handler({
-      action: "check",
+      action: "permissions_check",
       path: "/var/log/auth.log",
     });
     expect(result.isError).toBeUndefined();
@@ -199,173 +196,173 @@ describe("hardening tools", () => {
 
   // ── Required params ──────────────────────────────────────────────────
 
-  it("should require path for check action", async () => {
-    const handler = tools.get("harden_permissions")!.handler;
-    const result = await handler({ action: "check" });
+  it("should require path for permissions_check action", async () => {
+    const handler = tools.get("harden_host")!.handler;
+    const result = await handler({ action: "permissions_check" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("path");
   });
 
-  it("should require path for fix action", async () => {
-    const handler = tools.get("harden_permissions")!.handler;
-    const result = await handler({ action: "fix" });
+  it("should require path for permissions_fix action", async () => {
+    const handler = tools.get("harden_host")!.handler;
+    const result = await handler({ action: "permissions_fix" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("path");
   });
 
-  it("should require mode/owner/group for fix action", async () => {
-    const handler = tools.get("harden_permissions")!.handler;
+  it("should require mode/owner/group for permissions_fix action", async () => {
+    const handler = tools.get("harden_host")!.handler;
     const result = await handler({
-      action: "fix",
+      action: "permissions_fix",
       path: "/etc/passwd",
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("mode");
   });
 
-  // ── harden_sysctl tests ──────────────────────────────────────────────
+  // ── harden_kernel (sysctl) tests ─────────────────────────────────────
 
-  describe("harden_sysctl", () => {
-    it("should handle sysctl get with key", async () => {
-      const handler = tools.get("harden_sysctl")!.handler;
+  describe("harden_kernel sysctl actions", () => {
+    it("should handle sysctl_get with key", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
       const result = await handler({
-        action: "get",
+        action: "sysctl_get",
         key: "net.ipv4.ip_forward",
       });
       expect(result.content).toBeDefined();
     });
 
-    it("should handle sysctl get all", async () => {
-      const handler = tools.get("harden_sysctl")!.handler;
+    it("should handle sysctl_get all", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
       const result = await handler({
-        action: "get",
+        action: "sysctl_get",
         all: true,
       });
       expect(result.content).toBeDefined();
     });
 
-    it("should handle sysctl get with pattern", async () => {
-      const handler = tools.get("harden_sysctl")!.handler;
+    it("should handle sysctl_get with pattern", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
       const result = await handler({
-        action: "get",
+        action: "sysctl_get",
         pattern: "ipv4",
       });
       expect(result.content).toBeDefined();
     });
 
-    it("should require key or all/pattern for get", async () => {
-      const handler = tools.get("harden_sysctl")!.handler;
-      const result = await handler({ action: "get" });
-      expect(result.isError).toBe(true);
-    });
-
-    it("should require key for set action", async () => {
-      const handler = tools.get("harden_sysctl")!.handler;
-      const result = await handler({ action: "set", value: "0", dry_run: true });
-      expect(result.isError).toBe(true);
-    });
-
-    it("should require value for set action", async () => {
-      const handler = tools.get("harden_sysctl")!.handler;
-      const result = await handler({ action: "set", key: "net.ipv4.ip_forward", dry_run: true });
-      expect(result.isError).toBe(true);
-    });
-
-    it("should handle sysctl audit action", async () => {
-      const handler = tools.get("harden_sysctl")!.handler;
-      const result = await handler({ action: "audit", category: "all" });
-      expect(result.content).toBeDefined();
-    });
-  });
-
-  // ── harden_service tests ─────────────────────────────────────────────
-
-  describe("harden_service", () => {
-    it("should require service for manage action", async () => {
-      const handler = tools.get("harden_service")!.handler;
-      const result = await handler({ action: "manage", service_action: "status" });
-      expect(result.isError).toBe(true);
-    });
-
-    it("should require service_action for manage action", async () => {
-      const handler = tools.get("harden_service")!.handler;
-      const result = await handler({ action: "manage", service: "ssh.service" });
-      expect(result.isError).toBe(true);
-    });
-
-    it("should handle service audit action", async () => {
-      const handler = tools.get("harden_service")!.handler;
-      const result = await handler({ action: "audit" });
-      expect(result.content).toBeDefined();
-    });
-  });
-
-  // ── harden_permissions audit ─────────────────────────────────────────
-
-  describe("harden_permissions audit", () => {
-    it("should handle audit action with default scope", async () => {
-      const handler = tools.get("harden_permissions")!.handler;
-      const result = await handler({ action: "audit", scope: "all" });
-      expect(result.content).toBeDefined();
-    });
-
-    it("should handle audit action with specific scope", async () => {
-      const handler = tools.get("harden_permissions")!.handler;
-      const result = await handler({ action: "audit", scope: "ssh" });
-      expect(result.content).toBeDefined();
-    });
-  });
-
-  // ── harden_kernel tests ──────────────────────────────────────────────
-
-  describe("harden_kernel", () => {
-    it("should handle kernel audit action", async () => {
+    it("should require key or all/pattern for sysctl_get", async () => {
       const handler = tools.get("harden_kernel")!.handler;
-      const result = await handler({ action: "audit", check_type: "all" });
-      expect(result.content).toBeDefined();
+      const result = await handler({ action: "sysctl_get" });
+      expect(result.isError).toBe(true);
     });
 
-    it("should handle modules action", async () => {
+    it("should require key for sysctl_set action", async () => {
       const handler = tools.get("harden_kernel")!.handler;
-      const result = await handler({ action: "modules" });
-      expect(result.content).toBeDefined();
+      const result = await handler({ action: "sysctl_set", value: "0", dry_run: true });
+      expect(result.isError).toBe(true);
     });
 
-    it("should handle coredump action in dry_run", async () => {
+    it("should require value for sysctl_set action", async () => {
       const handler = tools.get("harden_kernel")!.handler;
-      const result = await handler({ action: "coredump", dry_run: true });
+      const result = await handler({ action: "sysctl_set", key: "net.ipv4.ip_forward", dry_run: true });
+      expect(result.isError).toBe(true);
+    });
+
+    it("should handle sysctl_audit action", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({ action: "sysctl_audit", category: "all" });
       expect(result.content).toBeDefined();
     });
   });
 
-  // ── harden_bootloader tests ──────────────────────────────────────────
+  // ── harden_host (service) tests ──────────────────────────────────────
 
-  describe("harden_bootloader", () => {
-    it("should handle bootloader audit action", async () => {
-      const handler = tools.get("harden_bootloader")!.handler;
-      const result = await handler({ action: "audit" });
+  describe("harden_host service actions", () => {
+    it("should require service for service_manage action", async () => {
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({ action: "service_manage", service_action: "status" });
+      expect(result.isError).toBe(true);
+    });
+
+    it("should require service_action for service_manage action", async () => {
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({ action: "service_manage", service: "ssh.service" });
+      expect(result.isError).toBe(true);
+    });
+
+    it("should handle service_audit action", async () => {
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({ action: "service_audit" });
+      expect(result.content).toBeDefined();
+    });
+  });
+
+  // ── harden_host (permissions) audit ─────────────────────────────────
+
+  describe("harden_host permissions_audit", () => {
+    it("should handle permissions_audit action with default scope", async () => {
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({ action: "permissions_audit", scope: "all" });
       expect(result.content).toBeDefined();
     });
 
-    it("should require configure_action for configure", async () => {
-      const handler = tools.get("harden_bootloader")!.handler;
-      const result = await handler({ action: "configure", dry_run: true });
+    it("should handle permissions_audit action with specific scope", async () => {
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({ action: "permissions_audit", scope: "ssh" });
+      expect(result.content).toBeDefined();
+    });
+  });
+
+  // ── harden_kernel (kernel) tests ─────────────────────────────────────
+
+  describe("harden_kernel kernel actions", () => {
+    it("should handle kernel_audit action", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({ action: "kernel_audit", check_type: "all" });
+      expect(result.content).toBeDefined();
+    });
+
+    it("should handle kernel_modules action", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({ action: "kernel_modules" });
+      expect(result.content).toBeDefined();
+    });
+
+    it("should handle kernel_coredump action in dry_run", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({ action: "kernel_coredump", dry_run: true });
+      expect(result.content).toBeDefined();
+    });
+  });
+
+  // ── harden_kernel (bootloader) tests ────────────────────────────────
+
+  describe("harden_kernel bootloader actions", () => {
+    it("should handle bootloader_audit action", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({ action: "bootloader_audit" });
+      expect(result.content).toBeDefined();
+    });
+
+    it("should require configure_action for bootloader_configure", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({ action: "bootloader_configure", dry_run: true });
       expect(result.isError).toBe(true);
     });
   });
 
-  // ── usb_device_control tests ──────────────────────────────────────────
+  // ── harden_host (usb_device_control) tests ───────────────────────────
 
-  describe("usb_device_control", () => {
+  describe("harden_host usb actions", () => {
     // ── Registration ────────────────────────────────────────────────
 
-    it("should register usb_device_control tool", () => {
-      expect(tools.has("usb_device_control")).toBe(true);
+    it("should register harden_host tool (covers usb_device_control)", () => {
+      expect(tools.has("harden_host")).toBe(true);
     });
 
-    // ── audit_devices ───────────────────────────────────────────────
+    // ── usb_audit_devices ────────────────────────────────────────────
 
-    describe("audit_devices", () => {
+    describe("usb_audit_devices", () => {
       it("should list connected USB devices", async () => {
         setupSpawnMock({
           "lsusb": { stdout: "Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub\nBus 001 Device 002: ID 0781:5583 SanDisk Corp.", stderr: "", exitCode: 0 },
@@ -375,8 +372,8 @@ describe("hardening tools", () => {
           "systemctl": { stdout: "inactive", stderr: "", exitCode: 3 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices" });
         expect(result.content).toBeDefined();
         expect(result.isError).toBeUndefined();
       });
@@ -390,8 +387,8 @@ describe("hardening tools", () => {
           "systemctl": { stdout: "", stderr: "", exitCode: 4 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices", output_format: "json" });
         expect(result.content).toBeDefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.storageDeviceCount).toBe(2);
@@ -406,8 +403,8 @@ describe("hardening tools", () => {
           "systemctl": { stdout: "", stderr: "", exitCode: 4 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.usbStorageModuleLoaded).toBe(false);
       });
@@ -422,8 +419,8 @@ describe("hardening tools", () => {
           "systemctl": { stdout: "", stderr: "", exitCode: 4 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.existingUdevRules.length).toBeGreaterThan(0);
       });
@@ -437,8 +434,8 @@ describe("hardening tools", () => {
           "systemctl": { stdout: "● usbguard.service - USBGuard\n   Active: active (running)", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.usbguardInstalled).toBe(true);
         expect(parsed.usbguardRunning).toBe(true);
@@ -453,25 +450,25 @@ describe("hardening tools", () => {
           "systemctl": { stdout: "", stderr: "", exitCode: 4 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.lsusbAvailable).toBe(false);
         expect(parsed.lsusbNote).toContain("lsusb not found");
       });
     });
 
-    // ── block_storage ───────────────────────────────────────────────
+    // ── usb_block_storage ────────────────────────────────────────────
 
-    describe("block_storage", () => {
+    describe("usb_block_storage", () => {
       it("should block storage via modprobe method", async () => {
         setupSpawnMock({
           "modprobe": { stdout: "", stderr: "", exitCode: 0 },
           "lsmod": { stdout: "some_other_module  65536  0", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "block_storage", block_method: "modprobe", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_block_storage", block_method: "modprobe", output_format: "json" });
         expect(result.content).toBeDefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.method).toBe("modprobe");
@@ -484,8 +481,8 @@ describe("hardening tools", () => {
           "udevadm": { stdout: "", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "block_storage", block_method: "udev", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_block_storage", block_method: "udev", output_format: "json" });
         expect(result.content).toBeDefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.method).toBe("udev");
@@ -499,8 +496,8 @@ describe("hardening tools", () => {
           "lsmod": { stdout: "", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        await handler({ action: "block_storage", block_method: "modprobe" });
+        const handler = tools.get("harden_host")!.handler;
+        await handler({ action: "usb_block_storage", block_method: "modprobe" });
         expect(mockSecureWriteFileSync).toHaveBeenCalledWith(
           "/etc/modprobe.d/usb-storage-block.conf",
           expect.stringContaining("blacklist usb-storage"),
@@ -518,23 +515,23 @@ describe("hardening tools", () => {
           return createMockChildProcess("", "", 0) as any;
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        await handler({ action: "block_storage", block_method: "modprobe" });
+        const handler = tools.get("harden_host")!.handler;
+        await handler({ action: "usb_block_storage", block_method: "modprobe" });
         expect(calls.some((c) => c.includes("modprobe -r usb-storage"))).toBe(true);
       });
     });
 
-    // ── whitelist ───────────────────────────────────────────────────
+    // ── usb_whitelist ────────────────────────────────────────────────
 
-    describe("whitelist", () => {
+    describe("usb_whitelist", () => {
       it("should add a device to the whitelist", async () => {
         mockExistsSync.mockReturnValue(false);
         setupSpawnMock({
           "lsusb": { stdout: "Bus 001 Device 002: ID 0781:5583 SanDisk Corp. Ultra Fit", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "whitelist", device_id: "0781:5583", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_whitelist", device_id: "0781:5583", output_format: "json" });
         expect(result.content).toBeDefined();
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.status).toBe("added");
@@ -548,8 +545,8 @@ describe("hardening tools", () => {
           devices: [{ device_id: "0781:5583", description: "SanDisk", added_date: "2025-01-01T00:00:00Z" }],
         }));
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "whitelist", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_whitelist", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.status).toBe("list");
         expect(parsed.totalDevices).toBe(1);
@@ -558,8 +555,8 @@ describe("hardening tools", () => {
       it("should handle empty whitelist", async () => {
         mockExistsSync.mockReturnValue(false);
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "whitelist", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_whitelist", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.status).toBe("list");
         expect(parsed.totalDevices).toBe(0);
@@ -574,23 +571,23 @@ describe("hardening tools", () => {
           "lsusb": { stdout: "", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "whitelist", device_id: "0781:5583", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_whitelist", device_id: "0781:5583", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.status).toBe("duplicate");
       });
 
       it("should reject invalid device_id format", async () => {
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "whitelist", device_id: "invalid-id" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_whitelist", device_id: "invalid-id" });
         expect(result.isError).toBe(true);
         expect(result.content[0].text).toContain("Invalid device_id format");
       });
     });
 
-    // ── monitor ─────────────────────────────────────────────────────
+    // ── usb_monitor ──────────────────────────────────────────────────
 
-    describe("monitor", () => {
+    describe("usb_monitor", () => {
       it("should report dmesg USB events", async () => {
         setupSpawnMock({
           "dmesg": { stdout: "[12345.678] usb 1-1: new device\n[12346.789] usb 1-1: USB disconnect", stderr: "", exitCode: 0 },
@@ -599,8 +596,8 @@ describe("hardening tools", () => {
           "lsusb": { stdout: "Bus 001 Device 001: ID 1d6b:0002", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "monitor", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_monitor", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.dmesgEventCount).toBe(2);
       });
@@ -613,8 +610,8 @@ describe("hardening tools", () => {
           "lsusb": { stdout: "", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "monitor", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_monitor", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.journalctlEventCount).toBe(2);
       });
@@ -627,8 +624,8 @@ describe("hardening tools", () => {
           "lsusb": { stdout: "", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "monitor", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_monitor", output_format: "json" });
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.totalUsbEvents).toBe(0);
       });
@@ -642,8 +639,8 @@ describe("hardening tools", () => {
           throw new Error("spawn failed");
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices", output_format: "json" });
         // Should not crash — returns gracefully with error info in stdout/stderr
         expect(result.content).toBeDefined();
       });
@@ -657,8 +654,8 @@ describe("hardening tools", () => {
           "systemctl": { stdout: "", stderr: "error", exitCode: 1 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices" });
         // Should handle gracefully, not crash
         expect(result.content).toBeDefined();
       });
@@ -667,7 +664,7 @@ describe("hardening tools", () => {
     // ── JSON output format ──────────────────────────────────────────
 
     describe("output format", () => {
-      it("should return JSON format when requested for audit_devices", async () => {
+      it("should return JSON format when requested for usb_audit_devices", async () => {
         setupSpawnMock({
           "lsusb": { stdout: "Bus 001 Device 001: ID 1d6b:0002", stderr: "", exitCode: 0 },
           "lsblk": { stdout: "NAME TRAN TYPE", stderr: "", exitCode: 0 },
@@ -676,14 +673,14 @@ describe("hardening tools", () => {
           "systemctl": { stdout: "", stderr: "", exitCode: 4 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "audit_devices", output_format: "json" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_audit_devices", output_format: "json" });
         // formatToolOutput returns JSON.stringify
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.action).toBe("audit_devices");
       });
 
-      it("should return text format by default for monitor", async () => {
+      it("should return text format by default for usb_monitor", async () => {
         setupSpawnMock({
           "dmesg": { stdout: "", stderr: "", exitCode: 0 },
           "journalctl": { stdout: "", stderr: "", exitCode: 1 },
@@ -691,8 +688,8 @@ describe("hardening tools", () => {
           "lsusb": { stdout: "", stderr: "", exitCode: 0 },
         });
 
-        const handler = tools.get("usb_device_control")!.handler;
-        const result = await handler({ action: "monitor" });
+        const handler = tools.get("harden_host")!.handler;
+        const result = await handler({ action: "usb_monitor" });
         expect(result.content[0].text).toContain("USB Device Control");
       });
     });

@@ -1,7 +1,7 @@
 {
   "name": "defense-mcp-server",
-  "version": "0.6.0",
-  "description": "Defense MCP Server — 94 defensive security tools for system hardening and threat detection",
+  "version": "0.7.0",
+  "description": "Defense MCP Server — 31 domain-grouped defensive security tools for system hardening and threat detection",
   "type": "module",
   "main": "build/index.js",
   "bin": {

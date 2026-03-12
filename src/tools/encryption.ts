@@ -1,8 +1,11 @@
 /**
  * Encryption and cryptography tools for Kali Defense MCP Server.
  *
- * Registers 4 tools: crypto_tls (actions: remote_audit, cert_expiry, config_audit),
- * crypto_gpg_keys, crypto_luks_manage, crypto_file_hash.
+ * Registers 1 tool: crypto (actions: tls_remote_audit, tls_cert_expiry, tls_config_audit,
+ * gpg_list, gpg_generate, gpg_export, gpg_import, gpg_verify,
+ * luks_status, luks_dump, luks_open, luks_close, luks_list,
+ * file_hash, cert_inventory, cert_auto_renew_check, cert_ca_audit,
+ * cert_ocsp_check, cert_ct_log_monitor)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -178,181 +181,74 @@ async function runCertCommand(
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerEncryptionTools(server: McpServer): void {
-  // ── 1. crypto_tls (merged: remote_audit, cert_expiry, config_audit) ───
-
   server.tool(
-    "crypto_tls",
-    "TLS/SSL security: audit remote host TLS config, check certificate expiry, or audit local web server TLS configuration.",
+    "crypto",
+    "Cryptography and encryption tools: TLS/SSL audit, GPG key management, LUKS volume management, file integrity hashing, and certificate lifecycle management.",
     {
-      action: z.enum(["remote_audit", "cert_expiry", "config_audit"]).describe("Action: remote_audit=audit remote TLS, cert_expiry=check cert expiry, config_audit=audit local TLS config"),
-      // remote_audit params
-      host: z.string().optional().describe("Target hostname or IP address (remote_audit/cert_expiry)"),
-      port: z.number().optional().default(443).describe("Target port (remote_audit/cert_expiry)"),
-      check_ciphers: z.boolean().optional().default(true).describe("Check for weak cipher suites (remote_audit)"),
-      check_protocols: z.boolean().optional().default(true).describe("Check for weak protocol versions (remote_audit)"),
-      check_certificate: z.boolean().optional().default(true).describe("Check certificate details (remote_audit)"),
-      // cert_expiry params
-      cert_path: z.string().optional().describe("Local certificate file path to check (cert_expiry)"),
-      warn_days: z.number().optional().default(30).describe("Days before expiry to issue a warning (cert_expiry)"),
-      // config_audit params
-      service: z.enum(["apache", "nginx", "system", "all"]).optional().default("all").describe("Service to audit TLS config for (config_audit)"),
+      action: z.enum([
+        "tls_remote_audit",
+        "tls_cert_expiry",
+        "tls_config_audit",
+        "gpg_list",
+        "gpg_generate",
+        "gpg_export",
+        "gpg_import",
+        "gpg_verify",
+        "luks_status",
+        "luks_dump",
+        "luks_open",
+        "luks_close",
+        "luks_list",
+        "file_hash",
+        "cert_inventory",
+        "cert_auto_renew_check",
+        "cert_ca_audit",
+        "cert_ocsp_check",
+        "cert_ct_log_monitor",
+      ]).describe("Action to perform"),
+      // tls params
+      host: z.string().optional().describe("Target hostname or IP address (tls_remote_audit/tls_cert_expiry)"),
+      port: z.number().optional().default(443).describe("Target port (tls_remote_audit/tls_cert_expiry)"),
+      check_ciphers: z.boolean().optional().default(true).describe("Check for weak cipher suites (tls_remote_audit)"),
+      check_protocols: z.boolean().optional().default(true).describe("Check for weak protocol versions (tls_remote_audit)"),
+      check_certificate: z.boolean().optional().default(true).describe("Check certificate details (tls_remote_audit)"),
+      cert_path: z.string().optional().describe("Local certificate file path (tls_cert_expiry / cert_ocsp_check)"),
+      warn_days: z.number().optional().default(30).describe("Days before expiry to warn (tls_cert_expiry)"),
+      service: z.enum(["apache", "nginx", "system", "all"]).optional().default("all").describe("Service to audit TLS config for (tls_config_audit)"),
+      // gpg params
+      key_id: z.string().optional().describe("GPG key ID (gpg_export/gpg_verify)"),
+      file_path: z.string().optional().describe("File path (gpg_import/gpg_verify)"),
+      dry_run: z.boolean().optional().describe("Preview changes without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
+      // luks params
+      device: z.string().optional().describe("Block device path e.g. /dev/sda2 (luks_status/luks_dump/luks_open)"),
+      name: z.string().optional().describe("Mapper name for luks_open/luks_close/luks_status"),
+      // file_hash params
+      path: z.string().optional().describe("File or directory path to hash (file_hash)"),
+      algorithm: z.enum(["sha256", "sha512", "sha1", "md5"]).optional().default("sha256").describe("Hash algorithm (file_hash)"),
+      recursive: z.boolean().optional().default(false).describe("Recursively hash all files in a directory (file_hash)"),
+      // certificate_lifecycle params
+      domain: z.string().optional().describe("Domain for cert_ocsp_check/cert_ct_log_monitor"),
+      search_paths: z.array(z.string()).optional().describe("Additional paths to search for certificates (cert_inventory)"),
+      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format (cert_* actions)"),
     },
     async (params) => {
       const { action } = params;
 
       switch (action) {
-      // ── remote_audit ────────────────────────────────────────────
-      case "remote_audit": {
-        const { host, port, check_ciphers, check_protocols, check_certificate } = params;
-        if (!host) {
-          return { content: [createErrorContent("host is required for remote_audit action")], isError: true };
-        }
-      try {
-        const validHost = validateTarget(host);
-        const sections: string[] = [];
-        sections.push(`🔐 TLS/SSL Audit: ${validHost}:${port}`);
-        sections.push("=".repeat(50));
-
-        // Basic connection test
-        const connResult = await executeCommand({
-          command: "openssl",
-          args: [
-            "s_client",
-            "-connect",
-            `${validHost}:${port}`,
-            "-servername",
-            validHost,
-            "-brief",
-          ],
-          stdin: "",
-          toolName: "crypto_tls_audit",
-          timeout: getToolTimeout("crypto_tls_audit"),
-        });
-
-        const fullOutput = connResult.stdout + "\n" + connResult.stderr;
-
-        if (connResult.exitCode !== 0 && !fullOutput.includes("Protocol")) {
-          return {
-            content: [
-              createErrorContent(
-                `Failed to connect to ${validHost}:${port}: ${connResult.stderr}`
-              ),
-            ],
-            isError: true,
-          };
-        }
-
-        sections.push("\n📡 Connection Info:");
-        // Extract protocol and cipher from output
-        const protocolMatch = fullOutput.match(/Protocol\s*:\s*(\S+)/);
-        const cipherMatch = fullOutput.match(/Cipher\s*:\s*(\S+)/);
-
-        if (protocolMatch) sections.push(`  Protocol: ${protocolMatch[1]}`);
-        if (cipherMatch) sections.push(`  Cipher: ${cipherMatch[1]}`);
-
-        // Detailed connection for more info
-        const detailResult = await executeCommand({
-          command: "openssl",
-          args: [
-            "s_client",
-            "-connect",
-            `${validHost}:${port}`,
-            "-servername",
-            validHost,
-          ],
-          stdin: "",
-          toolName: "crypto_tls_audit",
-          timeout: getToolTimeout("crypto_tls_audit"),
-        });
-
-        const detailOutput = detailResult.stdout + "\n" + detailResult.stderr;
-
-        // Check certificate details
-        if (check_certificate) {
-          sections.push("\n📜 Certificate Details:");
-
-          const subjectMatch = detailOutput.match(
-            /subject=([^\n]+)/
-          );
-          const issuerMatch = detailOutput.match(
-            /issuer=([^\n]+)/
-          );
-          const datesMatch = detailOutput.match(
-            /Not Before:\s*([^\n]+)[\s\S]*?Not After\s*:\s*([^\n]+)/
-          );
-          const verifyMatch = detailOutput.match(
-            /Verify return code:\s*(\d+)\s*\(([^)]+)\)/
-          );
-
-          if (subjectMatch) sections.push(`  Subject: ${subjectMatch[1].trim()}`);
-          if (issuerMatch) sections.push(`  Issuer: ${issuerMatch[1].trim()}`);
-          if (datesMatch) {
-            sections.push(`  Not Before: ${datesMatch[1].trim()}`);
-            sections.push(`  Not After: ${datesMatch[2].trim()}`);
-
-            // Check expiry
-            const expiryDate = new Date(datesMatch[2].trim());
-            const now = new Date();
-            const daysLeft = Math.floor(
-              (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-            );
-            if (daysLeft < 0) {
-              sections.push(`  ⛔ EXPIRED ${Math.abs(daysLeft)} days ago`);
-            } else if (daysLeft < 30) {
-              sections.push(`  ⚠️ WARNING: Expires in ${daysLeft} days`);
-            } else {
-              sections.push(`  ✅ Valid for ${daysLeft} more days`);
-            }
+        // ── tls_remote_audit ─────────────────────────────────────────
+        case "tls_remote_audit": {
+          const { host, port, check_ciphers, check_protocols, check_certificate } = params;
+          if (!host) {
+            return { content: [createErrorContent("host is required for remote_audit action")], isError: true };
           }
-          if (verifyMatch) {
-            const code = parseInt(verifyMatch[1], 10);
-            const reason = verifyMatch[2];
-            if (code === 0) {
-              sections.push(`  ✅ Verification: OK`);
-            } else {
-              sections.push(`  ⛔ Verification FAILED: ${reason} (code ${code})`);
-            }
-          }
+          try {
+            const validHost = validateTarget(host);
+            const sections: string[] = [];
+            sections.push(`🔐 TLS/SSL Audit: ${validHost}:${port}`);
+            sections.push("=".repeat(50));
 
-          // Check for self-signed
-          if (detailOutput.includes("self signed certificate") ||
-              detailOutput.includes("self-signed")) {
-            sections.push(`  ⚠️ Self-signed certificate detected`);
-          }
-        }
-
-        // Check for weak ciphers
-        if (check_ciphers) {
-          sections.push("\n🔑 Cipher Analysis:");
-          const weakFound = checkWeakCiphers(detailOutput);
-          if (weakFound.length > 0) {
-            sections.push(`  ⛔ Weak ciphers detected: ${weakFound.join(", ")}`);
-          } else {
-            sections.push(`  ✅ No known weak ciphers detected in connection`);
-          }
-        }
-
-        // Check for weak protocols
-        if (check_protocols) {
-          sections.push("\n🔒 Protocol Analysis:");
-          const weakProtos = checkWeakProtocols(detailOutput);
-          if (weakProtos.length > 0) {
-            sections.push(
-              `  ⛔ Weak protocols detected: ${weakProtos.join(", ")}`
-            );
-          } else {
-            sections.push(`  ✅ No weak protocols detected in connection`);
-          }
-
-          // Test specific weak protocols
-          const testProtocols = [
-            { name: "TLSv1", arg: "-tls1" },
-            { name: "TLSv1.1", arg: "-tls1_1" },
-            { name: "TLSv1.2", arg: "-tls1_2" },
-          ];
-
-          for (const proto of testProtocols) {
-            const protoResult = await executeCommand({
+            // Basic connection test
+            const connResult = await executeCommand({
               command: "openssl",
               args: [
                 "s_client",
@@ -360,433 +256,486 @@ export function registerEncryptionTools(server: McpServer): void {
                 `${validHost}:${port}`,
                 "-servername",
                 validHost,
-                proto.arg,
+                "-brief",
               ],
               stdin: "",
               toolName: "crypto_tls_audit",
-              timeout: 10000,
+              timeout: getToolTimeout("crypto_tls_audit"),
             });
 
-            const protoOutput = protoResult.stdout + protoResult.stderr;
-            const connected =
-              protoOutput.includes("Protocol  :") ||
-              protoOutput.includes("Cipher    :") ||
-              (protoResult.exitCode === 0 &&
-                !protoOutput.includes("no protocols available"));
+            const fullOutput = connResult.stdout + "\n" + connResult.stderr;
 
-            if (
-              proto.name === "TLSv1" ||
-              proto.name === "TLSv1.1"
-            ) {
-              if (connected) {
-                sections.push(
-                  `  ⚠️ ${proto.name}: Supported (deprecated, should be disabled)`
+            if (connResult.exitCode !== 0 && !fullOutput.includes("Protocol")) {
+              return {
+                content: [
+                  createErrorContent(
+                    `Failed to connect to ${validHost}:${port}: ${connResult.stderr}`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            sections.push("\n📡 Connection Info:");
+            const protocolMatch = fullOutput.match(/Protocol\s*:\s*(\S+)/);
+            const cipherMatch = fullOutput.match(/Cipher\s*:\s*(\S+)/);
+
+            if (protocolMatch) sections.push(`  Protocol: ${protocolMatch[1]}`);
+            if (cipherMatch) sections.push(`  Cipher: ${cipherMatch[1]}`);
+
+            const detailResult = await executeCommand({
+              command: "openssl",
+              args: [
+                "s_client",
+                "-connect",
+                `${validHost}:${port}`,
+                "-servername",
+                validHost,
+              ],
+              stdin: "",
+              toolName: "crypto_tls_audit",
+              timeout: getToolTimeout("crypto_tls_audit"),
+            });
+
+            const detailOutput = detailResult.stdout + "\n" + detailResult.stderr;
+
+            if (check_certificate) {
+              sections.push("\n📜 Certificate Details:");
+
+              const subjectMatch = detailOutput.match(/subject=([^\n]+)/);
+              const issuerMatch = detailOutput.match(/issuer=([^\n]+)/);
+              const datesMatch = detailOutput.match(
+                /Not Before:\s*([^\n]+)[\s\S]*?Not After\s*:\s*([^\n]+)/
+              );
+              const verifyMatch = detailOutput.match(
+                /Verify return code:\s*(\d+)\s*\(([^)]+)\)/
+              );
+
+              if (subjectMatch) sections.push(`  Subject: ${subjectMatch[1].trim()}`);
+              if (issuerMatch) sections.push(`  Issuer: ${issuerMatch[1].trim()}`);
+              if (datesMatch) {
+                sections.push(`  Not Before: ${datesMatch[1].trim()}`);
+                sections.push(`  Not After: ${datesMatch[2].trim()}`);
+
+                const expiryDate = new Date(datesMatch[2].trim());
+                const now = new Date();
+                const daysLeft = Math.floor(
+                  (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
                 );
-              } else {
-                sections.push(`  ✅ ${proto.name}: Not supported (good)`);
+                if (daysLeft < 0) {
+                  sections.push(`  ⛔ EXPIRED ${Math.abs(daysLeft)} days ago`);
+                } else if (daysLeft < 30) {
+                  sections.push(`  ⚠️ WARNING: Expires in ${daysLeft} days`);
+                } else {
+                  sections.push(`  ✅ Valid for ${daysLeft} more days`);
+                }
               }
-            } else {
-              if (connected) {
-                sections.push(`  ✅ ${proto.name}: Supported`);
-              } else {
-                sections.push(`  ℹ️ ${proto.name}: Not supported`);
+              if (verifyMatch) {
+                const code = parseInt(verifyMatch[1], 10);
+                const reason = verifyMatch[2];
+                if (code === 0) {
+                  sections.push(`  ✅ Verification: OK`);
+                } else {
+                  sections.push(`  ⛔ Verification FAILED: ${reason} (code ${code})`);
+                }
+              }
+
+              if (detailOutput.includes("self signed certificate") ||
+                  detailOutput.includes("self-signed")) {
+                sections.push(`  ⚠️ Self-signed certificate detected`);
               }
             }
+
+            if (check_ciphers) {
+              sections.push("\n🔑 Cipher Analysis:");
+              const weakFound = checkWeakCiphers(detailOutput);
+              if (weakFound.length > 0) {
+                sections.push(`  ⛔ Weak ciphers detected: ${weakFound.join(", ")}`);
+              } else {
+                sections.push(`  ✅ No known weak ciphers detected in connection`);
+              }
+            }
+
+            if (check_protocols) {
+              sections.push("\n🔒 Protocol Analysis:");
+              const weakProtos = checkWeakProtocols(detailOutput);
+              if (weakProtos.length > 0) {
+                sections.push(`  ⛔ Weak protocols detected: ${weakProtos.join(", ")}`);
+              } else {
+                sections.push(`  ✅ No weak protocols detected in connection`);
+              }
+
+              const testProtocols = [
+                { name: "TLSv1", arg: "-tls1" },
+                { name: "TLSv1.1", arg: "-tls1_1" },
+                { name: "TLSv1.2", arg: "-tls1_2" },
+              ];
+
+              for (const proto of testProtocols) {
+                const protoResult = await executeCommand({
+                  command: "openssl",
+                  args: [
+                    "s_client",
+                    "-connect",
+                    `${validHost}:${port}`,
+                    "-servername",
+                    validHost,
+                    proto.arg,
+                  ],
+                  stdin: "",
+                  toolName: "crypto_tls_audit",
+                  timeout: 10000,
+                });
+
+                const protoOutput = protoResult.stdout + protoResult.stderr;
+                const connected =
+                  protoOutput.includes("Protocol  :") ||
+                  protoOutput.includes("Cipher    :") ||
+                  (protoResult.exitCode === 0 &&
+                    !protoOutput.includes("no protocols available"));
+
+                if (proto.name === "TLSv1" || proto.name === "TLSv1.1") {
+                  if (connected) {
+                    sections.push(`  ⚠️ ${proto.name}: Supported (deprecated, should be disabled)`);
+                  } else {
+                    sections.push(`  ✅ ${proto.name}: Not supported (good)`);
+                  }
+                } else {
+                  if (connected) {
+                    sections.push(`  ✅ ${proto.name}: Supported`);
+                  } else {
+                    sections.push(`  ℹ️ ${proto.name}: Not supported`);
+                  }
+                }
+              }
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-      }
+        // ── tls_cert_expiry ──────────────────────────────────────────
+        case "tls_cert_expiry": {
+          const { cert_path, host, port, warn_days } = params;
+          try {
+            if (!cert_path && !host) {
+              return {
+                content: [
+                  createErrorContent(
+                    "Must specify either cert_path (local file) or host (remote check)"
+                  ),
+                ],
+                isError: true,
+              };
+            }
 
-      // ── cert_expiry ─────────────────────────────────────────────
-      case "cert_expiry": {
-        const { cert_path, host, port, warn_days } = params;
-      try {
-        if (!cert_path && !host) {
-          return {
-            content: [
-              createErrorContent(
-                "Must specify either cert_path (local file) or host (remote check)"
-              ),
-            ],
-            isError: true,
-          };
-        }
+            const sections: string[] = [];
+            sections.push("📅 Certificate Expiry Check");
+            sections.push("=".repeat(40));
 
-        const sections: string[] = [];
-        sections.push("📅 Certificate Expiry Check");
-        sections.push("=".repeat(40));
+            let endDate = "";
+            let subject = "";
+            let issuer = "";
 
-        let endDate = "";
-        let subject = "";
-        let issuer = "";
+            if (cert_path) {
+              const validPath = validateCertPath(cert_path);
+              sections.push(`\nLocal certificate: ${validPath}`);
 
-        if (cert_path) {
-          const validPath = validateCertPath(cert_path);
-          sections.push(`\nLocal certificate: ${validPath}`);
-
-          const result = await executeCommand({
-            command: "openssl",
-            args: [
-              "x509",
-              "-in",
-              validPath,
-              "-noout",
-              "-enddate",
-              "-subject",
-              "-issuer",
-            ],
-            toolName: "crypto_cert_expiry",
-            timeout: getToolTimeout("crypto_cert_expiry"),
-          });
-
-          if (result.exitCode !== 0) {
-            return {
-              content: [
-                createErrorContent(
-                  `Failed to read certificate: ${result.stderr}`
-                ),
-              ],
-              isError: true,
-            };
-          }
-
-          const endMatch = result.stdout.match(/notAfter=(.+)/);
-          const subjectMatch = result.stdout.match(/subject=(.+)/);
-          const issuerMatch = result.stdout.match(/issuer=(.+)/);
-
-          if (endMatch) endDate = endMatch[1].trim();
-          if (subjectMatch) subject = subjectMatch[1].trim();
-          if (issuerMatch) issuer = issuerMatch[1].trim();
-        } else if (host) {
-          const validHost = validateTarget(host);
-          sections.push(`\nRemote host: ${validHost}:${port}`);
-
-          const result = await executeCommand({
-            command: "openssl",
-            args: [
-              "s_client",
-              "-connect",
-              `${validHost}:${port}`,
-              "-servername",
-              validHost,
-            ],
-            stdin: "",
-            toolName: "crypto_cert_expiry",
-            timeout: getToolTimeout("crypto_cert_expiry"),
-          });
-
-          const fullOutput = result.stdout + "\n" + result.stderr;
-
-          // Extract dates from the connection output
-          const notAfterMatch = fullOutput.match(
-            /Not After\s*:\s*([^\n]+)/
-          );
-          const subjectMatch = fullOutput.match(/subject=([^\n]+)/);
-          const issuerMatch = fullOutput.match(/issuer=([^\n]+)/);
-
-          if (notAfterMatch) endDate = notAfterMatch[1].trim();
-          if (subjectMatch) subject = subjectMatch[1].trim();
-          if (issuerMatch) issuer = issuerMatch[1].trim();
-
-          if (!endDate) {
-            // Try parsing cert separately via pipe
-            const certMatch = fullOutput.match(
-              /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/
-            );
-            if (certMatch) {
-              const dateResult = await executeCommand({
+              const result = await executeCommand({
                 command: "openssl",
-                args: ["x509", "-noout", "-enddate", "-subject", "-issuer"],
-                stdin: certMatch[0],
+                args: ["x509", "-in", validPath, "-noout", "-enddate", "-subject", "-issuer"],
                 toolName: "crypto_cert_expiry",
+                timeout: getToolTimeout("crypto_cert_expiry"),
+              });
+
+              if (result.exitCode !== 0) {
+                return {
+                  content: [createErrorContent(`Failed to read certificate: ${result.stderr}`)],
+                  isError: true,
+                };
+              }
+
+              const endMatch = result.stdout.match(/notAfter=(.+)/);
+              const subjectMatch = result.stdout.match(/subject=(.+)/);
+              const issuerMatch = result.stdout.match(/issuer=(.+)/);
+
+              if (endMatch) endDate = endMatch[1].trim();
+              if (subjectMatch) subject = subjectMatch[1].trim();
+              if (issuerMatch) issuer = issuerMatch[1].trim();
+            } else if (host) {
+              const validHost = validateTarget(host);
+              sections.push(`\nRemote host: ${validHost}:${port}`);
+
+              const result = await executeCommand({
+                command: "openssl",
+                args: ["s_client", "-connect", `${validHost}:${port}`, "-servername", validHost],
+                stdin: "",
+                toolName: "crypto_cert_expiry",
+                timeout: getToolTimeout("crypto_cert_expiry"),
+              });
+
+              const fullOutput = result.stdout + "\n" + result.stderr;
+
+              const notAfterMatch = fullOutput.match(/Not After\s*:\s*([^\n]+)/);
+              const subjectMatch = fullOutput.match(/subject=([^\n]+)/);
+              const issuerMatch = fullOutput.match(/issuer=([^\n]+)/);
+
+              if (notAfterMatch) endDate = notAfterMatch[1].trim();
+              if (subjectMatch) subject = subjectMatch[1].trim();
+              if (issuerMatch) issuer = issuerMatch[1].trim();
+
+              if (!endDate) {
+                const certMatch = fullOutput.match(
+                  /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/
+                );
+                if (certMatch) {
+                  const dateResult = await executeCommand({
+                    command: "openssl",
+                    args: ["x509", "-noout", "-enddate", "-subject", "-issuer"],
+                    stdin: certMatch[0],
+                    toolName: "crypto_cert_expiry",
+                    timeout: 10000,
+                  });
+                  const endM = dateResult.stdout.match(/notAfter=(.+)/);
+                  const subM = dateResult.stdout.match(/subject=(.+)/);
+                  const issM = dateResult.stdout.match(/issuer=(.+)/);
+                  if (endM) endDate = endM[1].trim();
+                  if (subM) subject = subM[1].trim();
+                  if (issM) issuer = issM[1].trim();
+                }
+              }
+            }
+
+            if (!endDate) {
+              return {
+                content: [createErrorContent("Could not determine certificate expiry date")],
+                isError: true,
+              };
+            }
+
+            if (subject) sections.push(`  Subject: ${subject}`);
+            if (issuer) sections.push(`  Issuer: ${issuer}`);
+            sections.push(`  Expiry: ${endDate}`);
+
+            const expiryDate = new Date(endDate);
+            const now = new Date();
+            const daysLeft = Math.floor(
+              (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+            );
+
+            let status: string;
+            if (daysLeft < 0) {
+              status = "CRITICAL";
+              sections.push(`\n⛔ Status: ${status} - Certificate EXPIRED ${Math.abs(daysLeft)} days ago`);
+            } else if (daysLeft <= warn_days) {
+              status = "WARNING";
+              sections.push(`\n⚠️ Status: ${status} - Certificate expires in ${daysLeft} days (threshold: ${warn_days})`);
+            } else {
+              status = "OK";
+              sections.push(`\n✅ Status: ${status} - Certificate valid for ${daysLeft} more days`);
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── tls_config_audit ─────────────────────────────────────────
+        case "tls_config_audit": {
+          const { service } = params;
+          try {
+            const sections: string[] = [];
+            sections.push("🔍 TLS Configuration Audit");
+            sections.push("=".repeat(40));
+
+            const findings: Array<{ level: string; msg: string }> = [];
+
+            if (service === "apache" || service === "all") {
+              sections.push("\n── Apache TLS Configuration ──");
+
+              const apacheResult = await executeCommand({
+                command: "find",
+                args: ["/etc/apache2/sites-enabled/", "-type", "f", "-name", "*.conf"],
+                toolName: "crypto_tls",
                 timeout: 10000,
               });
-              const endM = dateResult.stdout.match(/notAfter=(.+)/);
-              const subM = dateResult.stdout.match(/subject=(.+)/);
-              const issM = dateResult.stdout.match(/issuer=(.+)/);
-              if (endM) endDate = endM[1].trim();
-              if (subM) subject = subM[1].trim();
-              if (issM) issuer = issM[1].trim();
+
+              if (apacheResult.exitCode === 0 && apacheResult.stdout.trim()) {
+                const confFiles = apacheResult.stdout.trim().split("\n").filter((f) => f.trim());
+
+                for (const confFile of confFiles) {
+                  const catResult = await executeCommand({
+                    command: "cat",
+                    args: [confFile.trim()],
+                    toolName: "crypto_tls",
+                    timeout: 5000,
+                  });
+
+                  if (catResult.exitCode === 0) {
+                    const content = catResult.stdout;
+                    sections.push(`\n  File: ${confFile.trim()}`);
+
+                    const protoMatch = content.match(/SSLProtocol\s+(.+)/);
+                    if (protoMatch) {
+                      sections.push(`  SSLProtocol: ${protoMatch[1].trim()}`);
+                      const proto = protoMatch[1];
+                      if (proto.includes("SSLv3") || proto.includes("TLSv1 ") || proto.includes("TLSv1.0") || proto.includes("TLSv1.1")) {
+                        findings.push({ level: "CRITICAL", msg: `${confFile}: Weak protocol in SSLProtocol: ${protoMatch[1].trim()}` });
+                      }
+                    }
+
+                    const cipherMatch = content.match(/SSLCipherSuite\s+(.+)/);
+                    if (cipherMatch) {
+                      sections.push(`  SSLCipherSuite: ${cipherMatch[1].trim().substring(0, 80)}...`);
+                      const weakCiphers = checkWeakCiphers(cipherMatch[1]);
+                      if (weakCiphers.length > 0) {
+                        findings.push({ level: "WARNING", msg: `${confFile}: Weak ciphers found: ${weakCiphers.join(", ")}` });
+                      }
+                    }
+                  }
+                }
+              } else {
+                sections.push("  Apache not installed or no sites-enabled configuration found.");
+              }
             }
-          }
-        }
 
-        if (!endDate) {
-          return {
-            content: [
-              createErrorContent(
-                "Could not determine certificate expiry date"
-              ),
-            ],
-            isError: true,
-          };
-        }
+            if (service === "nginx" || service === "all") {
+              sections.push("\n── Nginx TLS Configuration ──");
 
-        if (subject) sections.push(`  Subject: ${subject}`);
-        if (issuer) sections.push(`  Issuer: ${issuer}`);
-        sections.push(`  Expiry: ${endDate}`);
+              const nginxResult = await executeCommand({
+                command: "find",
+                args: ["/etc/nginx/", "-type", "f", "-name", "*.conf"],
+                toolName: "crypto_tls",
+                timeout: 10000,
+              });
 
-        // Calculate days until expiry
-        const expiryDate = new Date(endDate);
-        const now = new Date();
-        const daysLeft = Math.floor(
-          (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-        );
+              if (nginxResult.exitCode === 0 && nginxResult.stdout.trim()) {
+                const confFiles = nginxResult.stdout.trim().split("\n").filter((f) => f.trim());
 
-        let status: string;
-        if (daysLeft < 0) {
-          status = "CRITICAL";
-          sections.push(
-            `\n⛔ Status: ${status} - Certificate EXPIRED ${Math.abs(daysLeft)} days ago`
-          );
-        } else if (daysLeft <= warn_days) {
-          status = "WARNING";
-          sections.push(
-            `\n⚠️ Status: ${status} - Certificate expires in ${daysLeft} days (threshold: ${warn_days})`
-          );
-        } else {
-          status = "OK";
-          sections.push(
-            `\n✅ Status: ${status} - Certificate valid for ${daysLeft} more days`
-          );
-        }
+                for (const confFile of confFiles) {
+                  const catResult = await executeCommand({
+                    command: "cat",
+                    args: [confFile.trim()],
+                    toolName: "crypto_tls",
+                    timeout: 5000,
+                  });
 
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-      }
+                  if (catResult.exitCode === 0) {
+                    const content = catResult.stdout;
 
-      // ── config_audit ────────────────────────────────────────────
-      case "config_audit": {
-        const { service } = params;
-      try {
-        const sections: string[] = [];
-        sections.push("🔍 TLS Configuration Audit");
-        sections.push("=".repeat(40));
+                    if (content.includes("ssl_protocols") || content.includes("ssl_ciphers")) {
+                      sections.push(`\n  File: ${confFile.trim()}`);
 
-        const findings: Array<{ level: string; msg: string }> = [];
+                      const protoMatch = content.match(/ssl_protocols\s+([^;]+)/);
+                      if (protoMatch) {
+                        sections.push(`  ssl_protocols: ${protoMatch[1].trim()}`);
+                        const proto = protoMatch[1];
+                        if (proto.includes("SSLv3") || proto.includes("TLSv1 ") || proto.includes("TLSv1.0") || proto.includes("TLSv1.1")) {
+                          findings.push({ level: "CRITICAL", msg: `${confFile}: Weak protocol in ssl_protocols: ${protoMatch[1].trim()}` });
+                        }
+                      }
 
-        // Apache audit
-        if (service === "apache" || service === "all") {
-          sections.push("\n── Apache TLS Configuration ──");
+                      const cipherMatch = content.match(/ssl_ciphers\s+['"]?([^;'"]+)/);
+                      if (cipherMatch) {
+                        sections.push(`  ssl_ciphers: ${cipherMatch[1].trim().substring(0, 80)}...`);
+                        const weakCiphers = checkWeakCiphers(cipherMatch[1]);
+                        if (weakCiphers.length > 0) {
+                          findings.push({ level: "WARNING", msg: `${confFile}: Weak ciphers: ${weakCiphers.join(", ")}` });
+                        }
+                      }
+                    }
+                  }
+                }
+              } else {
+                sections.push("  Nginx not installed or no configuration found.");
+              }
+            }
 
-          const apacheResult = await executeCommand({
-            command: "find",
-            args: ["/etc/apache2/sites-enabled/", "-type", "f", "-name", "*.conf"],
-            toolName: "crypto_tls",
-            timeout: 10000,
-          });
+            if (service === "system" || service === "all") {
+              sections.push("\n── System-Wide Crypto Configuration ──");
 
-          if (apacheResult.exitCode === 0 && apacheResult.stdout.trim()) {
-            const confFiles = apacheResult.stdout.trim().split("\n").filter((f) => f.trim());
-
-            for (const confFile of confFiles) {
-              const catResult = await executeCommand({
+              const opensslResult = await executeCommand({
                 command: "cat",
-                args: [confFile.trim()],
+                args: ["/etc/ssl/openssl.cnf"],
                 toolName: "crypto_tls",
                 timeout: 5000,
               });
 
-              if (catResult.exitCode === 0) {
-                const content = catResult.stdout;
-                sections.push(`\n  File: ${confFile.trim()}`);
+              if (opensslResult.exitCode === 0) {
+                sections.push("\n  OpenSSL config (/etc/ssl/openssl.cnf): Found");
 
-                const protoMatch = content.match(/SSLProtocol\s+(.+)/);
-                if (protoMatch) {
-                  sections.push(`  SSLProtocol: ${protoMatch[1].trim()}`);
-                  const proto = protoMatch[1];
-                  if (proto.includes("SSLv3") || proto.includes("TLSv1 ") || proto.includes("TLSv1.0") || proto.includes("TLSv1.1")) {
-                    findings.push({ level: "CRITICAL", msg: `${confFile}: Weak protocol in SSLProtocol: ${protoMatch[1].trim()}` });
-                  }
-                }
+                const minProtoMatch = opensslResult.stdout.match(/MinProtocol\s*=\s*(\S+)/);
+                if (minProtoMatch) sections.push(`  MinProtocol: ${minProtoMatch[1]}`);
 
-                const cipherMatch = content.match(/SSLCipherSuite\s+(.+)/);
-                if (cipherMatch) {
-                  sections.push(`  SSLCipherSuite: ${cipherMatch[1].trim().substring(0, 80)}...`);
-                  const weakCiphers = checkWeakCiphers(cipherMatch[1]);
-                  if (weakCiphers.length > 0) {
-                    findings.push({ level: "WARNING", msg: `${confFile}: Weak ciphers found: ${weakCiphers.join(", ")}` });
-                  }
-                }
+                const cipherStringMatch = opensslResult.stdout.match(/CipherString\s*=\s*(\S+)/);
+                if (cipherStringMatch) sections.push(`  CipherString: ${cipherStringMatch[1]}`);
+              } else {
+                sections.push("  OpenSSL config: Not found at /etc/ssl/openssl.cnf");
               }
-            }
-          } else {
-            sections.push("  Apache not installed or no sites-enabled configuration found.");
-          }
-        }
 
-        // Nginx audit
-        if (service === "nginx" || service === "all") {
-          sections.push("\n── Nginx TLS Configuration ──");
-
-          const nginxResult = await executeCommand({
-            command: "find",
-            args: ["/etc/nginx/", "-type", "f", "-name", "*.conf"],
-            toolName: "crypto_tls",
-            timeout: 10000,
-          });
-
-          if (nginxResult.exitCode === 0 && nginxResult.stdout.trim()) {
-            const confFiles = nginxResult.stdout.trim().split("\n").filter((f) => f.trim());
-
-            for (const confFile of confFiles) {
-              const catResult = await executeCommand({
+              const policyResult = await executeCommand({
                 command: "cat",
-                args: [confFile.trim()],
+                args: ["/etc/crypto-policies/config"],
                 toolName: "crypto_tls",
                 timeout: 5000,
               });
 
-              if (catResult.exitCode === 0) {
-                const content = catResult.stdout;
-
-                if (content.includes("ssl_protocols") || content.includes("ssl_ciphers")) {
-                  sections.push(`\n  File: ${confFile.trim()}`);
-
-                  const protoMatch = content.match(/ssl_protocols\s+([^;]+)/);
-                  if (protoMatch) {
-                    sections.push(`  ssl_protocols: ${protoMatch[1].trim()}`);
-                    const proto = protoMatch[1];
-                    if (proto.includes("SSLv3") || proto.includes("TLSv1 ") || proto.includes("TLSv1.0") || proto.includes("TLSv1.1")) {
-                      findings.push({ level: "CRITICAL", msg: `${confFile}: Weak protocol in ssl_protocols: ${protoMatch[1].trim()}` });
-                    }
-                  }
-
-                  const cipherMatch = content.match(/ssl_ciphers\s+['"]?([^;'"]+)/);
-                  if (cipherMatch) {
-                    sections.push(`  ssl_ciphers: ${cipherMatch[1].trim().substring(0, 80)}...`);
-                    const weakCiphers = checkWeakCiphers(cipherMatch[1]);
-                    if (weakCiphers.length > 0) {
-                      findings.push({ level: "WARNING", msg: `${confFile}: Weak ciphers: ${weakCiphers.join(", ")}` });
-                    }
-                  }
+              if (policyResult.exitCode === 0 && policyResult.stdout.trim()) {
+                sections.push(`\n  System crypto policy: ${policyResult.stdout.trim()}`);
+                const policy = policyResult.stdout.trim().toUpperCase();
+                if (policy === "LEGACY" || policy === "DEFAULT") {
+                  findings.push({ level: "WARNING", msg: `System crypto policy is '${policyResult.stdout.trim()}' - consider using FUTURE or FIPS` });
                 }
               }
+
+              const versionResult = await executeCommand({
+                command: "openssl",
+                args: ["version"],
+                toolName: "crypto_tls",
+                timeout: 5000,
+              });
+
+              if (versionResult.exitCode === 0) {
+                sections.push(`\n  OpenSSL version: ${versionResult.stdout.trim()}`);
+              }
             }
-          } else {
-            sections.push("  Nginx not installed or no configuration found.");
-          }
-        }
 
-        // System-wide crypto audit
-        if (service === "system" || service === "all") {
-          sections.push("\n── System-Wide Crypto Configuration ──");
+            sections.push("\n── Findings Summary ──");
+            if (findings.length === 0) {
+              sections.push("  ✅ No critical TLS configuration issues found.");
+            } else {
+              const criticals = findings.filter((f) => f.level === "CRITICAL");
+              const warnings = findings.filter((f) => f.level === "WARNING");
 
-          const opensslResult = await executeCommand({
-            command: "cat",
-            args: ["/etc/ssl/openssl.cnf"],
-            toolName: "crypto_tls",
-            timeout: 5000,
-          });
-
-          if (opensslResult.exitCode === 0) {
-            sections.push("\n  OpenSSL config (/etc/ssl/openssl.cnf): Found");
-
-            const minProtoMatch = opensslResult.stdout.match(/MinProtocol\s*=\s*(\S+)/);
-            if (minProtoMatch) sections.push(`  MinProtocol: ${minProtoMatch[1]}`);
-
-            const cipherStringMatch = opensslResult.stdout.match(/CipherString\s*=\s*(\S+)/);
-            if (cipherStringMatch) sections.push(`  CipherString: ${cipherStringMatch[1]}`);
-          } else {
-            sections.push("  OpenSSL config: Not found at /etc/ssl/openssl.cnf");
-          }
-
-          const policyResult = await executeCommand({
-            command: "cat",
-            args: ["/etc/crypto-policies/config"],
-            toolName: "crypto_tls",
-            timeout: 5000,
-          });
-
-          if (policyResult.exitCode === 0 && policyResult.stdout.trim()) {
-            sections.push(`\n  System crypto policy: ${policyResult.stdout.trim()}`);
-            const policy = policyResult.stdout.trim().toUpperCase();
-            if (policy === "LEGACY" || policy === "DEFAULT") {
-              findings.push({ level: "WARNING", msg: `System crypto policy is '${policyResult.stdout.trim()}' - consider using FUTURE or FIPS` });
+              if (criticals.length > 0) {
+                sections.push(`\n  ⛔ Critical (${criticals.length}):`);
+                for (const f of criticals) sections.push(`    - ${f.msg}`);
+              }
+              if (warnings.length > 0) {
+                sections.push(`\n  ⚠️ Warnings (${warnings.length}):`);
+                for (const f of warnings) sections.push(`    - ${f.msg}`);
+              }
             }
-          }
 
-          const versionResult = await executeCommand({
-            command: "openssl",
-            args: ["version"],
-            toolName: "crypto_tls",
-            timeout: 5000,
-          });
-
-          if (versionResult.exitCode === 0) {
-            sections.push(`\n  OpenSSL version: ${versionResult.stdout.trim()}`);
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        // Summary
-        sections.push("\n── Findings Summary ──");
-        if (findings.length === 0) {
-          sections.push("  ✅ No critical TLS configuration issues found.");
-        } else {
-          const criticals = findings.filter((f) => f.level === "CRITICAL");
-          const warnings = findings.filter((f) => f.level === "WARNING");
+        // ── gpg_list ─────────────────────────────────────────────────
+        case "gpg_list": {
+          try {
+            const sections: string[] = [];
+            sections.push(`🔑 GPG Key Management: list`);
+            sections.push("=".repeat(40));
 
-          if (criticals.length > 0) {
-            sections.push(`\n  ⛔ Critical (${criticals.length}):`);
-            for (const f of criticals) sections.push(`    - ${f.msg}`);
-          }
-          if (warnings.length > 0) {
-            sections.push(`\n  ⚠️ Warnings (${warnings.length}):`);
-            for (const f of warnings) sections.push(`    - ${f.msg}`);
-          }
-        }
-
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-      }
-
-      default:
-        return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── 2. crypto_gpg_keys (kept as-is) ──────────────────────────────────────
-
-  server.tool(
-    "crypto_gpg_keys",
-    "Manage GPG keys: list, generate, export, import, or verify signatures",
-    {
-      action: z
-        .enum(["list", "generate", "export", "import", "verify"])
-        .describe("GPG action to perform"),
-      key_id: z
-        .string()
-        .optional()
-        .describe("GPG key ID (for export/verify)"),
-      file_path: z
-        .string()
-        .optional()
-        .describe("File path (for import/verify)"),
-      dry_run: z
-        .boolean()
-        .optional()
-        .describe("Preview changes without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
-    },
-    async ({ action, key_id, file_path, dry_run }) => {
-      try {
-        const sections: string[] = [];
-        sections.push(`🔑 GPG Key Management: ${action}`);
-        sections.push("=".repeat(40));
-
-        switch (action) {
-          case "list": {
             const result = await executeCommand({
               command: "gpg",
               args: ["--list-keys", "--keyid-format", "long"],
@@ -802,7 +751,6 @@ export function registerEncryptionTools(server: McpServer): void {
               sections.push(result.stdout || "No keys found");
             }
 
-            // Also list secret keys
             const secretResult = await executeCommand({
               command: "gpg",
               args: ["--list-secret-keys", "--keyid-format", "long"],
@@ -814,21 +762,27 @@ export function registerEncryptionTools(server: McpServer): void {
               sections.push("\nSecret Keys:");
               sections.push(secretResult.stdout);
             }
-            break;
-          }
 
-          case "generate": {
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── gpg_generate ─────────────────────────────────────────────
+        case "gpg_generate": {
+          const { dry_run } = params;
+          try {
+            const sections: string[] = [];
+            sections.push(`🔑 GPG Key Management: generate`);
+            sections.push("=".repeat(40));
+
             if (dry_run ?? getConfig().dryRun) {
               sections.push("\n[DRY RUN] Would generate a new GPG key pair.");
-              sections.push(
-                "Command: gpg --full-generate-key"
-              );
-              sections.push(
-                "\nNote: Key generation is interactive and requires user input."
-              );
-              sections.push(
-                "To generate non-interactively, create a batch file with parameters."
-              );
+              sections.push("Command: gpg --full-generate-key");
+              sections.push("\nNote: Key generation is interactive and requires user input.");
+              sections.push("To generate non-interactively, create a batch file with parameters.");
               sections.push("\nExample batch file content:");
               sections.push("  %no-protection");
               sections.push("  Key-Type: RSA");
@@ -840,29 +794,33 @@ export function registerEncryptionTools(server: McpServer): void {
               sections.push("  Expire-Date: 1y");
               sections.push("  %commit");
             } else {
-              sections.push(
-                "⚠️ Interactive GPG key generation cannot be run in non-interactive mode."
-              );
-              sections.push(
-                "Use 'gpg --batch --gen-key <batch_file>' for non-interactive generation."
-              );
+              sections.push("⚠️ Interactive GPG key generation cannot be run in non-interactive mode.");
+              sections.push("Use 'gpg --batch --gen-key <batch_file>' for non-interactive generation.");
             }
-            break;
-          }
 
-          case "export": {
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── gpg_export ───────────────────────────────────────────────
+        case "gpg_export": {
+          const { key_id } = params;
+          try {
             if (!key_id) {
               return {
-                content: [
-                  createErrorContent(
-                    "key_id is required for GPG key export"
-                  ),
-                ],
+                content: [createErrorContent("key_id is required for GPG key export")],
                 isError: true,
               };
             }
 
             sanitizeArgs([key_id]);
+
+            const sections: string[] = [];
+            sections.push(`🔑 GPG Key Management: export`);
+            sections.push("=".repeat(40));
 
             const result = await executeCommand({
               command: "gpg",
@@ -873,28 +831,28 @@ export function registerEncryptionTools(server: McpServer): void {
 
             if (result.exitCode !== 0 || !result.stdout.trim()) {
               return {
-                content: [
-                  createErrorContent(
-                    `Failed to export key ${key_id}: ${result.stderr}`
-                  ),
-                ],
+                content: [createErrorContent(`Failed to export key ${key_id}: ${result.stderr}`)],
                 isError: true,
               };
             }
 
             sections.push(`\nExported public key for: ${key_id}`);
             sections.push(result.stdout);
-            break;
-          }
 
-          case "import": {
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── gpg_import ───────────────────────────────────────────────
+        case "gpg_import": {
+          const { file_path, dry_run } = params;
+          try {
             if (!file_path) {
               return {
-                content: [
-                  createErrorContent(
-                    "file_path is required for GPG key import"
-                  ),
-                ],
+                content: [createErrorContent("file_path is required for GPG key import")],
                 isError: true,
               };
             }
@@ -903,10 +861,12 @@ export function registerEncryptionTools(server: McpServer): void {
             // TOOL-023: Validate key file path with containment check
             validateKeyPath(file_path);
 
+            const sections: string[] = [];
+            sections.push(`🔑 GPG Key Management: import`);
+            sections.push("=".repeat(40));
+
             if (dry_run ?? getConfig().dryRun) {
-              sections.push(
-                `\n[DRY RUN] Would import GPG key from: ${file_path}`
-              );
+              sections.push(`\n[DRY RUN] Would import GPG key from: ${file_path}`);
               sections.push(`Command: gpg --import ${file_path}`);
             } else {
               const result = await executeCommand({
@@ -918,11 +878,7 @@ export function registerEncryptionTools(server: McpServer): void {
 
               if (result.exitCode !== 0) {
                 return {
-                  content: [
-                    createErrorContent(
-                      `Failed to import key: ${result.stderr}`
-                    ),
-                  ],
+                  content: [createErrorContent(`Failed to import key: ${result.stderr}`)],
                   isError: true,
                 };
               }
@@ -932,7 +888,7 @@ export function registerEncryptionTools(server: McpServer): void {
 
               logChange(
                 createChangeEntry({
-                  tool: "crypto_gpg_keys",
+                  tool: "crypto",
                   action: "import",
                   target: file_path,
                   after: result.stderr || result.stdout,
@@ -941,17 +897,21 @@ export function registerEncryptionTools(server: McpServer): void {
                 })
               );
             }
-            break;
-          }
 
-          case "verify": {
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── gpg_verify ───────────────────────────────────────────────
+        case "gpg_verify": {
+          const { file_path } = params;
+          try {
             if (!file_path) {
               return {
-                content: [
-                  createErrorContent(
-                    "file_path is required for GPG signature verification"
-                  ),
-                ],
+                content: [createErrorContent("file_path is required for GPG signature verification")],
                 isError: true,
               };
             }
@@ -959,6 +919,10 @@ export function registerEncryptionTools(server: McpServer): void {
             sanitizeArgs([file_path]);
             // TOOL-023: Validate key file path with containment check
             validateKeyPath(file_path);
+
+            const sections: string[] = [];
+            sections.push(`🔑 GPG Key Management: verify`);
+            sections.push("=".repeat(40));
 
             const result = await executeCommand({
               command: "gpg",
@@ -974,60 +938,30 @@ export function registerEncryptionTools(server: McpServer): void {
               sections.push(`\n✅ Signature verification PASSED for: ${file_path}`);
             }
             sections.push(output);
-            break;
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
-
-  // ── 3. crypto_luks_manage (kept as-is) ───────────────────────────────────
-
-  server.tool(
-    "crypto_luks_manage",
-    "Manage LUKS encrypted volumes: check status, dump headers, open/close, or list encrypted devices",
-    {
-      action: z
-        .enum(["status", "dump", "open", "close", "list"])
-        .describe("LUKS management action"),
-      device: z
-        .string()
-        .optional()
-        .describe("Block device path (e.g., /dev/sda2) for status/dump/open"),
-      name: z
-        .string()
-        .optional()
-        .describe("Mapper name for open/close operations"),
-      dry_run: z
-        .boolean()
-        .optional()
-        .describe("Preview changes without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
-    },
-    async ({ action, device, name, dry_run }) => {
-      try {
-        const sections: string[] = [];
-        sections.push(`🔐 LUKS Volume Management: ${action}`);
-        sections.push("=".repeat(40));
-
-        switch (action) {
-          case "status": {
+        // ── luks_status ──────────────────────────────────────────────
+        case "luks_status": {
+          const { name } = params;
+          try {
             if (!name) {
               return {
-                content: [
-                  createErrorContent(
-                    "name (mapper name) is required for status check"
-                  ),
-                ],
+                content: [createErrorContent("name (mapper name) is required for status check")],
                 isError: true,
               };
             }
 
             sanitizeArgs([name]);
+
+            const sections: string[] = [];
+            sections.push(`🔐 LUKS Volume Management: status`);
+            sections.push("=".repeat(40));
 
             const result = await executeCommand({
               command: "sudo",
@@ -1043,23 +977,31 @@ export function registerEncryptionTools(server: McpServer): void {
               sections.push(`\nStatus for /dev/mapper/${name}:`);
               sections.push(result.stdout);
             }
-            break;
-          }
 
-          case "dump": {
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── luks_dump ────────────────────────────────────────────────
+        case "luks_dump": {
+          const { device } = params;
+          try {
             if (!device) {
               return {
-                content: [
-                  createErrorContent(
-                    "device path is required for LUKS header dump"
-                  ),
-                ],
+                content: [createErrorContent("device path is required for LUKS header dump")],
                 isError: true,
               };
             }
 
             sanitizeArgs([device]);
             assertNoTraversal(device);
+
+            const sections: string[] = [];
+            sections.push(`🔐 LUKS Volume Management: dump`);
+            sections.push("=".repeat(40));
 
             const result = await executeCommand({
               command: "sudo",
@@ -1070,28 +1012,28 @@ export function registerEncryptionTools(server: McpServer): void {
 
             if (result.exitCode !== 0) {
               return {
-                content: [
-                  createErrorContent(
-                    `Failed to dump LUKS header for ${device}: ${result.stderr}`
-                  ),
-                ],
+                content: [createErrorContent(`Failed to dump LUKS header for ${device}: ${result.stderr}`)],
                 isError: true,
               };
             }
 
             sections.push(`\nLUKS Header Dump for ${device}:`);
             sections.push(result.stdout);
-            break;
-          }
 
-          case "open": {
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── luks_open ────────────────────────────────────────────────
+        case "luks_open": {
+          const { device, name, dry_run } = params;
+          try {
             if (!device || !name) {
               return {
-                content: [
-                  createErrorContent(
-                    "Both device and name are required for LUKS open"
-                  ),
-                ],
+                content: [createErrorContent("Both device and name are required for LUKS open")],
                 isError: true,
               };
             }
@@ -1099,62 +1041,59 @@ export function registerEncryptionTools(server: McpServer): void {
             sanitizeArgs([device, name]);
             assertNoTraversal(device);
 
+            const sections: string[] = [];
+            sections.push(`🔐 LUKS Volume Management: open`);
+            sections.push("=".repeat(40));
+
             if (dry_run ?? getConfig().dryRun) {
-              sections.push(
-                `\n[DRY RUN] Would open LUKS volume:`
-              );
+              sections.push(`\n[DRY RUN] Would open LUKS volume:`);
               sections.push(`  Device: ${device}`);
               sections.push(`  Mapper name: ${name}`);
-              sections.push(
-                `  Command: sudo cryptsetup luksOpen ${device} ${name}`
-              );
-              sections.push(
-                "\nNote: This operation requires a passphrase and cannot be run non-interactively without a key file."
-              );
+              sections.push(`  Command: sudo cryptsetup luksOpen ${device} ${name}`);
+              sections.push("\nNote: This operation requires a passphrase and cannot be run non-interactively without a key file.");
             } else {
-              sections.push(
-                "⚠️ Interactive LUKS open requires a passphrase."
-              );
-              sections.push(
-                "Use a key file with: sudo cryptsetup luksOpen --key-file <keyfile> <device> <name>"
-              );
+              sections.push("⚠️ Interactive LUKS open requires a passphrase.");
+              sections.push("Use a key file with: sudo cryptsetup luksOpen --key-file <keyfile> <device> <name>");
 
               logChange(
                 createChangeEntry({
-                  tool: "crypto_luks_manage",
+                  tool: "crypto",
                   action: "open_attempted",
                   target: device,
                   dryRun: false,
                   success: false,
-                  error:
-                    "Interactive passphrase required, cannot run non-interactively",
+                  error: "Interactive passphrase required, cannot run non-interactively",
                 })
               );
             }
-            break;
-          }
 
-          case "close": {
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── luks_close ───────────────────────────────────────────────
+        case "luks_close": {
+          const { name, dry_run } = params;
+          try {
             if (!name) {
               return {
-                content: [
-                  createErrorContent(
-                    "name (mapper name) is required for LUKS close"
-                  ),
-                ],
+                content: [createErrorContent("name (mapper name) is required for LUKS close")],
                 isError: true,
               };
             }
 
             sanitizeArgs([name]);
 
+            const sections: string[] = [];
+            sections.push(`🔐 LUKS Volume Management: close`);
+            sections.push("=".repeat(40));
+
             if (dry_run ?? getConfig().dryRun) {
-              sections.push(
-                `\n[DRY RUN] Would close LUKS volume: /dev/mapper/${name}`
-              );
-              sections.push(
-                `  Command: sudo cryptsetup luksClose ${name}`
-              );
+              sections.push(`\n[DRY RUN] Would close LUKS volume: /dev/mapper/${name}`);
+              sections.push(`  Command: sudo cryptsetup luksClose ${name}`);
             } else {
               const result = await executeCommand({
                 command: "sudo",
@@ -1165,11 +1104,7 @@ export function registerEncryptionTools(server: McpServer): void {
 
               if (result.exitCode !== 0) {
                 return {
-                  content: [
-                    createErrorContent(
-                      `Failed to close LUKS volume ${name}: ${result.stderr}`
-                    ),
-                  ],
+                  content: [createErrorContent(`Failed to close LUKS volume ${name}: ${result.stderr}`)],
                   isError: true,
                 };
               }
@@ -1178,7 +1113,7 @@ export function registerEncryptionTools(server: McpServer): void {
 
               logChange(
                 createChangeEntry({
-                  tool: "crypto_luks_manage",
+                  tool: "crypto",
                   action: "close",
                   target: name,
                   dryRun: false,
@@ -1187,11 +1122,21 @@ export function registerEncryptionTools(server: McpServer): void {
                 })
               );
             }
-            break;
-          }
 
-          case "list": {
-            // List device mapper entries
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
+        // ── luks_list ────────────────────────────────────────────────
+        case "luks_list": {
+          try {
+            const sections: string[] = [];
+            sections.push(`🔐 LUKS Volume Management: list`);
+            sections.push("=".repeat(40));
+
             const mapperResult = await executeCommand({
               command: "ls",
               args: ["-la", "/dev/mapper/"],
@@ -1202,7 +1147,6 @@ export function registerEncryptionTools(server: McpServer): void {
             sections.push("\n📁 Device Mapper Entries:");
             sections.push(mapperResult.stdout || "No entries found");
 
-            // List block devices with filesystem info
             const lsblkResult = await executeCommand({
               command: "lsblk",
               args: ["--fs", "-o", "NAME,FSTYPE,SIZE,MOUNTPOINT,UUID"],
@@ -1213,13 +1157,9 @@ export function registerEncryptionTools(server: McpServer): void {
             sections.push("\n💾 Block Devices (with filesystem info):");
             sections.push(lsblkResult.stdout || "No block devices found");
 
-            // Filter for crypto entries
             const cryptoLines = (lsblkResult.stdout || "")
               .split("\n")
-              .filter(
-                (l) =>
-                  l.includes("crypto_LUKS") || l.includes("crypt")
-              );
+              .filter((l) => l.includes("crypto_LUKS") || l.includes("crypt"));
             if (cryptoLines.length > 0) {
               sections.push("\n🔐 LUKS Encrypted Devices:");
               for (const line of cryptoLines) {
@@ -1228,152 +1168,84 @@ export function registerEncryptionTools(server: McpServer): void {
             } else {
               sections.push("\nNo LUKS encrypted devices detected.");
             }
-            break;
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
         }
 
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
+        // ── file_hash ────────────────────────────────────────────────
+        case "file_hash": {
+          const { path, algorithm, recursive } = params;
+          try {
+            if (!path) {
+              return {
+                content: [createErrorContent("path is required for file_hash action")],
+                isError: true,
+              };
+            }
 
-  // ── 4. crypto_file_hash (kept as-is) ─────────────────────────────────────
+            sanitizeArgs([path]);
+            assertNoTraversal(path);
 
-  server.tool(
-    "crypto_file_hash",
-    "Calculate cryptographic hashes of files for integrity verification",
-    {
-      path: z.string().describe("File or directory path to hash"),
-      algorithm: z
-        .enum(["sha256", "sha512", "sha1", "md5"])
-        .optional()
-        .default("sha256")
-        .describe("Hash algorithm to use (default: sha256)"),
-      recursive: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Recursively hash all files in a directory"),
-    },
-    async ({ path, algorithm, recursive }) => {
-      try {
-        sanitizeArgs([path]);
-        assertNoTraversal(path);
+            const sections: string[] = [];
+            const hashCmd = `${algorithm}sum`;
+            sections.push(`#️⃣ File Integrity Hash (${algorithm.toUpperCase()})`);
+            sections.push("=".repeat(40));
 
-        const sections: string[] = [];
-        const hashCmd = `${algorithm}sum`;
-        sections.push(`#️⃣ File Integrity Hash (${algorithm.toUpperCase()})`);
-        sections.push("=".repeat(40));
+            if (recursive) {
+              const result = await executeCommand({
+                command: "find",
+                args: [path, "-type", "f", "-exec", hashCmd, "{}", "+"],
+                toolName: "crypto_file_hash",
+                timeout: getToolTimeout("crypto_file_hash"),
+              });
 
-        if (recursive) {
-          // Hash all files in directory recursively
-          const result = await executeCommand({
-            command: "find",
-            args: [
-              path,
-              "-type",
-              "f",
-              "-exec",
-              hashCmd,
-              "{}",
-              "+",
-            ],
-            toolName: "crypto_file_hash",
-            timeout: getToolTimeout("crypto_file_hash"),
-          });
+              if (result.exitCode !== 0 && !result.stdout) {
+                return {
+                  content: [createErrorContent(`Failed to hash files in ${path}: ${result.stderr}`)],
+                  isError: true,
+                };
+              }
 
-          if (result.exitCode !== 0 && !result.stdout) {
-            return {
-              content: [
-                createErrorContent(
-                  `Failed to hash files in ${path}: ${result.stderr}`
-                ),
-              ],
-              isError: true,
-            };
+              const lines = result.stdout.trim().split("\n").filter((l) => l.trim());
+              sections.push(`\nDirectory: ${path}`);
+              sections.push(`Files hashed: ${lines.length}`);
+              sections.push(`\nResults:`);
+              sections.push(result.stdout);
+            } else {
+              const result = await executeCommand({
+                command: hashCmd,
+                args: [path],
+                toolName: "crypto_file_hash",
+                timeout: getToolTimeout("crypto_file_hash"),
+              });
+
+              if (result.exitCode !== 0) {
+                return {
+                  content: [createErrorContent(`Failed to hash ${path}: ${result.stderr}`)],
+                  isError: true,
+                };
+              }
+
+              sections.push(`\nFile: ${path}`);
+              sections.push(`Algorithm: ${algorithm.toUpperCase()}`);
+              const hashValue = result.stdout.trim().split(/\s+/)[0];
+              sections.push(`Hash: ${hashValue}`);
+              sections.push(`\nFull output: ${result.stdout.trim()}`);
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
           }
-
-          const lines = result.stdout
-            .trim()
-            .split("\n")
-            .filter((l) => l.trim());
-          sections.push(`\nDirectory: ${path}`);
-          sections.push(`Files hashed: ${lines.length}`);
-          sections.push(`\nResults:`);
-          sections.push(result.stdout);
-        } else {
-          // Hash a single file
-          const result = await executeCommand({
-            command: hashCmd,
-            args: [path],
-            toolName: "crypto_file_hash",
-            timeout: getToolTimeout("crypto_file_hash"),
-          });
-
-          if (result.exitCode !== 0) {
-            return {
-              content: [
-                createErrorContent(
-                  `Failed to hash ${path}: ${result.stderr}`
-                ),
-              ],
-              isError: true,
-            };
-          }
-
-          sections.push(`\nFile: ${path}`);
-          sections.push(`Algorithm: ${algorithm.toUpperCase()}`);
-          const hashValue = result.stdout.trim().split(/\s+/)[0];
-          sections.push(`Hash: ${hashValue}`);
-          sections.push(`\nFull output: ${result.stdout.trim()}`);
         }
 
-        return { content: [createTextContent(sections.join("\n"))] };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { content: [createErrorContent(msg)], isError: true };
-      }
-    }
-  );
-
-  // ── 5. certificate_lifecycle ──────────────────────────────────────────────
-
-  server.tool(
-    "certificate_lifecycle",
-    "Certificate lifecycle management: inventory system certificates, check auto-renewal, audit CA trust store, verify OCSP revocation status, and monitor Certificate Transparency logs.",
-    {
-      action: z
-        .enum(["inventory", "auto_renew_check", "ca_audit", "ocsp_check", "ct_log_monitor"])
-        .describe(
-          "Action: inventory=scan system certs, auto_renew_check=check certbot/ACME renewal, ca_audit=audit CA trust store, ocsp_check=check OCSP revocation, ct_log_monitor=check CT logs",
-        ),
-      domain: z
-        .string()
-        .optional()
-        .describe("Domain for OCSP/CT checks"),
-      cert_path: z
-        .string()
-        .optional()
-        .describe("Path to specific certificate file"),
-      search_paths: z
-        .array(z.string())
-        .optional()
-        .describe("Additional paths to search for certificates"),
-      output_format: z
-        .enum(["text", "json"])
-        .optional()
-        .default("text")
-        .describe("Output format (default text)"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── inventory ──────────────────────────────────────────────────
-        case "inventory": {
+        // ── cert_inventory ───────────────────────────────────────────
+        case "cert_inventory": {
           try {
             const defaultPaths = [
               "/etc/ssl/certs/",
@@ -1513,8 +1385,8 @@ export function registerEncryptionTools(server: McpServer): void {
           }
         }
 
-        // ── auto_renew_check ───────────────────────────────────────────
-        case "auto_renew_check": {
+        // ── cert_auto_renew_check ────────────────────────────────────
+        case "cert_auto_renew_check": {
           try {
             const findings: Record<string, unknown> = { action: "auto_renew_check" };
 
@@ -1524,9 +1396,7 @@ export function registerEncryptionTools(server: McpServer): void {
 
             if (!certbotInstalled) {
               findings.status = "certbot_not_found";
-              findings.recommendations = [
-                "Certbot is not installed. Install with: apt install certbot",
-              ];
+              findings.recommendations = ["Certbot is not installed. Install with: apt install certbot"];
 
               if (params.output_format === "json") {
                 return { content: [formatToolOutput(findings)] };
@@ -1540,24 +1410,15 @@ export function registerEncryptionTools(server: McpServer): void {
               return { content: [createTextContent(sections.join("\n"))] };
             }
 
-            // Check certbot timer
-            const timerResult = await runCertCommand(
-              "systemctl", ["status", "certbot.timer"], 10_000,
-            );
-            const timerActive =
-              timerResult.exitCode === 0 &&
-              timerResult.stdout.includes("active");
+            const timerResult = await runCertCommand("systemctl", ["status", "certbot.timer"], 10_000);
+            const timerActive = timerResult.exitCode === 0 && timerResult.stdout.includes("active");
             findings.timerActive = timerActive;
             findings.timerOutput = timerResult.stdout.trim();
 
-            // List certbot certificates
-            const certsResult = await runCertCommand(
-              "certbot", ["certificates"], 15_000,
-            );
+            const certsResult = await runCertCommand("certbot", ["certificates"], 15_000);
             findings.certificates = certsResult.stdout.trim();
             findings.certbotExitCode = certsResult.exitCode;
 
-            // Check renewal configs
             const renewalResult = await runCertCommand("find", [
               "/etc/letsencrypt/renewal/", "-name", "*.conf",
             ], 5_000);
@@ -1567,7 +1428,6 @@ export function registerEncryptionTools(server: McpServer): void {
                 : [];
             findings.renewalConfigs = renewalConfigs;
 
-            // Check cron for renewal jobs
             const cronResult = await runCertCommand("grep", [
               "-r", "certbot", "/etc/cron.d/", "/etc/cron.daily/", "/etc/crontab",
             ], 5_000);
@@ -1585,12 +1445,8 @@ export function registerEncryptionTools(server: McpServer): void {
             const sections: string[] = [];
             sections.push("🔄 Auto-Renewal Check");
             sections.push("=".repeat(50));
-            sections.push(
-              `\nCertbot: installed at ${certbotCheck.stdout.trim()}`,
-            );
-            sections.push(
-              `Timer: ${timerActive ? "✅ Active" : "⚠️ Not active"}`,
-            );
+            sections.push(`\nCertbot: installed at ${certbotCheck.stdout.trim()}`);
+            sections.push(`Timer: ${timerActive ? "✅ Active" : "⚠️ Not active"}`);
             sections.push("\nManaged Certificates:");
             sections.push(certsResult.stdout.trim() || "  No certificates found");
             sections.push(`\nRenewal Configs (${renewalConfigs.length}):`);
@@ -1607,26 +1463,19 @@ export function registerEncryptionTools(server: McpServer): void {
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return {
-              content: [createErrorContent(`auto_renew_check failed: ${msg}`)],
-              isError: true,
-            };
+            return { content: [createErrorContent(`auto_renew_check failed: ${msg}`)], isError: true };
           }
         }
 
-        // ── ca_audit ───────────────────────────────────────────────────
-        case "ca_audit": {
+        // ── cert_ca_audit ────────────────────────────────────────────
+        case "cert_ca_audit": {
           try {
             const findings: Record<string, unknown> = { action: "ca_audit" };
 
             let trustStorePath = "/etc/ssl/certs/";
-            const sslCheck = await runCertCommand(
-              "ls", ["/etc/ssl/certs/"], 5_000,
-            );
+            const sslCheck = await runCertCommand("ls", ["/etc/ssl/certs/"], 5_000);
             if (sslCheck.exitCode !== 0) {
-              const pkiCheck = await runCertCommand(
-                "ls", ["/etc/pki/tls/certs/"], 5_000,
-              );
+              const pkiCheck = await runCertCommand("ls", ["/etc/pki/tls/certs/"], 5_000);
               if (pkiCheck.exitCode === 0) {
                 trustStorePath = "/etc/pki/tls/certs/";
               }
@@ -1634,8 +1483,7 @@ export function registerEncryptionTools(server: McpServer): void {
             findings.trustStorePath = trustStorePath;
 
             const caListResult = await runCertCommand("find", [
-              trustStorePath,
-              "-name", "*.pem", "-o", "-name", "*.crt",
+              trustStorePath, "-name", "*.pem", "-o", "-name", "*.crt",
             ], 10_000);
             const caFiles =
               caListResult.exitCode === 0 && caListResult.stdout.trim()
@@ -1644,12 +1492,8 @@ export function registerEncryptionTools(server: McpServer): void {
             findings.totalCAs = caFiles.length;
 
             const recentResult = await runCertCommand("find", [
-              trustStorePath,
-              "-mtime", "-30",
-              "-name", "*.pem",
-              "-o",
-              "-mtime", "-30",
-              "-name", "*.crt",
+              trustStorePath, "-mtime", "-30", "-name", "*.pem",
+              "-o", "-mtime", "-30", "-name", "*.crt",
             ], 10_000);
             const recentlyAdded =
               recentResult.exitCode === 0 && recentResult.stdout.trim()
@@ -1658,10 +1502,7 @@ export function registerEncryptionTools(server: McpServer): void {
             findings.recentlyAdded = recentlyAdded;
             findings.recentlyAddedCount = recentlyAdded.length;
 
-            const suspiciousPatterns = [
-              "test", "debug", "fake", "temporary", "tmp",
-              "self-signed", "localhost", "example",
-            ];
+            const suspiciousPatterns = ["test", "debug", "fake", "temporary", "tmp", "self-signed", "localhost", "example"];
             const suspiciousFindings: string[] = [];
 
             for (const caFile of caFiles.slice(0, 200)) {
@@ -1676,11 +1517,8 @@ export function registerEncryptionTools(server: McpServer): void {
             findings.suspiciousFindings = suspiciousFindings;
             findings.suspiciousCount = suspiciousFindings.length;
 
-            const updateCheck = await runCertCommand(
-              "which", ["update-ca-certificates"], 5_000,
-            );
-            findings.updateCaCertificatesAvailable =
-              updateCheck.exitCode === 0;
+            const updateCheck = await runCertCommand("which", ["update-ca-certificates"], 5_000);
+            findings.updateCaCertificatesAvailable = updateCheck.exitCode === 0;
 
             if (params.output_format === "json") {
               return { content: [formatToolOutput(findings)] };
@@ -1691,9 +1529,7 @@ export function registerEncryptionTools(server: McpServer): void {
             sections.push("=".repeat(50));
             sections.push(`\nTrust store path: ${trustStorePath}`);
             sections.push(`Total trusted CAs: ${caFiles.length}`);
-            sections.push(
-              `Recently added (last 30 days): ${recentlyAdded.length}`,
-            );
+            sections.push(`Recently added (last 30 days): ${recentlyAdded.length}`);
 
             if (recentlyAdded.length > 0) {
               sections.push("\n── Recently Added CAs ──");
@@ -1703,9 +1539,7 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             if (suspiciousFindings.length > 0) {
-              sections.push(
-                `\n⚠️ Suspicious CAs Found (${suspiciousFindings.length}):`,
-              );
+              sections.push(`\n⚠️ Suspicious CAs Found (${suspiciousFindings.length}):`);
               for (const ca of suspiciousFindings.slice(0, 20)) {
                 sections.push(`  ${ca}`);
               }
@@ -1716,65 +1550,44 @@ export function registerEncryptionTools(server: McpServer): void {
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return {
-              content: [createErrorContent(`ca_audit failed: ${msg}`)],
-              isError: true,
-            };
+            return { content: [createErrorContent(`ca_audit failed: ${msg}`)], isError: true };
           }
         }
 
-        // ── ocsp_check ─────────────────────────────────────────────────
-        case "ocsp_check": {
+        // ── cert_ocsp_check ──────────────────────────────────────────
+        case "cert_ocsp_check": {
           try {
             if (!params.domain && !params.cert_path) {
               return {
-                content: [
-                  createErrorContent(
-                    "domain or cert_path is required for ocsp_check",
-                  ),
-                ],
+                content: [createErrorContent("domain or cert_path is required for ocsp_check")],
                 isError: true,
               };
             }
 
-            const findings: Record<string, unknown> = {
-              action: "ocsp_check",
-            };
+            const findings: Record<string, unknown> = { action: "ocsp_check" };
             let certPem = "";
 
             if (params.domain) {
               const validDomain = validateTarget(params.domain);
               findings.domain = validDomain;
 
-              // Get certificate chain from domain
-              const sClientResult = await runCertCommand(
-                "openssl",
-                [
-                  "s_client", "-connect", `${validDomain}:443`,
-                  "-servername", validDomain, "-showcerts",
-                ],
-                10_000,
-                "",
-              );
+              const sClientResult = await runCertCommand("openssl", [
+                "s_client", "-connect", `${validDomain}:443`,
+                "-servername", validDomain, "-showcerts",
+              ], 10_000, "");
 
-              const fullOutput =
-                sClientResult.stdout + "\n" + sClientResult.stderr;
+              const fullOutput = sClientResult.stdout + "\n" + sClientResult.stderr;
               const certMatches = fullOutput.match(
                 /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g,
               );
 
               if (!certMatches || certMatches.length === 0) {
-                findings.error =
-                  "Could not retrieve certificate from domain";
+                findings.error = "Could not retrieve certificate from domain";
                 if (params.output_format === "json") {
                   return { content: [formatToolOutput(findings)] };
                 }
                 return {
-                  content: [
-                    createErrorContent(
-                      `Could not retrieve certificate from ${validDomain}`,
-                    ),
-                  ],
+                  content: [createErrorContent(`Could not retrieve certificate from ${validDomain}`)],
                   isError: true,
                 };
               }
@@ -1785,38 +1598,23 @@ export function registerEncryptionTools(server: McpServer): void {
               const validPath = validateCertPath(params.cert_path);
               findings.certPath = validPath;
 
-              const readResult = await runCertCommand(
-                "openssl",
-                ["x509", "-in", validPath],
-                5_000,
-              );
+              const readResult = await runCertCommand("openssl", ["x509", "-in", validPath], 5_000);
               if (readResult.exitCode !== 0) {
                 return {
-                  content: [
-                    createErrorContent(
-                      `Failed to read certificate: ${readResult.stderr}`,
-                    ),
-                  ],
+                  content: [createErrorContent(`Failed to read certificate: ${readResult.stderr}`)],
                   isError: true,
                 };
               }
               certPem = readResult.stdout;
             }
 
-            // Extract OCSP URI from certificate via stdin
-            const ocspUriResult = await runCertCommand(
-              "openssl",
-              ["x509", "-noout", "-ocsp_uri"],
-              5_000,
-              certPem,
-            );
+            const ocspUriResult = await runCertCommand("openssl", ["x509", "-noout", "-ocsp_uri"], 5_000, certPem);
             const ocspUri = ocspUriResult.stdout.trim();
             findings.ocspUri = ocspUri || "not found";
 
             if (!ocspUri) {
               findings.status = "no_ocsp_uri";
-              findings.message =
-                "Certificate does not contain an OCSP responder URI";
+              findings.message = "Certificate does not contain an OCSP responder URI";
 
               if (params.output_format === "json") {
                 return { content: [formatToolOutput(findings)] };
@@ -1825,32 +1623,22 @@ export function registerEncryptionTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    "🔍 OCSP Check\n" +
-                      "=".repeat(50) +
-                      "\n\n⚠️ Certificate does not contain an OCSP responder URI.",
+                    "🔍 OCSP Check\n" + "=".repeat(50) +
+                    "\n\n⚠️ Certificate does not contain an OCSP responder URI.",
                   ),
                 ],
               };
             }
 
-            // Check OCSP stapling via s_client -status
             if (params.domain) {
               const validDomain = validateTarget(params.domain);
-              const staplingResult = await runCertCommand(
-                "openssl",
-                [
-                  "s_client", "-connect", `${validDomain}:443`,
-                  "-servername", validDomain, "-status",
-                ],
-                10_000,
-                "",
-              );
+              const staplingResult = await runCertCommand("openssl", [
+                "s_client", "-connect", `${validDomain}:443`,
+                "-servername", validDomain, "-status",
+              ], 10_000, "");
 
-              const staplingOutput =
-                staplingResult.stdout + staplingResult.stderr;
-              const hasStapling = staplingOutput.includes(
-                "OCSP Response Status: successful",
-              );
+              const staplingOutput = staplingResult.stdout + staplingResult.stderr;
+              const hasStapling = staplingOutput.includes("OCSP Response Status: successful");
               findings.ocspStapling = hasStapling;
 
               if (hasStapling) {
@@ -1863,13 +1651,11 @@ export function registerEncryptionTools(server: McpServer): void {
                 }
               } else {
                 findings.revocationStatus = "unknown";
-                findings.message =
-                  "OCSP stapling not available; direct OCSP query may be needed";
+                findings.message = "OCSP stapling not available; direct OCSP query may be needed";
               }
             } else {
               findings.revocationStatus = "unknown";
-              findings.message =
-                "Direct OCSP query requires domain; use domain parameter for full check";
+              findings.message = "Direct OCSP query requires domain; use domain parameter for full check";
             }
 
             if (params.output_format === "json") {
@@ -1880,13 +1666,9 @@ export function registerEncryptionTools(server: McpServer): void {
             sections.push("🔍 OCSP Check");
             sections.push("=".repeat(50));
             sections.push(`\nOCSP Responder: ${ocspUri}`);
-            sections.push(
-              `Revocation Status: ${String(findings.revocationStatus)}`,
-            );
+            sections.push(`Revocation Status: ${String(findings.revocationStatus)}`);
             if (findings.ocspStapling !== undefined) {
-              sections.push(
-                `OCSP Stapling: ${findings.ocspStapling ? "✅ Supported" : "⚠️ Not supported"}`,
-              );
+              sections.push(`OCSP Stapling: ${findings.ocspStapling ? "✅ Supported" : "⚠️ Not supported"}`);
             }
             if (findings.message) {
               sections.push(`\nNote: ${String(findings.message)}`);
@@ -1895,23 +1677,16 @@ export function registerEncryptionTools(server: McpServer): void {
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return {
-              content: [createErrorContent(`ocsp_check failed: ${msg}`)],
-              isError: true,
-            };
+            return { content: [createErrorContent(`ocsp_check failed: ${msg}`)], isError: true };
           }
         }
 
-        // ── ct_log_monitor ─────────────────────────────────────────────
-        case "ct_log_monitor": {
+        // ── cert_ct_log_monitor ──────────────────────────────────────
+        case "cert_ct_log_monitor": {
           try {
             if (!params.domain) {
               return {
-                content: [
-                  createErrorContent(
-                    "domain is required for ct_log_monitor",
-                  ),
-                ],
+                content: [createErrorContent("domain is required for ct_log_monitor")],
                 isError: true,
               };
             }
@@ -1922,7 +1697,6 @@ export function registerEncryptionTools(server: McpServer): void {
               domain: validDomain,
             };
 
-            // Query crt.sh for certificates
             const crtshResult = await runCertCommand("curl", [
               "-s", "-m", "15",
               `https://crt.sh/?q=${encodeURIComponent(validDomain)}&output=json`,
@@ -1939,10 +1713,9 @@ export function registerEncryptionTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    "🔍 CT Log Monitor\n" +
-                      "=".repeat(50) +
-                      `\n\n⚠️ Failed to query crt.sh for ${validDomain}.\n` +
-                      `Error: ${crtshResult.stderr}`,
+                    "🔍 CT Log Monitor\n" + "=".repeat(50) +
+                    `\n\n⚠️ Failed to query crt.sh for ${validDomain}.\n` +
+                    `Error: ${crtshResult.stderr}`,
                   ),
                 ],
               };
@@ -1957,16 +1730,13 @@ export function registerEncryptionTools(server: McpServer): void {
                 return { content: [formatToolOutput(findings)] };
               }
               return {
-                content: [
-                  createErrorContent("Failed to parse crt.sh JSON response"),
-                ],
+                content: [createErrorContent("Failed to parse crt.sh JSON response")],
                 isError: true,
               };
             }
 
             findings.totalCerts = ctEntries.length;
 
-            // Analyze certificates
             const issuers = new Set<string>();
             const wildcardCerts: Array<Record<string, unknown>> = [];
             const recentCerts: Array<Record<string, unknown>> = [];
@@ -1982,9 +1752,7 @@ export function registerEncryptionTools(server: McpServer): void {
                 wildcardCerts.push(entry);
               }
 
-              const notBefore = entry.not_before
-                ? new Date(String(entry.not_before))
-                : null;
+              const notBefore = entry.not_before ? new Date(String(entry.not_before)) : null;
               if (notBefore && notBefore > thirtyDaysAgo) {
                 recentCerts.push(entry);
               }
@@ -2000,7 +1768,6 @@ export function registerEncryptionTools(server: McpServer): void {
               notAfter: e.not_after,
             }));
 
-            // Flag unexpected issuers
             const unexpectedFindings: string[] = [];
             if (issuers.size > 3) {
               unexpectedFindings.push(
@@ -2008,9 +1775,7 @@ export function registerEncryptionTools(server: McpServer): void {
               );
             }
             if (wildcardCerts.length > 0) {
-              unexpectedFindings.push(
-                `${wildcardCerts.length} wildcard certificate(s) found`,
-              );
+              unexpectedFindings.push(`${wildcardCerts.length} wildcard certificate(s) found`);
             }
             findings.unexpectedFindings = unexpectedFindings;
 
@@ -2022,16 +1787,10 @@ export function registerEncryptionTools(server: McpServer): void {
             sections.push("🔍 CT Log Monitor");
             sections.push("=".repeat(50));
             sections.push(`\nDomain: ${validDomain}`);
-            sections.push(
-              `Total certificates in CT logs: ${ctEntries.length}`,
-            );
+            sections.push(`Total certificates in CT logs: ${ctEntries.length}`);
             sections.push(`Unique issuers: ${issuers.size}`);
-            sections.push(
-              `Wildcard certificates: ${wildcardCerts.length}`,
-            );
-            sections.push(
-              `Recently issued (last 30 days): ${recentCerts.length}`,
-            );
+            sections.push(`Wildcard certificates: ${wildcardCerts.length}`);
+            sections.push(`Recently issued (last 30 days): ${recentCerts.length}`);
 
             if (issuers.size > 0) {
               sections.push("\n── Issuers ──");
@@ -2043,9 +1802,7 @@ export function registerEncryptionTools(server: McpServer): void {
             if (recentCerts.length > 0) {
               sections.push("\n── Recently Issued ──");
               for (const cert of recentCerts.slice(0, 10)) {
-                sections.push(
-                  `  ${cert.common_name} (issued: ${cert.not_before}, by: ${cert.issuer_name})`,
-                );
+                sections.push(`  ${cert.common_name} (issued: ${cert.not_before}, by: ${cert.issuer_name})`);
               }
             }
 
@@ -2059,10 +1816,7 @@ export function registerEncryptionTools(server: McpServer): void {
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            return {
-              content: [createErrorContent(`ct_log_monitor failed: ${msg}`)],
-              isError: true,
-            };
+            return { content: [createErrorContent(`ct_log_monitor failed: ${msg}`)], isError: true };
           }
         }
 
@@ -2074,5 +1828,4 @@ export function registerEncryptionTools(server: McpServer): void {
       }
     },
   );
-
 }

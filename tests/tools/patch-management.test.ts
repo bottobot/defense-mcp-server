@@ -82,60 +82,57 @@ describe("patch-management tools", () => {
     tools = mock.tools;
   });
 
-  it("should register all 5 patch management tools", () => {
-    expect(tools.has("patch_update_audit")).toBe(true);
-    expect(tools.has("patch_unattended_audit")).toBe(true);
-    expect(tools.has("patch_integrity_check")).toBe(true);
-    expect(tools.has("patch_kernel_audit")).toBe(true);
-    expect(tools.has("patch_vulnerability_intel")).toBe(true);
+  it("should register 1 patch tool", () => {
+    expect(tools.has("patch")).toBe(true);
+    expect(tools.size).toBe(1);
   });
 
-  // ── vulnerability_intel ───────────────────────────────────────────────
+  // ── vuln_lookup ───────────────────────────────────────────────────────
 
-  it("should require cveId for lookup action", async () => {
-    const handler = tools.get("patch_vulnerability_intel")!.handler;
-    const result = await handler({ action: "lookup", dryRun: true });
+  it("should require cveId for vuln_lookup action", async () => {
+    const handler = tools.get("patch")!.handler;
+    const result = await handler({ action: "vuln_lookup", dryRun: true });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("cveId is required");
   });
 
   it("should reject malformed CVE ID", async () => {
-    const handler = tools.get("patch_vulnerability_intel")!.handler;
-    const result = await handler({ action: "lookup", cveId: "not-a-cve", dryRun: true });
+    const handler = tools.get("patch")!.handler;
+    const result = await handler({ action: "vuln_lookup", cveId: "not-a-cve", dryRun: true });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("CVE-YYYY-NNNN");
   });
 
   it("should accept valid CVE ID in dry_run mode", async () => {
-    const handler = tools.get("patch_vulnerability_intel")!.handler;
-    const result = await handler({ action: "lookup", cveId: "CVE-2024-1234", dryRun: true });
+    const handler = tools.get("patch")!.handler;
+    const result = await handler({ action: "vuln_lookup", cveId: "CVE-2024-1234", dryRun: true });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("dryRun");
   });
 
-  it("should preview scan action in dry_run mode", async () => {
-    const handler = tools.get("patch_vulnerability_intel")!.handler;
-    const result = await handler({ action: "scan", maxPackages: 10, dryRun: true });
+  it("should preview vuln_scan action in dry_run mode", async () => {
+    const handler = tools.get("patch")!.handler;
+    const result = await handler({ action: "vuln_scan", maxPackages: 10, dryRun: true });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("dryRun");
   });
 
-  it("should require packageName for urgency action", async () => {
-    const handler = tools.get("patch_vulnerability_intel")!.handler;
-    const result = await handler({ action: "urgency", dryRun: true });
+  it("should require packageName for vuln_urgency action", async () => {
+    const handler = tools.get("patch")!.handler;
+    const result = await handler({ action: "vuln_urgency", dryRun: true });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("packageName is required");
   });
 
-  it("should preview urgency action in dry_run mode", async () => {
-    const handler = tools.get("patch_vulnerability_intel")!.handler;
-    const result = await handler({ action: "urgency", packageName: "openssl", dryRun: true });
+  it("should preview vuln_urgency action in dry_run mode", async () => {
+    const handler = tools.get("patch")!.handler;
+    const result = await handler({ action: "vuln_urgency", packageName: "openssl", dryRun: true });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("dryRun");
   });
 
   it("should handle unknown action", async () => {
-    const handler = tools.get("patch_vulnerability_intel")!.handler;
+    const handler = tools.get("patch")!.handler;
     const result = await handler({ action: "unknown" as string });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Unknown action");

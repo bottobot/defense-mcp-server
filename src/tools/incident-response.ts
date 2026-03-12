@@ -1,9 +1,10 @@
 /**
  * Incident response tools for Kali Defense MCP Server.
  *
- * Registers 2 tools:
- *   - incident_response (actions: collect, ioc_scan, timeline)
- *   - ir_forensics (actions: memory_dump, disk_image, network_capture_forensic, evidence_bag, chain_of_custody)
+ * Registers 1 tool:
+ *   - incident_response (actions: collect, ioc_scan, timeline,
+ *     forensics_memory_dump, forensics_disk_image, forensics_network_capture,
+ *     forensics_evidence_bag, forensics_chain_of_custody)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -101,11 +102,24 @@ async function runForensicCommand(
 export function registerIncidentResponseTools(server: McpServer): void {
   server.tool(
     "incident_response",
-    "Incident response: collect volatile data (RFC 3227), scan for IOCs, or generate filesystem timelines.",
+    "Incident response: collect volatile data (RFC 3227), scan for IOCs, generate filesystem timelines, and perform digital forensics (memory dumps, disk images, network captures, evidence bagging, chain-of-custody).",
     {
-      action: z.enum(["collect", "ioc_scan", "timeline"]).describe("Action: collect=volatile data collection, ioc_scan=scan for indicators of compromise, timeline=filesystem timeline"),
+      action: z.enum([
+        "collect",
+        "ioc_scan",
+        "timeline",
+        "forensics_memory_dump",
+        "forensics_disk_image",
+        "forensics_network_capture",
+        "forensics_evidence_bag",
+        "forensics_chain_of_custody",
+      ]).describe(
+        "Action: collect=volatile data collection, ioc_scan=scan for indicators of compromise, timeline=filesystem timeline, " +
+        "forensics_memory_dump=acquire RAM, forensics_disk_image=forensic disk copy, forensics_network_capture=full packet capture, " +
+        "forensics_evidence_bag=bag+hash artifact, forensics_chain_of_custody=manage custody log"
+      ),
       // collect params
-      output_dir: z.string().optional().default("/tmp/ir-collection").describe("Directory to save collected volatile data (collect action)"),
+      output_dir: z.string().optional().describe("Directory for output artifacts (defaults vary per action)"),
       // ioc_scan params
       check_type: z.enum(["processes", "connections", "persistence", "all"]).optional().default("all").describe("Type of IOC check to perform (ioc_scan action)"),
       // timeline params
@@ -113,8 +127,17 @@ export function registerIncidentResponseTools(server: McpServer): void {
       hours: z.number().optional().default(24).describe("Look back this many hours for modifications (timeline action)"),
       exclude_paths: z.string().optional().default("/proc,/sys,/dev,/run").describe("Comma-separated paths to exclude from search (timeline action)"),
       file_types: z.enum(["all", "executables", "configs", "scripts"]).optional().default("all").describe("Type of files to include in the timeline (timeline action)"),
-      // shared
+      // shared incident_response
       dry_run: z.boolean().optional().describe("Preview what would be done without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
+      // forensics params
+      case_id: z.string().optional().describe("Case identifier for chain-of-custody tracking"),
+      device: z.string().optional().describe("Device path for disk imaging (e.g. /dev/sda1)"),
+      interface: z.string().optional().default("any").describe("Network interface for capture (default: any)"),
+      duration: z.number().optional().default(60).describe("Capture duration in seconds (default 60, max 300)"),
+      evidence_path: z.string().optional().describe("Path to evidence file (used with forensics_evidence_bag, forensics_chain_of_custody)"),
+      description: z.string().optional().describe("Description of the evidence item"),
+      examiner: z.string().optional().describe("Name of the forensic examiner"),
+      custody_action: z.enum(["add", "view", "verify"]).optional().default("view").describe("Chain-of-custody sub-action: add, view, or verify"),
     },
     async (params) => {
       const { action } = params;
@@ -122,7 +145,8 @@ export function registerIncidentResponseTools(server: McpServer): void {
       switch (action) {
         // ── collect ──────────────────────────────────────────────────
         case "collect": {
-          const { output_dir, dry_run } = params;
+          const output_dir = params.output_dir ?? "/tmp/ir-collection";
+          const { dry_run } = params;
           try {
             const collectionSteps = [
               { name: "01-processes", command: "ps", args: ["auxwww"], desc: "Running processes" },
@@ -334,6 +358,9 @@ export function registerIncidentResponseTools(server: McpServer): void {
                 totalFindings += deletedProcs.length;
               }
 
+              // Silence unused variable
+              void deletedResult;
+
               const minerProcs = psLines.filter((line) =>
                 CRYPTO_MINER_NAMES.some((name) =>
                   line.toLowerCase().includes(name)
@@ -469,6 +496,7 @@ export function registerIncidentResponseTools(server: McpServer): void {
                 toolName: "incident_response",
                 timeout: 5000,
               });
+              void cronTabFileResult;
 
               // Find cron files in standard directories
               const cronDirs = ["/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.weekly", "/etc/cron.monthly"];
@@ -832,77 +860,9 @@ export function registerIncidentResponseTools(server: McpServer): void {
           }
         }
 
-        default:
-          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
-      }
-    }
-  );
-
-  // ── ir_forensics tool ──────────────────────────────────────────────────
-
-  server.tool(
-    "ir_forensics",
-    "Digital forensics: acquire memory dumps, create forensic disk images, capture network traffic, bag evidence, and manage chain-of-custody logs.",
-    {
-      action: z
-        .enum([
-          "memory_dump",
-          "disk_image",
-          "network_capture_forensic",
-          "evidence_bag",
-          "chain_of_custody",
-        ])
-        .describe(
-          "Action: memory_dump=acquire RAM, disk_image=forensic disk copy, network_capture_forensic=full packet capture, evidence_bag=bag+hash artifact, chain_of_custody=manage custody log",
-        ),
-      output_dir: z
-        .string()
-        .optional()
-        .default(DEFAULT_FORENSICS_DIR)
-        .describe("Directory to store forensic artifacts"),
-      case_id: z
-        .string()
-        .optional()
-        .describe("Case identifier for chain-of-custody tracking"),
-      device: z
-        .string()
-        .optional()
-        .describe("Device path for disk imaging (e.g. /dev/sda1)"),
-      interface: z
-        .string()
-        .optional()
-        .default("any")
-        .describe("Network interface for capture (default: any)"),
-      duration: z
-        .number()
-        .optional()
-        .default(60)
-        .describe("Capture duration in seconds (default 60, max 300)"),
-      evidence_path: z
-        .string()
-        .optional()
-        .describe("Path to evidence file (used with evidence_bag, chain_of_custody)"),
-      description: z
-        .string()
-        .optional()
-        .describe("Description of the evidence item"),
-      examiner: z
-        .string()
-        .optional()
-        .describe("Name of the forensic examiner"),
-      custody_action: z
-        .enum(["add", "view", "verify"])
-        .optional()
-        .default("view")
-        .describe("Chain-of-custody sub-action: add, view, or verify"),
-    },
-    async (params) => {
-      const { action } = params;
-
-      switch (action) {
-        // ── memory_dump ────────────────────────────────────────────────
-        case "memory_dump": {
-          const { output_dir } = params;
+        // ── forensics_memory_dump ──────────────────────────────────────
+        case "forensics_memory_dump": {
+          const output_dir = params.output_dir ?? DEFAULT_FORENSICS_DIR;
           try {
             // Create output directory
             const mkdirResult = await runForensicCommand("mkdir", ["-p", output_dir]);
@@ -964,13 +924,14 @@ export function registerIncidentResponseTools(server: McpServer): void {
           }
         }
 
-        // ── disk_image ─────────────────────────────────────────────────
-        case "disk_image": {
-          const { output_dir, device } = params;
+        // ── forensics_disk_image ───────────────────────────────────────
+        case "forensics_disk_image": {
+          const output_dir = params.output_dir ?? DEFAULT_FORENSICS_DIR;
+          const { device } = params;
           try {
             if (!device) {
               return {
-                content: [createErrorContent("device parameter is required for disk_image action")],
+                content: [createErrorContent("device parameter is required for forensics_disk_image action")],
                 isError: true,
               };
             }
@@ -1052,9 +1013,10 @@ export function registerIncidentResponseTools(server: McpServer): void {
           }
         }
 
-        // ── network_capture_forensic ───────────────────────────────────
-        case "network_capture_forensic": {
-          const { output_dir, duration } = params;
+        // ── forensics_network_capture ──────────────────────────────────
+        case "forensics_network_capture": {
+          const output_dir = params.output_dir ?? DEFAULT_FORENSICS_DIR;
+          const { duration } = params;
           const iface = params.interface ?? "any";
           try {
             // Cap duration at 300 seconds
@@ -1086,6 +1048,7 @@ export function registerIncidentResponseTools(server: McpServer): void {
               ],
               (cappedDuration + 10) * 1000,
             );
+            void tcpdumpResult;
 
             const endTime = new Date().toISOString();
 
@@ -1129,13 +1092,14 @@ export function registerIncidentResponseTools(server: McpServer): void {
           }
         }
 
-        // ── evidence_bag ───────────────────────────────────────────────
-        case "evidence_bag": {
-          const { output_dir, case_id, evidence_path, description, examiner } = params;
+        // ── forensics_evidence_bag ─────────────────────────────────────
+        case "forensics_evidence_bag": {
+          const output_dir = params.output_dir ?? DEFAULT_FORENSICS_DIR;
+          const { case_id, evidence_path, description, examiner } = params;
           try {
             if (!evidence_path) {
               return {
-                content: [createErrorContent("evidence_path parameter is required for evidence_bag action")],
+                content: [createErrorContent("evidence_path parameter is required for forensics_evidence_bag action")],
                 isError: true,
               };
             }
@@ -1209,13 +1173,14 @@ export function registerIncidentResponseTools(server: McpServer): void {
           }
         }
 
-        // ── chain_of_custody ───────────────────────────────────────────
-        case "chain_of_custody": {
-          const { output_dir, case_id, evidence_path, description, examiner, custody_action } = params;
+        // ── forensics_chain_of_custody ─────────────────────────────────
+        case "forensics_chain_of_custody": {
+          const output_dir = params.output_dir ?? DEFAULT_FORENSICS_DIR;
+          const { case_id, evidence_path, description, examiner, custody_action } = params;
           try {
             if (!case_id) {
               return {
-                content: [createErrorContent("case_id parameter is required for chain_of_custody action")],
+                content: [createErrorContent("case_id parameter is required for forensics_chain_of_custody action")],
                 isError: true,
               };
             }
@@ -1330,7 +1295,7 @@ export function registerIncidentResponseTools(server: McpServer): void {
               case "verify": {
                 if (!evidence_path) {
                   return {
-                    content: [createErrorContent("evidence_path parameter is required for chain_of_custody verify action")],
+                    content: [createErrorContent("evidence_path parameter is required for forensics_chain_of_custody verify action")],
                     isError: true,
                   };
                 }
@@ -1399,11 +1364,8 @@ export function registerIncidentResponseTools(server: McpServer): void {
         }
 
         default:
-          return {
-            content: [createErrorContent(`Unknown ir_forensics action: ${action}`)],
-            isError: true,
-          };
+          return { content: [createErrorContent(`Unknown action: ${action}`)], isError: true };
       }
-    },
+    }
   );
 }

@@ -6,6 +6,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.7.0] — 2026-03-12
+
+### v0.7.0 — Tool Consolidation & Sudo Hardening Overhaul
+
+#### Tool Consolidation (94 → 31 tools, −67%, zero capability loss)
+- Merged all 94 granular MCP tools into 31 domain-grouped tools using action discriminators
+- Every previous capability preserved via `action` parameters within each consolidated tool
+- Reduces MCP registration overhead by 67% while maintaining full security coverage
+- All 1,802 tests passing across 62 test files
+
+#### Sudo Hardening
+- **Removed `NOPASSWD: ALL`** sudoers grant — eliminated overly-broad privilege escalation
+- **Scoped allowlist** (`etc/sudoers.d/mcpuser`): 94-command explicit allowlist covering only required security binaries (iptables, ufw, aide, rkhunter, clamav, auditd, etc.)
+- **NOPASSWD regression detection**: `SudoGuard.checkNopasswdConfiguration()` runs at server startup to detect any re-introduction of broad sudo grants
+- **Rate limiting** on sudo elevation: `RateLimiter` wired into `SudoSession.elevate()` (5 attempts per 5-minute window)
+- **Structured audit trail**: `logger.security()` emits JSON audit events for all elevation, drop, extension, and timeout events
+
+#### Docker Entrypoint
+- New `docker-entrypoint.sh`: sets `mcpuser` password from Docker secret (`/run/secrets/mcpuser_password`) or `MCPUSER_PASSWORD` env var at container startup
+- Credentials zeroed from environment after use, privileges dropped before handing off to the MCP server process
+- Prevents hardcoded or empty passwords in container images
+
+#### New Modules
+- `src/tools/integrity.ts` — Absorbs and supersedes `ids.ts` + `drift-detection.ts`; unified integrity checking with IDS baseline management, drift detection, and file integrity verification
+- `etc/sudoers.d/mcpuser` — Scoped sudoers allowlist (94 commands, no wildcards)
+- `docker-entrypoint.sh` — Secure container password bootstrap script
+
+#### Infrastructure
+- `src/core/sudo-session.ts` — Integrated `RateLimiter` for elevation throttling
+- `src/core/sudo-guard.ts` — Added `checkNopasswdConfiguration()` startup regression check
+- `src/core/rate-limiter.ts` — Extended to support sudo-specific rate limiting context
+- Updated `TOOLS-REFERENCE.md` and `TOOL-CONSOLIDATION-PLAN.md` to reflect 31-tool architecture
+
+---
+
 ## [0.6.0] — 2026-03-09
 
 ### v0.6.0 — 16 New Security Tools

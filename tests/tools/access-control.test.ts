@@ -67,21 +67,17 @@ describe("access-control tools", () => {
 
   // ── Registration ──────────────────────────────────────────────────────
 
-  it("should register all access control tools", () => {
-    expect(tools.has("access_ssh")).toBe(true);
-    expect(tools.has("access_pam")).toBe(true);
-    expect(tools.has("access_sudo_audit")).toBe(true);
-    expect(tools.has("access_user_audit")).toBe(true);
-    expect(tools.has("access_password_policy")).toBe(true);
-    expect(tools.has("access_restrict_shell")).toBe(true);
+  it("should register exactly 1 consolidated access_control tool", () => {
+    expect(tools.size).toBe(1);
+    expect(tools.has("access_control")).toBe(true);
   });
 
   // ── TOOL-012: SSH config key validation ──────────────────────────────
 
   it("should reject invalid SSH config key (TOOL-012)", async () => {
-    const handler = tools.get("access_ssh")!.handler;
+    const handler = tools.get("access_control")!.handler;
     const result = await handler({
-      action: "harden",
+      action: "ssh_harden",
       settings: "InvalidDirective=yes",
       dry_run: true,
     });
@@ -90,9 +86,9 @@ describe("access-control tools", () => {
   });
 
   it("should accept valid SSH config key PermitRootLogin (TOOL-012)", async () => {
-    const handler = tools.get("access_ssh")!.handler;
+    const handler = tools.get("access_control")!.handler;
     const result = await handler({
-      action: "harden",
+      action: "ssh_harden",
       settings: "PermitRootLogin=no",
       dry_run: true,
     });
@@ -100,9 +96,9 @@ describe("access-control tools", () => {
   });
 
   it("should accept valid SSH config key MaxAuthTries (TOOL-012)", async () => {
-    const handler = tools.get("access_ssh")!.handler;
+    const handler = tools.get("access_control")!.handler;
     const result = await handler({
-      action: "harden",
+      action: "ssh_harden",
       settings: "MaxAuthTries=4",
       dry_run: true,
     });
@@ -112,9 +108,9 @@ describe("access-control tools", () => {
   // ── TOOL-012: SSH config value validation (shell metacharacter rejection) ──
 
   it("should reject SSH config value with semicolons (TOOL-012)", async () => {
-    const handler = tools.get("access_ssh")!.handler;
+    const handler = tools.get("access_control")!.handler;
     const result = await handler({
-      action: "harden",
+      action: "ssh_harden",
       settings: "PermitRootLogin=no;rm -rf /",
       dry_run: true,
     });
@@ -123,9 +119,9 @@ describe("access-control tools", () => {
   });
 
   it("should reject SSH config value with backticks (TOOL-012)", async () => {
-    const handler = tools.get("access_ssh")!.handler;
+    const handler = tools.get("access_control")!.handler;
     const result = await handler({
-      action: "harden",
+      action: "ssh_harden",
       settings: "Banner=`cat /etc/shadow`",
       dry_run: true,
     });
@@ -134,9 +130,9 @@ describe("access-control tools", () => {
   });
 
   it("should reject SSH config value with pipe (TOOL-012)", async () => {
-    const handler = tools.get("access_ssh")!.handler;
+    const handler = tools.get("access_control")!.handler;
     const result = await handler({
-      action: "harden",
+      action: "ssh_harden",
       settings: "PermitRootLogin=no|echo pwned",
       dry_run: true,
     });
@@ -146,20 +142,20 @@ describe("access-control tools", () => {
 
   // ── Settings validation ──────────────────────────────────────────────
 
-  it("should require settings or apply_recommended for harden", async () => {
-    const handler = tools.get("access_ssh")!.handler;
+  it("should require settings or apply_recommended for ssh_harden", async () => {
+    const handler = tools.get("access_control")!.handler;
     const result = await handler({
-      action: "harden",
+      action: "ssh_harden",
       dry_run: true,
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("No settings");
   });
 
-  it("should accept apply_recommended=true for harden", async () => {
-    const handler = tools.get("access_ssh")!.handler;
+  it("should accept apply_recommended=true for ssh_harden", async () => {
+    const handler = tools.get("access_control")!.handler;
     const result = await handler({
-      action: "harden",
+      action: "ssh_harden",
       apply_recommended: true,
       dry_run: true,
     });
