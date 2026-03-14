@@ -83,7 +83,8 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
   // ── Access Control (1) ────────────────────────────────────────────────────
   {
     toolName: "access_control",
-    requiredBinaries: ["ssh", "sshd", "pam-auth-update"],
+    requiredBinaries: ["pam-auth-update"],
+    optionalBinaries: ["ssh", "sshd"],
     critical: true,
   },
 

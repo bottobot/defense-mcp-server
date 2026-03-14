@@ -413,11 +413,20 @@ export function registerContainerSecurityTools(server: McpServer): void {
           try {
             const sections: string[] = ["🛡️ AppArmor System Status", "=".repeat(40)];
             const enabledResult = await executeCommand({ command: "aa-enabled", args: [], toolName: "container_isolation", timeout: 5000 });
-            const aaEnabled = enabledResult.exitCode === 0 && enabledResult.stdout.trim() === "Yes";
-            sections.push(`\n  AppArmor enabled: ${aaEnabled ? "✅ Yes" : "❌ No"}`);
+            const aaEnabledBin = enabledResult.exitCode === 0 && enabledResult.stdout.trim() === "Yes";
 
             const moduleResult = await executeCommand({ command: "cat", args: ["/sys/module/apparmor/parameters/enabled"], toolName: "container_isolation", timeout: 5000 });
-            if (moduleResult.exitCode === 0) sections.push(`  Kernel module: ${moduleResult.stdout.trim() === "Y" ? "✅ Loaded" : "❌ Not loaded"}`);
+            const kernelModuleLoaded = moduleResult.exitCode === 0 && moduleResult.stdout.trim() === "Y";
+
+            // Also check if apparmor service is active and profiles directory is populated
+            const svcResult = await executeCommand({ command: "systemctl", args: ["is-active", "apparmor"], toolName: "container_isolation", timeout: 5000 });
+            const svcActive = svcResult.exitCode === 0 && svcResult.stdout.trim() === "active";
+
+            // AppArmor is considered enabled if aa-enabled says "Yes", OR if kernel module is loaded AND service is active
+            const aaEnabled = aaEnabledBin || (kernelModuleLoaded && svcActive);
+            sections.push(`\n  AppArmor enabled: ${aaEnabled ? "✅ Yes" : "❌ No"}`);
+
+            if (moduleResult.exitCode === 0) sections.push(`  Kernel module: ${kernelModuleLoaded ? "✅ Loaded" : "❌ Not loaded"}`);
 
             const pkgChecks = ["apparmor-profiles", "apparmor-profiles-extra", "apparmor-utils"];
             sections.push("\n  Profile Packages:");

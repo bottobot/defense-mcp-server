@@ -1277,12 +1277,45 @@ export function registerMetaTools(server: McpServer): void {
             domains.push({ domain: "kernel-hardening", score: kernelScore, maxScore: 100, checks: kernelResults.map((r) => ({ name: r.name, passed: r.passed, detail: r.detail })) });
 
             const fwChecks: { name: string; passed: boolean; detail: string }[] = [];
-            const iptResult = await executeCommand({ command: "iptables", args: ["-L", "-n"], timeout: 10000 });
-            const hasRules = iptResult.exitCode === 0 && iptResult.stdout.split("\n").length > 8;
-            fwChecks.push({ name: "iptables rules present", passed: hasRules, detail: `${iptResult.stdout.split("\n").length} lines` });
-            const ufwResult = await executeCommand({ command: "ufw", args: ["status"], timeout: 5000 });
-            const ufwActive = ufwResult.exitCode === 0 && ufwResult.stdout.includes("active");
-            fwChecks.push({ name: "UFW active", passed: ufwActive, detail: ufwResult.stdout.slice(0, 100) });
+
+            // Check iptables/nftables rules (with sudo for accurate results)
+            const iptResult = await executeCommand({ command: "sudo", args: ["iptables", "-L", "-n"], timeout: 10000 });
+            const hasIptRules = iptResult.exitCode === 0 && iptResult.stdout.split("\n").length > 8;
+            fwChecks.push({ name: "iptables rules present", passed: hasIptRules, detail: `${iptResult.exitCode === 0 ? iptResult.stdout.split("\n").length : 0} lines` });
+
+            // Multi-layer firewall detection: UFW → nftables fallback
+            let fwDetected = false;
+            const ufwResult = await executeCommand({ command: "sudo", args: ["ufw", "status"], timeout: 5000 });
+            if (ufwResult.exitCode === 0) {
+              const ufwActive = ufwResult.stdout.includes("active");
+              fwChecks.push({ name: "UFW active", passed: ufwActive, detail: ufwResult.stdout.slice(0, 100) });
+              fwDetected = ufwActive;
+            } else {
+              // UFW command failed — check if nftables has active rules (UFW chains or native)
+              const nftResult = await executeCommand({ command: "sudo", args: ["nft", "list", "ruleset"], timeout: 10000 });
+              if (nftResult.exitCode === 0) {
+                const hasUfwChains = nftResult.stdout.includes("ufw-");
+                const hasNftRules = nftResult.stdout.trim().length > 50;
+                if (hasUfwChains) {
+                  fwChecks.push({ name: "UFW active", passed: true, detail: "Active via nftables backend (ufw chains detected)" });
+                  fwDetected = true;
+                } else if (hasNftRules) {
+                  fwChecks.push({ name: "nftables active", passed: true, detail: "Native nftables ruleset loaded" });
+                  fwDetected = true;
+                } else {
+                  fwChecks.push({ name: "UFW active", passed: false, detail: "No firewall rules detected" });
+                }
+              } else {
+                // Check if binary exists to distinguish "not installed" from "error"
+                const whichUfw = await executeCommand({ command: "which", args: ["ufw"], timeout: 3000 });
+                const whichNft = await executeCommand({ command: "which", args: ["nft"], timeout: 3000 });
+                const detail = whichUfw.exitCode === 0 ? "UFW installed but status check failed"
+                  : whichNft.exitCode === 0 ? "nftables installed but ruleset check failed"
+                  : "No firewall installed";
+                fwChecks.push({ name: "firewall detected", passed: false, detail });
+              }
+            }
+
             const fwPassed = fwChecks.filter((c) => c.passed).length;
             domains.push({ domain: "firewall", score: Math.round((fwPassed / fwChecks.length) * 100), maxScore: 100, checks: fwChecks });
 
@@ -1297,10 +1330,10 @@ export function registerMetaTools(server: McpServer): void {
             domains.push({ domain: "services", score: Math.round((svcPassed / svcChecks.length) * 100), maxScore: 100, checks: svcChecks });
 
             const userChecks: { name: string; passed: boolean; detail: string }[] = [];
-            const rootLogin = await executeCommand({ command: "passwd", args: ["-S", "root"], timeout: 5000 });
+            const rootLogin = await executeCommand({ command: "sudo", args: ["passwd", "-S", "root"], timeout: 5000, toolName: "defense_mgmt" });
             const rootLocked = rootLogin.stdout.includes(" L ") || rootLogin.stdout.includes(" LK ");
             userChecks.push({ name: "Root account locked", passed: rootLocked, detail: rootLogin.stdout.trim().slice(0, 100) });
-            const noPasswd = await executeCommand({ command: "awk", args: ["-F:", '($2 == "" ) { print $1 }', "/etc/shadow"], timeout: 5000 });
+            const noPasswd = await executeCommand({ command: "sudo", args: ["awk", "-F:", '($2 == "" ) { print $1 }', "/etc/shadow"], timeout: 5000, toolName: "defense_mgmt" });
             const noEmptyPasswd = noPasswd.stdout.trim().length === 0;
             userChecks.push({ name: "No empty passwords", passed: noEmptyPasswd, detail: noPasswd.stdout.trim() || "none" });
             const uidZero = await executeCommand({ command: "awk", args: ["-F:", '($3 == 0) { print $1 }', "/etc/passwd"], timeout: 5000 });

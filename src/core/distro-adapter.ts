@@ -562,7 +562,7 @@ function buildFirewallPersistenceConfig(distro: DistroInfo): FirewallPersistence
       return {
         packageName: "iptables-persistent",
         checkInstalledCmd: ["dpkg", "-l", "iptables-persistent"],
-        installCmd: ["DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "iptables-persistent"],
+        installCmd: ["apt-get", "install", "-y", "iptables-persistent"],
         serviceName: "netfilter-persistent",
         enableCmd: ["systemctl", "enable", "netfilter-persistent"],
         saveCmd: ["netfilter-persistent", "save"],
