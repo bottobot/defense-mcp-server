@@ -28,7 +28,13 @@
     "changelog:check": "git diff HEAD~1 --name-only | grep -q CHANGELOG.md || echo 'Warning: CHANGELOG.md not updated'",
     "license:check": "license-checker --production --failOn 'GPL-3.0;AGPL-3.0'",
     "prepare": "husky",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "release": "./scripts/release.sh patch",
+    "release:minor": "./scripts/release.sh minor",
+    "release:major": "./scripts/release.sh major",
+    "release:git": "./scripts/release.sh patch --git-only",
+    "release:npm": "./scripts/release.sh --npm-only",
+    "push": "git add -A && git commit -m 'chore: update' && git push origin $(git rev-parse --abbrev-ref HEAD)"
   },
   "keywords": [
     "mcp",
