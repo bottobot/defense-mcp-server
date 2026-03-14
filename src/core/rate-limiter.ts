@@ -37,9 +37,9 @@ export interface RateLimitResult {
  * Old entries outside the time window are pruned on each check.
  *
  * Configuration via environment variables:
- * - `KALI_DEFENSE_RATE_LIMIT_PER_TOOL` — Max invocations per tool per window (default: 30)
- * - `KALI_DEFENSE_RATE_LIMIT_GLOBAL`   — Max total invocations per window (default: 100)
- * - `KALI_DEFENSE_RATE_LIMIT_WINDOW`   — Window size in seconds (default: 60)
+ * - `DEFENSE_MCP_RATE_LIMIT_PER_TOOL` — Max invocations per tool per window (default: 30)
+ * - `DEFENSE_MCP_RATE_LIMIT_GLOBAL`   — Max total invocations per window (default: 100)
+ * - `DEFENSE_MCP_RATE_LIMIT_WINDOW`   — Window size in seconds (default: 60)
  *
  * Set any limit to `0` to disable that particular limit.
  */
@@ -59,9 +59,9 @@ export class RateLimiter {
   private static _instance: RateLimiter | null = null;
 
   constructor(maxPerTool?: number, maxGlobal?: number, windowMs?: number) {
-    this.maxPerTool = maxPerTool ?? this.parseEnvInt("KALI_DEFENSE_RATE_LIMIT_PER_TOOL", 30);
-    this.maxGlobal = maxGlobal ?? this.parseEnvInt("KALI_DEFENSE_RATE_LIMIT_GLOBAL", 100);
-    this.windowMs = (windowMs ?? this.parseEnvInt("KALI_DEFENSE_RATE_LIMIT_WINDOW", 60)) * 1000;
+    this.maxPerTool = maxPerTool ?? this.parseEnvInt("DEFENSE_MCP_RATE_LIMIT_PER_TOOL", 30);
+    this.maxGlobal = maxGlobal ?? this.parseEnvInt("DEFENSE_MCP_RATE_LIMIT_GLOBAL", 100);
+    this.windowMs = (windowMs ?? this.parseEnvInt("DEFENSE_MCP_RATE_LIMIT_WINDOW", 60)) * 1000;
   }
 
   /** Get or create the singleton instance. */

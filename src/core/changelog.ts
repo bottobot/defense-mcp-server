@@ -151,7 +151,7 @@ export function getChangelog(limit?: number): ChangeEntry[] {
 
 /**
  * Creates a backup copy of a file using the unified BackupManager.
- * The backup is tracked in the manifest at ~/.kali-defense/backups/manifest.json.
+ * The backup is tracked in the manifest at ~/.defense-mcp/backups/manifest.json.
  *
  * @param filePath Absolute path to the file to back up
  * @returns Path to the backup file

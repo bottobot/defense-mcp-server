@@ -1,5 +1,5 @@
 /**
- * Access control and authentication auditing tools for Kali Defense MCP Server.
+ * Access control and authentication auditing tools for Defense MCP Server.
  *
  * Registers 1 consolidated tool: access_control
  * Actions: ssh_audit, ssh_harden, ssh_cipher_audit, pam_audit, pam_configure,

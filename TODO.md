@@ -1,15 +1,11 @@
 # Defense MCP Server — Developer TODO
 
-> **Project rename complete:** This codebase has been renamed from `kali-defense-mcp-server` to **Defense MCP Server** (`defense-mcp-server`). The npm package name, server metadata, and all documentation have been updated.
-
 ---
 
 ## Table of Contents
 
 - [🔴 Section 1: High Priority Fixes](#-section-1-high-priority-fixes)
-  - [Fix 1: Stale `package.json` metadata](#fix-1-stale-packagejson-metadata)
-  - [Fix 2: Audit `toolName` in all `executeCommand()` calls](#fix-2-audit-toolname-in-all-executecommand-calls)
-  - [Fix 3: Remove spurious runtime dependency](#fix-3-remove-spurious-runtime-dependency)
+  - [Fix 1: Audit `toolName` in all `executeCommand()` calls](#fix-1-audit-toolname-in-all-executecommand-calls)
 - [🟡 Section 2: Medium Priority — New Capabilities](#-section-2-medium-priority--new-capabilities)
   - [Feature 1: Security Posture Scoring & Dashboard](#feature-1-security-posture-scoring--dashboard)
   - [Feature 2: CVE Intelligence Tools](#feature-2-cve-intelligence-tools)
@@ -18,36 +14,12 @@
 - [🟢 Section 3: Lower Priority — Architectural Improvements](#-section-3-lower-priority--architectural-improvements)
   - [Improvement 1: Secure Scheduled Audit Mechanism](#improvement-1-secure-scheduled-audit-mechanism)
   - [Improvement 2: Test Coverage Gaps](#improvement-2-test-coverage-gaps)
-- [✅ Section 4: Completed / Already Done](#-section-4-completed--already-done)
 
 ---
 
 ## 🔴 Section 1: High Priority Fixes
 
-### ~~Fix 1: Stale `package.json` metadata~~ ✅ DONE
-
-**File:** [`package.json`](package.json)
-
-~~The `repository`, `bugs`, and `homepage` fields in [`package.json`](package.json) still point to the old `bottobot` GitHub repository.~~
-
-**Resolved:** The `repository`, `bugs`, and `homepage` fields now correctly point to `https://github.com/bottobot/defense-mcp-server`. The `YOUR_GITHUB_USERNAME` placeholders have been replaced and the `kali-defense-mcp-server` self-dependency has been removed.
-
-```json
-{
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/bottobot/defense-mcp-server.git"
-  },
-  "bugs": {
-    "url": "https://github.com/bottobot/defense-mcp-server/issues"
-  },
-  "homepage": "https://github.com/bottobot/defense-mcp-server#readme"
-}
-```
-
----
-
-### Fix 2: Audit `toolName` in all `executeCommand()` calls
+### Fix 1: Audit `toolName` in all `executeCommand()` calls
 
 **File to check:** [`src/core/executor.ts`](src/core/executor.ts)
 
@@ -74,32 +46,6 @@ Review every line in the output and add the appropriate `toolName` string. The t
 
 ---
 
-### Fix 3: Remove spurious runtime dependency
-
-**File:** [`package.json`](package.json)
-
-[`package.json`](package.json) previously listed `"kali-defense-mcp-server": "^0.5.2"` in the `dependencies` (runtime) section. This was the **old upstream package** — the package this project forked from — and has since been removed. Shipping a dependency on the old package would cause:
-
-- Unnecessary package bloat
-- A confusing circular-identity situation at runtime
-- Potential for version conflicts
-
-**Before removing**, verify that no source file actually imports from it:
-
-```bash
-grep -rn "from 'defense-mcp-server'" src/
-```
-
-If that grep returns no results, it is safe to remove:
-
-```bash
-npm uninstall defense-mcp-server
-```
-
-If any `src/` file does import from it, that import must be refactored to use the local equivalent module before removing the dependency.
-
----
-
 ## 🟡 Section 2: Medium Priority — New Capabilities
 
 ### Feature 1: Security Posture Scoring & Dashboard
@@ -110,7 +56,7 @@ If any `src/` file does import from it, that import must be refactored to use th
 
 #### What this adds
 
-A weighted 0–100 security posture score computed across five domains (authentication, network, kernel, services, filesystem). Each domain check runs real system commands, assigns a domain score, and the weighted average becomes the overall score. Scores are persisted to `~/.kali-defense/posture/history.json` so trend analysis is possible over time. A dashboard tool aggregates the latest scores into a human-readable summary.
+A weighted 0–100 security posture score computed across five domains (authentication, network, kernel, services, filesystem). Each domain check runs real system commands, assigns a domain score, and the weighted average becomes the overall score. Scores are persisted to `~/.defense-mcp/posture/history.json` so trend analysis is possible over time. A dashboard tool aggregates the latest scores into a human-readable summary.
 
 #### Three tools to implement
 
@@ -135,12 +81,12 @@ import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const POSTURE_DIR = join(homedir(), ".kali-defense", "posture");
+const POSTURE_DIR = join(homedir(), ".defense-mcp", "posture");
 const HISTORY_FILE = join(POSTURE_DIR, "history.json");
 const MAX_HISTORY = 1000;
 ```
 
-> **Path note:** State is written to `~/.kali-defense/posture/history.json`, which is consistent with the rest of Server B's state directory convention. Do **not** use `~/.kali-mcp-posture/` (that was Server A's path and has been retired).
+> **Path note:** State is written to `~/.defense-mcp/posture/history.json`, consistent with the project's state directory convention. Do **not** use `~/.defense-mcp-posture/` (that path has been retired).
 
 #### Export signature
 
@@ -399,7 +345,7 @@ function checkFile() {
 
 ### Improvement 1: Secure Scheduled Audit Mechanism
 
-**Context:** Server A (the upstream) had a scheduled audit feature that accepted user-supplied shell command strings and embedded them directly into systemd `ExecStart=/bin/bash -c '...'` lines. This is a **critical command injection vulnerability** — any user who can call that MCP tool can execute arbitrary shell commands as the service user. This feature was intentionally removed in Server B and must **not** be re-added in its original form.
+**Context:** The upstream project had a scheduled audit feature that accepted user-supplied shell command strings and embedded them directly into systemd `ExecStart=/bin/bash -c '...'` lines. This is a **critical command injection vulnerability** — any user who can call that MCP tool can execute arbitrary shell commands as the service user. This feature was intentionally removed and must **not** be re-added in its original form.
 
 #### Safe design for scheduled audits
 
@@ -483,24 +429,4 @@ Key rules for test files:
 
 ---
 
-## ✅ Section 4: Completed / Already Done
-
-The following capabilities are fully implemented in Server B. Do **not** re-add or re-implement these — they were intentionally designed and tested. If you see a PR or suggestion to add something that sounds like one of these, check this list first.
-
-| Component | File(s) | Notes |
-|---|---|---|
-| **Command allowlist** | [`src/core/command-allowlist.ts`](src/core/command-allowlist.ts) | 153 entries, resolved to absolute paths at startup; all `executeCommand` calls are validated against this list |
-| **Per-tool rate limiter** | [`src/core/rate-limiter.ts`](src/core/rate-limiter.ts) | 30 calls/tool/minute, 100 calls/global/minute; keyed by `toolName` — see Fix 2 above |
-| **Encrypted state** | [`src/core/encrypted-state.ts`](src/core/encrypted-state.ts) | AES-GCM encrypted persistence for sensitive state |
-| **Secure filesystem writes** | [`src/core/secure-fs.ts`](src/core/secure-fs.ts) | Atomic temp-file + rename writes, enforces `0o600` mode — use this everywhere |
-| **Safe subprocess spawning** | [`src/core/spawn-safe.ts`](src/core/spawn-safe.ts) | No shell interpolation; args passed as array; used by executor |
-| **Full test suite** | [`tests/`](tests/) | 74+ tests across core and tool modules; run with `npm test` |
-| **Graceful shutdown** | [`src/index.ts`](src/index.ts) | SIGTERM and SIGINT handlers ensure clean exit |
-| **Error-isolated module registration** | [`src/index.ts`](src/index.ts) | `safeRegister()` wraps each tool module so one failing module does not crash the server |
-| **Parallel startup** | [`src/index.ts`](src/index.ts) | `Promise.allSettled()` used for concurrent initialization |
-| **Secrets scanning** | [`src/tools/secrets.ts`](src/tools/secrets.ts) | Supersedes old `secrets-scanner.ts`; already includes git history scanning and error sanitization (no raw secret values in error messages) |
-| **Container security** | [`src/tools/container-security.ts`](src/tools/container-security.ts) | Supersedes old `container-advanced.ts`; covers privileged container detection, seccomp, AppArmor profiles |
-
----
-
-*Last updated: 2026-03-11. Maintainer: Defense MCP Server project.*
+*Last updated: 2026-03-14. Maintainer: Defense MCP Server project.*

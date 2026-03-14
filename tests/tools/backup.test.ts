@@ -13,7 +13,7 @@ vi.mock("../../src/core/executor.js", () => ({
 
 const cmdOk = { exitCode: 0, stdout: "", stderr: "", timedOut: false, duration: 10, permissionDenied: false };
 vi.mock("../../src/core/config.js", () => ({
-  getConfig: vi.fn().mockReturnValue({ dryRun: true, backupDir: "/tmp/kali-backups" }),
+  getConfig: vi.fn().mockReturnValue({ dryRun: true, backupDir: "/tmp/defense-backups" }),
   getToolTimeout: vi.fn().mockReturnValue(30000),
 }));
 vi.mock("../../src/core/parsers.js", () => ({

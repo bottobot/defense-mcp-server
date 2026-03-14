@@ -5,7 +5,7 @@
  * policy files, sudo session tokens, and other sensitive state.
  *
  * Key derivation uses PBKDF2 from a configurable secret via the
- * `KALI_DEFENSE_STATE_KEY` environment variable. If no key is
+ * `DEFENSE_MCP_STATE_KEY` environment variable. If no key is
  * configured, falls back to unencrypted mode with a warning.
  *
  * @module encrypted-state
@@ -52,7 +52,7 @@ const PBKDF2_DIGEST = "sha512";
 const SALT_LENGTH = 16;
 
 /** Default state directory. */
-const DEFAULT_STATE_DIR = "/tmp/kali-defense/state/";
+const DEFAULT_STATE_DIR = "/tmp/defense-mcp/state/";
 
 /** File permission: owner read/write only. */
 const SECURE_FILE_MODE = 0o600;
@@ -61,7 +61,7 @@ const SECURE_FILE_MODE = 0o600;
 const SECURE_DIR_MODE = 0o700;
 
 /** Environment variable name for the encryption key. */
-const ENV_KEY_NAME = "KALI_DEFENSE_STATE_KEY";
+const ENV_KEY_NAME = "DEFENSE_MCP_STATE_KEY";
 
 // ── Encrypted file format ────────────────────────────────────────────────────
 // Binary layout: [salt (16)] [iv (12)] [authTag (16)] [ciphertext (...)]
@@ -72,7 +72,7 @@ const ENV_KEY_NAME = "KALI_DEFENSE_STATE_KEY";
 /**
  * Encrypted state storage for sensitive data at rest.
  *
- * Uses AES-256-GCM with PBKDF2-derived keys when `KALI_DEFENSE_STATE_KEY`
+ * Uses AES-256-GCM with PBKDF2-derived keys when `DEFENSE_MCP_STATE_KEY`
  * is set. Falls back to plaintext JSON when no key is configured.
  */
 export class SecureStateStore {
@@ -80,8 +80,8 @@ export class SecureStateStore {
   private readonly secret: string | null;
 
   /**
-   * @param stateDir - Directory for state files (default: `/tmp/kali-defense/state/`)
-   * @param secret - Encryption secret. If omitted, reads from `KALI_DEFENSE_STATE_KEY` env var.
+   * @param stateDir - Directory for state files (default: `/tmp/defense-mcp/state/`)
+   * @param secret - Encryption secret. If omitted, reads from `DEFENSE_MCP_STATE_KEY` env var.
    *                 Pass empty string or omit to use unencrypted fallback.
    */
   constructor(stateDir?: string, secret?: string) {
@@ -279,6 +279,6 @@ export class SecureStateStore {
  * Default singleton SecureStateStore instance.
  *
  * Uses the default state directory and reads the encryption key from
- * the `KALI_DEFENSE_STATE_KEY` environment variable.
+ * the `DEFENSE_MCP_STATE_KEY` environment variable.
  */
 export const secureState = new SecureStateStore();

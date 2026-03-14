@@ -385,7 +385,7 @@ export async function executeCommand(
         const timeoutSec = Math.round(timeout / 1000);
         stderr += `\nCommand timed out after ${timeoutSec} seconds. ` +
           `The target may be unreachable or the operation is taking too long. ` +
-          `Consider increasing KALI_DEFENSE_COMMAND_TIMEOUT (current: ${timeoutSec}s).`;
+          `Consider increasing DEFENSE_MCP_COMMAND_TIMEOUT (current: ${timeoutSec}s).`;
       }
 
       // Detect permission errors from combined output
@@ -414,7 +414,7 @@ export async function executeCommand(
         const timeoutSec = Math.round(timeout / 1000);
         const timeoutMsg = `\nCommand timed out after ${timeoutSec} seconds. ` +
           `The target may be unreachable or the operation is taking too long. ` +
-          `Consider increasing KALI_DEFENSE_COMMAND_TIMEOUT (current: ${timeoutSec}s).`;
+          `Consider increasing DEFENSE_MCP_COMMAND_TIMEOUT (current: ${timeoutSec}s).`;
         resolve({
           stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
           stderr: Buffer.concat(stderrChunks).toString("utf-8") + timeoutMsg,

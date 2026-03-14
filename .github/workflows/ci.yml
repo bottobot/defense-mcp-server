@@ -15,7 +15,7 @@ permissions:
 jobs:
   test:
     # CICD-002: OS matrix for cross-platform CI. Currently Linux-only because
-    # this is a Kali/Linux defensive security tool — all underlying binaries
+    # this is a Linux defensive security tool — all underlying binaries
     # (iptables, systemctl, auditd, fail2ban, etc.) are Linux-specific.
     # macOS and Windows are not meaningful targets for this project.
     # Add additional Linux variants (e.g., ubuntu-22.04) here if needed.

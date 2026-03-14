@@ -101,7 +101,7 @@ Docker warnings are emitted when operations touch any of: `container`, `docker`,
 
 | Signal | Method | Detail |
 |--------|--------|--------|
-| MCP config file | Reads `/home/robert/kali-mcp-workspace/.mcp.json` | Counts configured MCP servers |
+| MCP config file | Reads `/home/robert/defense-mcp-workspace/.mcp.json` | Counts configured MCP servers |
 | Node processes | `pgrep -a node` filtered for `mcp` in command line | Detects running MCP-related node processes |
 
 MCP server warnings are emitted when firewall operations are detected, because iptables/ufw rule changes can break the stdio transport that MCP servers rely on.
@@ -189,24 +189,24 @@ Dry-run mode causes all modifying operations to print the exact command that wou
 
 ### Enabling Dry-Run
 
-**Default behavior**: The server reads `KALI_DEFENSE_DRY_RUN` at startup. The default is `false` in code, but the provided `.mcp.json` configuration sets it to `true` for safety.
+**Default behavior**: The server reads `DEFENSE_MCP_DRY_RUN` at startup. The default is `false` in code, but the provided `.mcp.json` configuration sets it to `true` for safety.
 
 ```bash
 # Enable dry-run globally (safe — no changes applied)
-KALI_DEFENSE_DRY_RUN=true node build/index.js
+DEFENSE_MCP_DRY_RUN=true node build/index.js
 
 # Disable dry-run globally (live changes will be applied)
-KALI_DEFENSE_DRY_RUN=false node build/index.js
+DEFENSE_MCP_DRY_RUN=false node build/index.js
 ```
 
 When dry-run is active, the server prints to stderr at startup:
 ```
-[KALI-DEFENSE] DRY_RUN mode is ACTIVE — no changes will be applied
+[DEFENSE-MCP] DRY_RUN mode is ACTIVE — no changes will be applied
 ```
 
 ### Per-Call dry_run Parameter
 
-Tools that support dry-run accept an optional `dry_run` boolean parameter. When provided, it overrides the global `KALI_DEFENSE_DRY_RUN` environment variable for that single call.
+Tools that support dry-run accept an optional `dry_run` boolean parameter. When provided, it overrides the global `DEFENSE_MCP_DRY_RUN` environment variable for that single call.
 
 Tools that support `dry_run`:
 
@@ -233,7 +233,7 @@ Rollback command:
   sudo iptables -t filter -D INPUT -p tcp --dport 22 -j ACCEPT
 ```
 
-**Overriding dry-run per-call (live mode even when KALI_DEFENSE_DRY_RUN=true):**
+**Overriding dry-run per-call (live mode even when DEFENSE_MCP_DRY_RUN=true):**
 
 ```json
 {
@@ -287,7 +287,7 @@ Output:
 The `BackupManager` (`src/core/backup-manager.ts`) stores all file backups under:
 
 ```
-~/.kali-mcp-backups/
+~/.defense-mcp-backups/
 ├── manifest.json
 ├── 2026-02-21_10-30-45_sshd_config
 ├── 2026-02-21_10-31-02_login.defs
@@ -301,17 +301,17 @@ Backup filenames follow the pattern: `<ISO-timestamp>_<original-filename>`
 
 Timestamps use the format `YYYY-MM-DD_HH-MM-SS` derived from ISO 8601 with colons and dots replaced by hyphens.
 
-The `KALI_DEFENSE_BACKUP_DIR` environment variable overrides the default `~/.kali-mcp-backups` location:
+The `DEFENSE_MCP_BACKUP_DIR` environment variable overrides the default `~/.defense-mcp-backups` location:
 
 ```bash
-KALI_DEFENSE_BACKUP_DIR=/mnt/secure-backup/kali-mcp node build/index.js
+DEFENSE_MCP_BACKUP_DIR=/mnt/secure-backup/defense-mcp node build/index.js
 ```
 
-Note: The `RollbackManager` uses a separate storage path at `~/.kali-defense/rollback-state.json` for tracking change records. The `BackupManager` at `~/.kali-mcp-backups/` is specifically for explicit file backups triggered by tools.
+Note: The `RollbackManager` uses a separate storage path at `~/.defense-mcp/rollback-state.json` for tracking change records. The `BackupManager` at `~/.defense-mcp-backups/` is specifically for explicit file backups triggered by tools.
 
 ### Manifest Format
 
-`~/.kali-mcp-backups/manifest.json` is a JSON file maintained by the BackupManager:
+`~/.defense-mcp-backups/manifest.json` is a JSON file maintained by the BackupManager:
 
 ```json
 {
@@ -319,7 +319,7 @@ Note: The `RollbackManager` uses a separate storage path at `~/.kali-defense/rol
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "originalPath": "/etc/ssh/sshd_config",
-      "backupPath": "/home/user/.kali-mcp-backups/2026-02-21_10-30-45_sshd_config",
+      "backupPath": "/home/user/.defense-mcp-backups/2026-02-21_10-30-45_sshd_config",
       "timestamp": "2026-02-21T10:30:45.123Z",
       "sizeBytes": 3421
     }
@@ -349,7 +349,7 @@ Note: The `RollbackManager` uses a separate storage path at `~/.kali-defense/rol
 
 ### RollbackManager Overview
 
-The `RollbackManager` (`src/core/rollback.ts`) tracks system changes made during a session and provides structured rollback for four change types. State is persisted to `~/.kali-defense/rollback-state.json`.
+The `RollbackManager` (`src/core/rollback.ts`) tracks system changes made during a session and provides structured rollback for four change types. State is persisted to `~/.defense-mcp/rollback-state.json`.
 
 Each server startup generates a new `sessionId` (UUID). Changes are tagged with both an `operationId` (per tool invocation) and the `sessionId`, enabling rollback at two granularities.
 
@@ -368,7 +368,7 @@ Every tool invocation that creates a change entry logs an `operationId` to the c
 
 ```bash
 # Find the operation ID in the changelog
-cat ~/.kali-defense/changelog.json | python3 -m json.tool | grep -A5 '"operationId"'
+cat ~/.defense-mcp/changelog.json | python3 -m json.tool | grep -A5 '"operationId"'
 ```
 
 Use the `defense_change_history` tool to list recent changes with their operation IDs:
@@ -419,7 +419,7 @@ The output includes backup IDs and original paths:
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "originalPath": "/etc/ssh/sshd_config",
-      "backupPath": "/home/user/.kali-mcp-backups/2026-02-21_10-30-45_sshd_config",
+      "backupPath": "/home/user/.defense-mcp-backups/2026-02-21_10-30-45_sshd_config",
       "timestamp": "2026-02-21T10:30:45.123Z",
       "sizeBytes": 3421
     }
@@ -455,9 +455,9 @@ The BackupManager copies the backup file back to its original path. The target d
 
 Every tool that modifies state logs a `rollbackCommand` to the changelog. To manually reverse a change:
 
-1. Find the rollback command in `~/.kali-defense/changelog.json`:
+1. Find the rollback command in `~/.defense-mcp/changelog.json`:
    ```bash
-   cat ~/.kali-defense/changelog.json | python3 -c "
+   cat ~/.defense-mcp/changelog.json | python3 -c "
    import json, sys
    entries = json.load(sys.stdin)
    for e in entries[-10:]:
@@ -472,7 +472,7 @@ Every tool that modifies state logs a `rollbackCommand` to the changelog. To man
    sudo iptables -t filter -D INPUT -p tcp --dport 22 -j ACCEPT
 
    # Restore a backed-up file
-   sudo cp /home/user/.kali-mcp-backups/2026-02-21_10-30-45_sshd_config /etc/ssh/sshd_config
+   sudo cp /home/user/.defense-mcp-backups/2026-02-21_10-30-45_sshd_config /etc/ssh/sshd_config
 
    # Revert a sysctl change
    sudo sysctl -w kernel.randomize_va_space=1
@@ -485,7 +485,7 @@ Every tool that modifies state logs a `rollbackCommand` to the changelog. To man
 
 ## Changelog and Audit Trail
 
-All changes are logged to `~/.kali-defense/changelog.json` (configurable via `KALI_DEFENSE_CHANGELOG_PATH`).
+All changes are logged to `~/.defense-mcp/changelog.json` (configurable via `DEFENSE_MCP_CHANGELOG_PATH`).
 
 Each entry contains:
 

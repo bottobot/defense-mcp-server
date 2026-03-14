@@ -51,7 +51,7 @@ export function registerZeroTrustNetworkTools(server: McpServer): void {
       endpoint: z.string().optional().describe("Peer endpoint ip:port (wg_peers add)"),
       // mtls params
       outputDir: z.string().optional().describe("Directory to write certificates (mtls action)"),
-      commonName: z.string().optional().default("kali-defense-ca").describe("CA common name (mtls action)"),
+      commonName: z.string().optional().default("defense-mcp-ca").describe("CA common name (mtls action)"),
       serverCN: z.string().optional().default("server.local").describe("Server common name (mtls action)"),
       clientCN: z.string().optional().default("client.local").describe("Client common name (mtls action)"),
       validDays: z.number().optional().default(365).describe("Certificate validity in days (mtls action)"),

@@ -129,7 +129,7 @@ export class RollbackManager {
 
   private constructor() {
     this.sessionId = randomUUID();
-    const storeDir = join(homedir(), ".kali-defense");
+    const storeDir = join(homedir(), ".defense-mcp");
     this.storePath = join(storeDir, "rollback-state.json");
 
     // Load existing state (with migration from old bare-array format)

@@ -1,5 +1,5 @@
 /**
- * DistroAdapter — unified cross-distribution API for the Kali Defense MCP Server.
+ * DistroAdapter — unified cross-distribution API for the Defense MCP Server.
  *
  * This module provides a single, cached adapter instance that abstracts away
  * distribution-specific differences in:

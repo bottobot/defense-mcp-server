@@ -1,5 +1,5 @@
 /**
- * Container and mandatory access control security tools for Kali Defense MCP Server.
+ * Container and mandatory access control security tools for Defense MCP Server.
  *
  * Registers 2 tools:
  *   container_docker (actions: audit, bench, seccomp, daemon, image_scan)
@@ -27,7 +27,7 @@ import { dirname, resolve } from "node:path";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 
 // ── TOOL-011 remediation: safe directory for seccomp profiles ──────────────
-const SECCOMP_PROFILE_DIR = "/tmp/kali-defense/seccomp";
+const SECCOMP_PROFILE_DIR = "/tmp/defense-mcp/seccomp";
 
 // ── Registration entry point ───────────────────────────────────────────────
 

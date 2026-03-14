@@ -1,5 +1,5 @@
 /**
- * Backup and restore tools for Kali Defense MCP Server.
+ * Backup and restore tools for Defense MCP Server.
  *
  * Registers 1 tool: backup (actions: config, state, restore, verify, list).
  */
@@ -115,7 +115,7 @@ export function registerBackupTools(server: McpServer): void {
       sort_by: z.enum(["date", "name", "size"]).optional().default("date").describe("Sort order (list action)"),
       limit: z.number().optional().default(50).describe("Maximum number of results (list action)"),
       // shared
-      dry_run: z.boolean().optional().describe("Preview without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
+      dry_run: z.boolean().optional().describe("Preview without executing (defaults to DEFENSE_MCP_DRY_RUN env var)"),
     },
     async (params) => {
       const { action } = params;
@@ -296,7 +296,7 @@ export function registerBackupTools(server: McpServer): void {
             const config = getConfig();
 
             // Load backup manifest for hash comparison if available
-            const manifestPath = join(homedir(), ".kali-mcp-backups", "manifest.json");
+            const manifestPath = join(homedir(), ".defense-mcp-backups", "manifest.json");
             let manifestHashes: Map<string, string> | null = null;
             if (check_integrity) {
               try {

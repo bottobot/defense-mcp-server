@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /**
  * Known defensive tools that support per-tool timeout overrides
- * via KALI_DEFENSE_TIMEOUT_<TOOL> environment variables.
+ * via DEFENSE_MCP_TIMEOUT_<TOOL> environment variables.
  */
 export const KNOWN_TOOLS = [
   "lynis",
@@ -25,7 +25,7 @@ export const KNOWN_TOOLS = [
 export type KnownTool = (typeof KNOWN_TOOLS)[number];
 
 /**
- * Configuration interface for the Kali Defense MCP Server.
+ * Configuration interface for the Defense MCP Server.
  * All values are derived from environment variables with sensible defaults.
  */
 export interface DefenseConfig {
@@ -41,7 +41,7 @@ export interface DefenseConfig {
    * SECURITY (CICD-014): Dry-run mode — when true, modifying operations preview
    * commands without executing them. Defaults to `true` so the server operates
    * in a safe, read-only mode until explicitly opted out via
-   * KALI_DEFENSE_DRY_RUN=false. This prevents accidental system modifications.
+   * DEFENSE_MCP_DRY_RUN=false. This prevents accidental system modifications.
    */
   dryRun: boolean;
   /** Path to the changelog JSON file */
@@ -52,7 +52,7 @@ export interface DefenseConfig {
    * SECURITY (CICD-014): Whether to create backups before modifying files.
    * Defaults to `true` — every file modification is backed up first so that
    * changes can be rolled back if needed. Disable only in CI/test environments
-   * via KALI_DEFENSE_BACKUP_ENABLED=false.
+   * via DEFENSE_MCP_BACKUP_ENABLED=false.
    */
   backupEnabled: boolean;
   /** Whether to auto-install missing tools */
@@ -64,7 +64,7 @@ export interface DefenseConfig {
    * actions. Defaults to `true` — the server will request explicit confirmation
    * before executing operations that modify system state. Disable only when
    * running automated/unattended workflows via
-   * KALI_DEFENSE_REQUIRE_CONFIRMATION=false.
+   * DEFENSE_MCP_REQUIRE_CONFIRMATION=false.
    */
   requireConfirmation: boolean;
   /** Directory for quarantined files */
@@ -75,9 +75,9 @@ export interface DefenseConfig {
   toolTimeouts: Partial<Record<KnownTool, number>>;
   /** Sudo session timeout in milliseconds (default: 15 minutes) */
   sudoSessionTimeout: number;
-  /** Command execution timeout in ms (falls back to defaultTimeout; env: KALI_DEFENSE_COMMAND_TIMEOUT) */
+  /** Command execution timeout in ms (falls back to defaultTimeout; env: DEFENSE_MCP_COMMAND_TIMEOUT) */
   commandTimeout: number;
-  /** Network operation timeout in ms (default: 30s; env: KALI_DEFENSE_NETWORK_TIMEOUT) */
+  /** Network operation timeout in ms (default: 30s; env: DEFENSE_MCP_NETWORK_TIMEOUT) */
   networkTimeout: number;
 }
 
@@ -116,7 +116,7 @@ function parsePaths(value: string | undefined, defaultValue: string): string[] {
     // Reject root directory and single-character root-level paths (e.g. "/")
     if (REJECTED_DIRS.has(p) || (p.startsWith("/") && p.length <= 2 && p !== "/" + p.slice(1).replace(/\//g, ""))) {
       console.error(
-        `[KALI-DEFENSE] SECURITY: Rejecting overly broad allowedDir '${p}' — ` +
+        `[DEFENSE-MCP] SECURITY: Rejecting overly broad allowedDir '${p}' — ` +
         `granting access to the entire filesystem is not permitted.`
       );
       return false;
@@ -124,7 +124,7 @@ function parsePaths(value: string | undefined, defaultValue: string): string[] {
     // Reject any single-character root-level path like "/x"
     if (/^\/[^/]$/.test(p)) {
       console.error(
-        `[KALI-DEFENSE] SECURITY: Rejecting overly broad allowedDir '${p}' — ` +
+        `[DEFENSE-MCP] SECURITY: Rejecting overly broad allowedDir '${p}' — ` +
         `single-character root-level paths are not permitted.`
       );
       return false;
@@ -132,7 +132,7 @@ function parsePaths(value: string | undefined, defaultValue: string): string[] {
     // Warn about broad directories
     if (BROAD_DIRS.has(p)) {
       console.error(
-        `[KALI-DEFENSE] WARNING: allowedDir '${p}' is very broad. ` +
+        `[DEFENSE-MCP] WARNING: allowedDir '${p}' is very broad. ` +
         `Consider using a more specific subdirectory.`
       );
     }
@@ -155,12 +155,12 @@ function parseLogLevel(
 
 /**
  * Reads per-tool timeout overrides from environment variables.
- * Format: KALI_DEFENSE_TIMEOUT_<TOOL> (value in seconds, stored as ms).
+ * Format: DEFENSE_MCP_TIMEOUT_<TOOL> (value in seconds, stored as ms).
  */
 function parseToolTimeouts(): Partial<Record<KnownTool, number>> {
   const timeouts: Partial<Record<KnownTool, number>> = {};
   for (const tool of KNOWN_TOOLS) {
-    const envKey = `KALI_DEFENSE_TIMEOUT_${tool.toUpperCase()}`;
+    const envKey = `DEFENSE_MCP_TIMEOUT_${tool.toUpperCase()}`;
     const value = process.env[envKey];
     if (value !== undefined) {
       const seconds = parseInt(value, 10);
@@ -199,11 +199,11 @@ export function getConfig(): DefenseConfig {
  */
 function buildConfigFromEnv(): DefenseConfig {
   const defaultTimeoutSec = parseInt(
-    process.env.KALI_DEFENSE_TIMEOUT_DEFAULT ?? "120",
+    process.env.DEFENSE_MCP_TIMEOUT_DEFAULT ?? "120",
     10
   );
   const maxBufferBytes = parseInt(
-    process.env.KALI_DEFENSE_MAX_OUTPUT_SIZE ?? String(10 * 1024 * 1024),
+    process.env.DEFENSE_MCP_MAX_OUTPUT_SIZE ?? String(10 * 1024 * 1024),
     10
   );
 
@@ -220,41 +220,41 @@ function buildConfigFromEnv(): DefenseConfig {
     // contains sensitive system configuration files (shadow, sudoers, ssh configs).
     // Granting default read/write access to /etc is too permissive. Tools that
     // need /etc access should require explicit configuration via
-    // KALI_DEFENSE_ALLOWED_DIRS=/tmp,/home,/var/log,/etc
+    // DEFENSE_MCP_ALLOWED_DIRS=/tmp,/home,/var/log,/etc
     allowedDirs: parsePaths(
-      process.env.KALI_DEFENSE_ALLOWED_DIRS,
+      process.env.DEFENSE_MCP_ALLOWED_DIRS,
       "/tmp,/home,/var/log"
     ),
-    logLevel: parseLogLevel(process.env.KALI_DEFENSE_LOG_LEVEL),
+    logLevel: parseLogLevel(process.env.DEFENSE_MCP_LOG_LEVEL),
     // SECURITY (CICD-014): Default to dry-run=true (safe preview mode)
-    // Set KALI_DEFENSE_DRY_RUN=false to enable live system modifications
-    dryRun: process.env.KALI_DEFENSE_DRY_RUN !== "false",
+    // Set DEFENSE_MCP_DRY_RUN=false to enable live system modifications
+    dryRun: process.env.DEFENSE_MCP_DRY_RUN !== "false",
     changelogPath: expandHome(
-      process.env.KALI_DEFENSE_CHANGELOG_PATH ??
-        "~/.kali-defense/changelog.json"
+      process.env.DEFENSE_MCP_CHANGELOG_PATH ??
+        "~/.defense-mcp/changelog.json"
     ),
     backupDir: expandHome(
-      process.env.KALI_DEFENSE_BACKUP_DIR ?? "~/.kali-defense/backups"
+      process.env.DEFENSE_MCP_BACKUP_DIR ?? "~/.defense-mcp/backups"
     ),
     // SECURITY (CICD-014): Backup before modify — enabled by default
-    // Set KALI_DEFENSE_BACKUP_ENABLED=false only in CI/test environments
-    backupEnabled: process.env.KALI_DEFENSE_BACKUP_ENABLED !== "false",
-    autoInstall: process.env.KALI_DEFENSE_AUTO_INSTALL === "true",
+    // Set DEFENSE_MCP_BACKUP_ENABLED=false only in CI/test environments
+    backupEnabled: process.env.DEFENSE_MCP_BACKUP_ENABLED !== "false",
+    autoInstall: process.env.DEFENSE_MCP_AUTO_INSTALL === "true",
     protectedPaths: parsePaths(
-      process.env.KALI_DEFENSE_PROTECTED_PATHS,
+      process.env.DEFENSE_MCP_PROTECTED_PATHS,
       "/boot,/usr/lib/systemd,/usr/bin,/usr/sbin"
     ),
     requireConfirmation:
-      process.env.KALI_DEFENSE_REQUIRE_CONFIRMATION !== "false",
+      process.env.DEFENSE_MCP_REQUIRE_CONFIRMATION !== "false",
     quarantineDir: expandHome(
-      process.env.KALI_DEFENSE_QUARANTINE_DIR ?? "~/.kali-defense/quarantine"
+      process.env.DEFENSE_MCP_QUARANTINE_DIR ?? "~/.defense-mcp/quarantine"
     ),
     policyDir: expandHome(
-      process.env.KALI_DEFENSE_POLICY_DIR ?? "~/.kali-defense/policies"
+      process.env.DEFENSE_MCP_POLICY_DIR ?? "~/.defense-mcp/policies"
     ),
     toolTimeouts: parseToolTimeouts(),
     sudoSessionTimeout: (() => {
-      const envVal = process.env.KALI_DEFENSE_SUDO_TIMEOUT;
+      const envVal = process.env.DEFENSE_MCP_SUDO_TIMEOUT;
       if (envVal) {
         const minutes = parseInt(envVal, 10);
         if (!isNaN(minutes) && minutes > 0) return minutes * 60 * 1000;
@@ -262,18 +262,18 @@ function buildConfigFromEnv(): DefenseConfig {
       return 15 * 60 * 1000; // default: 15 minutes
     })(),
     commandTimeout: (() => {
-      const sec = parseInt(process.env.KALI_DEFENSE_COMMAND_TIMEOUT ?? "120", 10);
+      const sec = parseInt(process.env.DEFENSE_MCP_COMMAND_TIMEOUT ?? "120", 10);
       return isNaN(sec) || sec <= 0 ? 120_000 : sec * 1000;
     })(),
     networkTimeout: (() => {
-      const sec = parseInt(process.env.KALI_DEFENSE_NETWORK_TIMEOUT ?? "30", 10);
+      const sec = parseInt(process.env.DEFENSE_MCP_NETWORK_TIMEOUT ?? "30", 10);
       return isNaN(sec) || sec <= 0 ? 30_000 : sec * 1000;
     })(),
   };
 
   // Warn when dry-run is active so operators know no changes will be applied
   if (config.dryRun) {
-    console.error("[KALI-DEFENSE] DRY_RUN mode is ACTIVE — no changes will be applied");
+    console.error("[DEFENSE-MCP] DRY_RUN mode is ACTIVE — no changes will be applied");
   }
 
   return config;

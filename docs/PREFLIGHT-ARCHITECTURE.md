@@ -24,7 +24,7 @@ The result: cryptic `spawn ENOENT` or `sudo: a password is required` errors retu
 1. **Zero tool-file modifications** — The 32 existing tool files must not change
 2. **Automatic pre-flight** — Every tool invocation validates dependencies and privileges before the handler runs
 3. **Actionable errors** — When pre-flight fails, return structured messages explaining what's missing and how to fix it
-4. **Auto-remediation** — Missing binaries are installed silently when `KALI_DEFENSE_AUTO_INSTALL=true`
+4. **Auto-remediation** — Missing binaries are installed silently when `DEFENSE_MCP_AUTO_INSTALL=true`
 5. **Least privilege** — Never elevate the whole server; only specific subprocesses run under sudo
 6. **Bypass for sudo tools** — `sudo_elevate`, `sudo_status`, `sudo_drop`, `sudo_extend` skip pre-flight (they manage the session itself)
 7. **Performance** — Cached lookups; no re-checking binaries that were validated seconds ago
@@ -927,7 +927,7 @@ Missing required tool: iptables
 
 To fix:
   • Run: sudo apt install iptables
-  • Or: Enable auto-install with KALI_DEFENSE_AUTO_INSTALL=true
+  • Or: Enable auto-install with DEFENSE_MCP_AUTO_INSTALL=true
   • Or: Use the defense_check_tools MCP tool to install all missing tools
 ```
 
@@ -1008,11 +1008,11 @@ Pre-flight behavior is controlled via environment variables (consistent with the
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KALI_DEFENSE_AUTO_INSTALL` | `false` | Auto-install missing binaries during pre-flight |
-| `KALI_DEFENSE_PREFLIGHT` | `true` | Enable/disable pre-flight globally |
-| `KALI_DEFENSE_PREFLIGHT_BANNERS` | `true` | Prepend status banners to tool output |
-| `KALI_DEFENSE_PREFLIGHT_CACHE_TTL` | `60` | Cache TTL in seconds for passing pre-flight results |
-| `KALI_DEFENSE_PREFLIGHT_SAFETY` | `true` | Run SafeguardRegistry safety checks |
+| `DEFENSE_MCP_AUTO_INSTALL` | `false` | Auto-install missing binaries during pre-flight |
+| `DEFENSE_MCP_PREFLIGHT` | `true` | Enable/disable pre-flight globally |
+| `DEFENSE_MCP_PREFLIGHT_BANNERS` | `true` | Prepend status banners to tool output |
+| `DEFENSE_MCP_PREFLIGHT_CACHE_TTL` | `60` | Cache TTL in seconds for passing pre-flight results |
+| `DEFENSE_MCP_PREFLIGHT_SAFETY` | `true` | Run SafeguardRegistry safety checks |
 
 These would be added to the `DefenseConfig` interface in `config.ts`:
 
@@ -1119,7 +1119,7 @@ A critical concern: the existing codebase has one known circular-dependency-avoi
 
 ### Phase 3: Integration
 - Modify `index.ts` (3 lines) to use `createPreflightServer()`
-- Feature-flag with `KALI_DEFENSE_PREFLIGHT=true` (default: enabled)
+- Feature-flag with `DEFENSE_MCP_PREFLIGHT=true` (default: enabled)
 - Test against all 137+ tools
 
 ### Phase 4: Enhancement

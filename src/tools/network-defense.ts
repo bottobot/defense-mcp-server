@@ -1,5 +1,5 @@
 /**
- * Network defense tools for Kali Defense MCP Server.
+ * Network defense tools for Defense MCP Server.
  *
  * Registers 1 tool: network_defense (actions: connections_list, connections_audit,
  * capture_custom, capture_dns, capture_arp, security_scan_detect, security_ipv6,

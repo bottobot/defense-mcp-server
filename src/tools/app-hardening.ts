@@ -1,5 +1,5 @@
 /**
- * Application Hardening tools for Kali Defense MCP Server.
+ * Application Hardening tools for Defense MCP Server.
  *
  * Detects running applications, assesses their security posture,
  * and applies hardening measures while preserving functionality.

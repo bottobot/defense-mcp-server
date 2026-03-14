@@ -741,7 +741,7 @@ PAM files (`/etc/pam.d/*`) are owned by root. All reads use `sudo cat`, all writ
 
 ### 9.4 BackupManager Integration
 
-The existing [`BackupManager`](../src/core/backup-manager.ts:95) stores backups in `~/.kali-defense/backups/` (user-writable). Since PAM files are root-owned, `backupPamFile()` reads via `sudo cat` and writes the content into BackupManager's directory as a user-owned copy. Restore reverses this: reads from BackupManager's directory and writes back via `sudo tee`.
+The existing [`BackupManager`](../src/core/backup-manager.ts:95) stores backups in `~/.defense-mcp/backups/` (user-writable). Since PAM files are root-owned, `backupPamFile()` reads via `sudo cat` and writes the content into BackupManager's directory as a user-owned copy. Restore reverses this: reads from BackupManager's directory and writes back via `sudo tee`.
 
 ### 9.5 Atomic Write Consideration
 

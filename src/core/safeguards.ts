@@ -250,7 +250,7 @@ export class SafeguardRegistry {
 
     try {
       // SECURITY (CORE-010): Use environment-aware path instead of hardcoded /home/robert/...
-      const mcpConfigPath = path.join(os.homedir(), "kali-mcp-workspace", ".mcp.json");
+      const mcpConfigPath = path.join(os.homedir(), "defense-mcp-workspace", ".mcp.json");
       if (fs.existsSync(mcpConfigPath)) {
         const raw = fs.readFileSync(mcpConfigPath, "utf-8");
         const config = JSON.parse(raw);

@@ -32,7 +32,7 @@ function httpsGet(url: string): Promise<string> {
       reject(new Error(
         `Network request timed out after ${timeoutSec} seconds. ` +
         `The target may be unreachable or the network is slow. ` +
-        `Consider increasing KALI_DEFENSE_NETWORK_TIMEOUT (current: ${timeoutSec}s).`
+        `Consider increasing DEFENSE_MCP_NETWORK_TIMEOUT (current: ${timeoutSec}s).`
       ));
     });
   });

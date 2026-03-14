@@ -1,5 +1,5 @@
 /**
- * Cloud security tools for Kali Defense MCP Server.
+ * Cloud security tools for Defense MCP Server.
  *
  * Registers 1 tool: cloud_security (actions: detect_environment, audit_metadata,
  * check_iam_creds, audit_storage, check_imds)

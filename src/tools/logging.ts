@@ -1,5 +1,5 @@
 /**
- * Log management tools for Kali Defense MCP Server.
+ * Log management tools for Defense MCP Server.
  *
  * Consolidates logging.ts (4 tools) and siem-integration.ts (1 tool) into a
  * single tool: `log_management` with 16 actions.
@@ -555,7 +555,7 @@ async function testConnectivity(
 
   const loggerResult = await runCommand(
     "logger",
-    ["-n", siemHost, "-P", String(effectivePort), "--tcp", "kali-defense SIEM connectivity test"],
+    ["-n", siemHost, "-P", String(effectivePort), "--tcp", "defense-mcp SIEM connectivity test"],
     15_000,
   );
   if (loggerResult.exitCode === 0) {

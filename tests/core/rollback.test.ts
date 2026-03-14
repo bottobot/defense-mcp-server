@@ -4,22 +4,22 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 /**
- * RollbackManager is a singleton that reads from ~/.kali-defense/rollback-state.json.
+ * RollbackManager is a singleton that reads from ~/.defense-mcp/rollback-state.json.
  * To test it in isolation we dynamically import a fresh module for each test,
  * pointing HOME at a temp directory so it picks up an isolated state file.
  */
 
 describe("rollback", () => {
     let tempDir: string;
-    let kaliDir: string;
+    let defenseDir: string;
     let statePath: string;
 
     const origHome = process.env.HOME;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), "kali-rollback-test-"));
-        kaliDir = join(tempDir, ".kali-defense");
-        statePath = join(kaliDir, "rollback-state.json");
+        tempDir = mkdtempSync(join(tmpdir(), "defense-rollback-test-"));
+        defenseDir = join(tempDir, ".defense-mcp");
+        statePath = join(defenseDir, "rollback-state.json");
 
         // Point HOME to the temp directory so RollbackManager uses our isolated dir
         process.env.HOME = tempDir;
@@ -256,7 +256,7 @@ describe("rollback", () => {
     describe("migration", () => {
         it("should migrate old bare-array format", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             // Write old format (bare array, no version envelope)
             const oldData = [
@@ -281,7 +281,7 @@ describe("rollback", () => {
 
         it("should handle corrupt state file gracefully", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             // Write corrupt data
             secureWriteFileSync(statePath, "not valid json {{", "utf-8");
@@ -297,7 +297,7 @@ describe("rollback", () => {
     describe("listChanges", () => {
         it("should return changes sorted newest first", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             // Pre-seed state with known timestamps
             const state = {
@@ -367,7 +367,7 @@ describe("rollback", () => {
     describe("CORE-003: rollback command injection protection", () => {
         it("should block firewall rollback with non-allowlisted command in originalValue", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             // Simulate a tampered state file with a non-allowlisted command
             const state = {
@@ -410,7 +410,7 @@ describe("rollback", () => {
 
         it("should block firewall rollback with shell injection in originalValue", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             // Simulate a tampered state file with shell metacharacters injected
             const state = {
@@ -446,7 +446,7 @@ describe("rollback", () => {
 
         it("should block firewall rollback with non-allowlisted command in rollbackCommand field", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             // Simulate a tampered state file with structured but non-allowlisted command
             const state = {
@@ -486,7 +486,7 @@ describe("rollback", () => {
 
         it("should block sysctl rollback with invalid key (shell metacharacters)", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             const state = {
                 version: 1,
@@ -521,7 +521,7 @@ describe("rollback", () => {
 
         it("should block sysctl rollback with malicious value", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             const state = {
                 version: 1,
@@ -556,7 +556,7 @@ describe("rollback", () => {
 
         it("should block firewall rollback when originalValue is too short", async () => {
             const { secureMkdirSync, secureWriteFileSync } = await import("../../src/core/secure-fs.js");
-            secureMkdirSync(kaliDir);
+            secureMkdirSync(defenseDir);
 
             const state = {
                 version: 1,

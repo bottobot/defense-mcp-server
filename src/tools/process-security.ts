@@ -1,5 +1,5 @@
 /**
- * Process security tools for Kali Defense MCP Server.
+ * Process security tools for Defense MCP Server.
  *
  * Registers 1 tool: process_security
  * Actions: audit_running, check_capabilities, check_namespaces, detect_anomalies, cgroup_audit

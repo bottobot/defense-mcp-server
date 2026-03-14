@@ -1,5 +1,5 @@
 /**
- * System hardening tools for Kali Defense MCP Server.
+ * System hardening tools for Defense MCP Server.
  *
  * Registers 2 tools: harden_kernel, harden_host.
  */
@@ -216,7 +216,7 @@ const PERMISSION_CHECKS: PermissionCheck[] = [
 // ── USB device control constants and helpers ───────────────────────────────
 
 /** Path to USB device whitelist file */
-const USB_WHITELIST_PATH = "/var/lib/kali-defense/usb/whitelist.json";
+const USB_WHITELIST_PATH = "/var/lib/defense-mcp/usb/whitelist.json";
 
 interface UsbCommandResult {
   stdout: string;
@@ -335,7 +335,7 @@ export function registerHardeningTools(server: McpServer): void {
       all: z.boolean().optional().default(false).describe("Return all sysctl values (for sysctl_get)"),
       pattern: z.string().optional().describe("Filter keys matching substring (for sysctl_get)"),
       value: z.string().optional().describe("Value to set (required for sysctl_set)"),
-      persistent: z.boolean().optional().default(false).describe("Write to /etc/sysctl.d/99-kali-defense.conf (for sysctl_set)"),
+      persistent: z.boolean().optional().default(false).describe("Write to /etc/sysctl.d/99-defense-mcp.conf (for sysctl_set)"),
       category: z.enum(["network", "kernel", "fs", "all"]).optional().default("all").describe("Category of settings to audit (for sysctl_audit)"),
       // kernel params
       check_type: z
@@ -469,7 +469,7 @@ export function registerHardeningTools(server: McpServer): void {
 
             const beforeValue = currentResult.stdout.trim();
             const fullCmd = `sudo sysctl -w ${validatedKey}=${params.value}`;
-            const persistPath = "/etc/sysctl.d/99-kali-defense.conf";
+            const persistPath = "/etc/sysctl.d/99-defense-mcp.conf";
 
             if (params.dry_run ?? getConfig().dryRun) {
               let preview = `[DRY-RUN] Would execute:\n  ${fullCmd}\n\nCurrent value: ${beforeValue}`;

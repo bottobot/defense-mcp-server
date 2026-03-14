@@ -15,7 +15,7 @@ describe("secure-fs", () => {
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), "kali-defense-test-"));
+        tempDir = mkdtempSync(join(tmpdir(), "defense-mcp-test-"));
     });
 
     afterEach(() => {

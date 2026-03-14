@@ -78,7 +78,7 @@ You don't need to pre-install every security tool. The server automatically dete
 
 To disable auto-installation entirely, run with:
 ```bash
-KALI_DEFENSE_AUTO_INSTALL=false node build/index.js
+DEFENSE_MCP_AUTO_INSTALL=false node build/index.js
 ```
 
 ## Requirements
@@ -186,18 +186,18 @@ Configuration is via environment variables. All have secure defaults:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KALI_DEFENSE_DRY_RUN` | `true` | Preview changes without applying |
-| `KALI_DEFENSE_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
-| `KALI_DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log` | Directories the server can access |
-| `KALI_DEFENSE_LOG_LEVEL` | `info` | Log verbosity (debug/info/warn/error) |
-| `KALI_DEFENSE_BACKUP_ENABLED` | `true` | Auto-backup before system changes |
-| `KALI_DEFENSE_AUTO_INSTALL` | `true` | Auto-install missing tool dependencies |
-| `KALI_DEFENSE_PREFLIGHT` | `true` | Enable pre-flight dependency checks |
-| `KALI_DEFENSE_PREFLIGHT_BANNERS` | `true` | Show pre-flight status in tool output |
+| `DEFENSE_MCP_DRY_RUN` | `true` | Preview changes without applying |
+| `DEFENSE_MCP_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
+| `DEFENSE_MCP_ALLOWED_DIRS` | `/tmp,/home,/var/log` | Directories the server can access |
+| `DEFENSE_MCP_LOG_LEVEL` | `info` | Log verbosity (debug/info/warn/error) |
+| `DEFENSE_MCP_BACKUP_ENABLED` | `true` | Auto-backup before system changes |
+| `DEFENSE_MCP_AUTO_INSTALL` | `true` | Auto-install missing tool dependencies |
+| `DEFENSE_MCP_PREFLIGHT` | `true` | Enable pre-flight dependency checks |
+| `DEFENSE_MCP_PREFLIGHT_BANNERS` | `true` | Show pre-flight status in tool output |
 
 To apply changes for real (not just preview), set:
 ```bash
-KALI_DEFENSE_DRY_RUN=false node build/index.js
+DEFENSE_MCP_DRY_RUN=false node build/index.js
 ```
 
 ## Security

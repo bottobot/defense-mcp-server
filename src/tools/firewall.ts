@@ -1,5 +1,5 @@
 /**
- * Firewall management tools for Kali Defense MCP Server.
+ * Firewall management tools for Defense MCP Server.
  *
  * Registers 1 unified tool: firewall
  * with 14 actions covering iptables, UFW, persistence, nftables, and policy audit.

@@ -38,7 +38,7 @@ void getToolTimeout;
 
 // ── Security Posture Helpers ───────────────────────────────────────────────
 
-const POSTURE_DIR = join(homedir(), ".kali-mcp-posture");
+const POSTURE_DIR = join(homedir(), ".defense-mcp-posture");
 
 function ensurePostureDir(): void {
   if (!existsSync(POSTURE_DIR)) {
@@ -64,7 +64,7 @@ async function checkSysctl(key: string, expected: string): Promise<{ passed: boo
 
 // ── Automation Workflow Helpers ─────────────────────────────────────────────
 
-const AUDIT_LOG_DIR = join(homedir(), ".kali-defense", "audit-logs");
+const AUDIT_LOG_DIR = join(homedir(), ".defense-mcp", "audit-logs");
 
 function ensureAuditLogDir(): void {
   if (!existsSync(AUDIT_LOG_DIR)) {
@@ -470,7 +470,7 @@ const WORKFLOW_SUGGESTIONS: Record<
 
 // ── Auto-Remediate Helpers ─────────────────────────────────────────────────
 
-const REMEDIATION_SESSIONS_DIR = "/var/lib/kali-defense/remediation-sessions";
+const REMEDIATION_SESSIONS_DIR = "/var/lib/defense-mcp/remediation-sessions";
 
 const SEVERITY_LEVELS_ORDER = ["critical", "high", "medium", "low"] as const;
 type RemSeverity = (typeof SEVERITY_LEVELS_ORDER)[number];
@@ -669,7 +669,7 @@ async function gatherRemediationFindings(
 
 // ── Reporting Helpers (inlined from reporting.ts) ──────────────────────────
 
-const DEFAULT_REPORT_DIR = "/var/lib/kali-defense/reports";
+const DEFAULT_REPORT_DIR = "/var/lib/defense-mcp/reports";
 
 const SUPPORTED_FORMATS = [
   { format: "markdown", description: "Markdown-formatted report with headers and code blocks", extension: ".md" },
@@ -1442,27 +1442,27 @@ export function registerMetaTools(server: McpServer): void {
             const logFile = join(AUDIT_LOG_DIR, `${name}.log`);
 
             if (useSystemd) {
-              const serviceContent = `[Unit]\nDescription=Kali Defense Scheduled Audit: ${name}\n\n[Service]\nType=oneshot\nExecStart=${resolvedCommandLine}\nStandardOutput=append:${logFile}\nStandardError=append:${logFile}\n`;
+              const serviceContent = `[Unit]\nDescription=Defense Scheduled Audit: ${name}\n\n[Service]\nType=oneshot\nExecStart=${resolvedCommandLine}\nStandardOutput=append:${logFile}\nStandardError=append:${logFile}\n`;
               const timerContent = `[Unit]\nDescription=Timer for ${name} audit\n\n[Timer]\nOnCalendar=${validatedSchedule}\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`;
-              const servicePath = `/etc/systemd/system/kali-audit-${name}.service`;
-              const timerPath = `/etc/systemd/system/kali-audit-${name}.timer`;
+              const servicePath = `/etc/systemd/system/defense-audit-${name}.service`;
+              const timerPath = `/etc/systemd/system/defense-audit-${name}.timer`;
 
-              if (dry_run) return { content: [formatToolOutput({ dryRun: true, type: "systemd", servicePath, timerPath, serviceContent, timerContent, warnings: safety.warnings, enableCommand: `systemctl enable --now kali-audit-${name}.timer` })] };
+              if (dry_run) return { content: [formatToolOutput({ dryRun: true, type: "systemd", servicePath, timerPath, serviceContent, timerContent, warnings: safety.warnings, enableCommand: `systemctl enable --now defense-audit-${name}.timer` })] };
 
               writeFileSync(servicePath, serviceContent, "utf-8");
               writeFileSync(timerPath, timerContent, "utf-8");
               await executeCommand({ command: "systemctl", args: ["daemon-reload"], timeout: 10000 });
-              const enable = await executeCommand({ command: "systemctl", args: ["enable", "--now", `kali-audit-${name}.timer`], timeout: 10000 });
-              logChange(createChangeEntry({ tool: "defense_mgmt", action: `Create systemd timer for ${name}`, target: timerPath, dryRun: false, success: enable.exitCode === 0, rollbackCommand: `systemctl disable --now kali-audit-${name}.timer && rm ${servicePath} ${timerPath}` }));
+              const enable = await executeCommand({ command: "systemctl", args: ["enable", "--now", `defense-audit-${name}.timer`], timeout: 10000 });
+              logChange(createChangeEntry({ tool: "defense_mgmt", action: `Create systemd timer for ${name}`, target: timerPath, dryRun: false, success: enable.exitCode === 0, rollbackCommand: `systemctl disable --now defense-audit-${name}.timer && rm ${servicePath} ${timerPath}` }));
               return { content: [formatToolOutput({ success: enable.exitCode === 0, type: "systemd", name, servicePath, timerPath, enabled: enable.exitCode === 0 })] };
             }
 
-            const cronLine = `${validatedSchedule} ${resolvedCommandLine} >> ${logFile} 2>&1 # kali-audit-${name}`;
+            const cronLine = `${validatedSchedule} ${resolvedCommandLine} >> ${logFile} 2>&1 # defense-audit-${name}`;
             if (dry_run) return { content: [formatToolOutput({ dryRun: true, type: "cron", cronLine, warnings: safety.warnings })] };
 
             const currentCron = await executeCommand({ command: "crontab", args: ["-l"], timeout: 5000 });
             const existing = currentCron.exitCode === 0 ? currentCron.stdout : "";
-            if (existing.includes(`kali-audit-${name}`)) return { content: [createErrorContent(`Cron job 'kali-audit-${name}' already exists. Remove it first.`)], isError: true };
+            if (existing.includes(`defense-audit-${name}`)) return { content: [createErrorContent(`Cron job 'defense-audit-${name}' already exists. Remove it first.`)], isError: true };
 
             const newCron = existing.trimEnd() + "\n" + cronLine + "\n";
             const install = await executeCommand({ command: "crontab", args: ["-"], stdin: newCron, timeout: 5000 });
@@ -1482,8 +1482,8 @@ export function registerMetaTools(server: McpServer): void {
             const timers = await executeCommand({ command: "systemctl", args: ["list-timers", "--no-pager", "--plain"], timeout: 10000 });
             if (timers.exitCode === 0) {
               for (const line of timers.stdout.split("\n")) {
-                if (line.includes("kali-audit-")) {
-                  const match = line.match(/kali-audit-(\S+)/);
+                if (line.includes("defense-audit-")) {
+                  const match = line.match(/defense-audit-(\S+)/);
                   if (match) audits.push({ name: match[1].replace(".timer", ""), type: "systemd", schedule: line.trim(), status: "active" });
                 }
               }
@@ -1492,8 +1492,8 @@ export function registerMetaTools(server: McpServer): void {
             const cron = await executeCommand({ command: "crontab", args: ["-l"], timeout: 5000 });
             if (cron.exitCode === 0) {
               for (const line of cron.stdout.split("\n")) {
-                if (line.includes("kali-audit-")) {
-                  const match = line.match(/# kali-audit-(\S+)/);
+                if (line.includes("defense-audit-")) {
+                  const match = line.match(/# defense-audit-(\S+)/);
                   if (match) audits.push({ name: match[1], type: "cron", schedule: line.split("#")[0].trim(), status: "active" });
                 }
               }
@@ -1513,26 +1513,26 @@ export function registerMetaTools(server: McpServer): void {
             if (!name) return { content: [createErrorContent("name is required for scheduled_remove action")], isError: true };
             const actions: { action: string; success: boolean }[] = [];
 
-            const timerPath = `/etc/systemd/system/kali-audit-${name}.timer`;
-            const servicePath = `/etc/systemd/system/kali-audit-${name}.service`;
+            const timerPath = `/etc/systemd/system/defense-audit-${name}.timer`;
+            const servicePath = `/etc/systemd/system/defense-audit-${name}.service`;
             const hasTimer = existsSync(timerPath);
 
             const cron = await executeCommand({ command: "crontab", args: ["-l"], timeout: 5000 });
-            const hasCron = cron.exitCode === 0 && cron.stdout.includes(`kali-audit-${name}`);
+            const hasCron = cron.exitCode === 0 && cron.stdout.includes(`defense-audit-${name}`);
 
             if (!hasTimer && !hasCron) return { content: [createErrorContent(`No scheduled audit found with name: ${name}`)], isError: true };
 
-            if (dry_run) return { content: [formatToolOutput({ dryRun: true, name, hasSystemdTimer: hasTimer, hasCronJob: hasCron, actions: [hasTimer ? `systemctl disable --now kali-audit-${name}.timer && rm ${timerPath} ${servicePath}` : null, hasCron ? `Remove cron line containing kali-audit-${name}` : null].filter(Boolean) })] };
+            if (dry_run) return { content: [formatToolOutput({ dryRun: true, name, hasSystemdTimer: hasTimer, hasCronJob: hasCron, actions: [hasTimer ? `systemctl disable --now defense-audit-${name}.timer && rm ${timerPath} ${servicePath}` : null, hasCron ? `Remove cron line containing defense-audit-${name}` : null].filter(Boolean) })] };
 
             if (hasTimer) {
-              await executeCommand({ command: "systemctl", args: ["disable", "--now", `kali-audit-${name}.timer`], timeout: 10000 });
+              await executeCommand({ command: "systemctl", args: ["disable", "--now", `defense-audit-${name}.timer`], timeout: 10000 });
               await executeCommand({ command: "rm", args: ["-f", timerPath, servicePath], timeout: 5000 });
               await executeCommand({ command: "systemctl", args: ["daemon-reload"], timeout: 10000 });
               actions.push({ action: "Removed systemd timer", success: true });
             }
 
             if (hasCron) {
-              const cronLines = cron.stdout.split("\n").filter((l) => !l.includes(`kali-audit-${name}`));
+              const cronLines = cron.stdout.split("\n").filter((l) => !l.includes(`defense-audit-${name}`));
               await executeCommand({ command: "crontab", args: ["-"], stdin: cronLines.join("\n") + "\n", timeout: 5000 });
               actions.push({ action: "Removed cron job", success: true });
             }

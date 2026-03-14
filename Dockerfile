@@ -160,9 +160,9 @@ RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh && \
 # MCP servers communicate via stdio — no port needed
 # Environment variables for configuration
 ENV NODE_ENV=production
-ENV KALI_DEFENSE_DRY_RUN=false
-ENV KALI_DEFENSE_AUTO_INSTALL=false
-ENV KALI_DEFENSE_PREFLIGHT=true
+ENV DEFENSE_MCP_DRY_RUN=false
+ENV DEFENSE_MCP_AUTO_INSTALL=false
+ENV DEFENSE_MCP_PREFLIGHT=true
 
 # Bake the host username into the image so docker-entrypoint.sh knows which
 # user account to set the password on and drop privileges to.

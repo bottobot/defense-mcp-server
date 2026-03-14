@@ -1,5 +1,5 @@
 /**
- * Secrets tools for Kali Defense MCP Server.
+ * Secrets tools for Defense MCP Server.
  *
  * Registers 1 tool: secrets (actions: scan, env_audit, ssh_key_sprawl, git_history_scan).
  */

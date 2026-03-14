@@ -1,5 +1,5 @@
 /**
- * Deception / honeypot tools for Kali Defense MCP Server.
+ * Deception / honeypot tools for Defense MCP Server.
  *
  * Registers 1 tool: honeypot_manage (actions: deploy_canary, deploy_honeyport,
  * check_triggers, remove, list)
@@ -24,7 +24,7 @@ import { existsSync, readFileSync, unlinkSync, rmSync } from "node:fs";
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 /** Base directory for canary registry and logs */
-const CANARY_BASE_DIR = "/var/lib/kali-defense/canaries";
+const CANARY_BASE_DIR = "/var/lib/defense-mcp/canaries";
 
 /** Path to the canary registry file */
 const REGISTRY_PATH = `${CANARY_BASE_DIR}/registry.json`;
