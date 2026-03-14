@@ -1,5 +1,5 @@
 /**
- * Encryption and cryptography tools for Kali Defense MCP Server.
+ * Encryption and cryptography tools for Defense MCP Server.
  *
  * Registers 1 tool: crypto (actions: tls_remote_audit, tls_cert_expiry, tls_config_audit,
  * gpg_list, gpg_generate, gpg_export, gpg_import, gpg_verify,
@@ -218,7 +218,7 @@ export function registerEncryptionTools(server: McpServer): void {
       // gpg params
       key_id: z.string().optional().describe("GPG key ID (gpg_export/gpg_verify)"),
       file_path: z.string().optional().describe("File path (gpg_import/gpg_verify)"),
-      dry_run: z.boolean().optional().describe("Preview changes without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
+      dry_run: z.boolean().optional().describe("Preview changes without executing (defaults to DEFENSE_MCP_DRY_RUN env var)"),
       // luks params
       device: z.string().optional().describe("Block device path e.g. /dev/sda2 (luks_status/luks_dump/luks_open)"),
       name: z.string().optional().describe("Mapper name for luks_open/luks_close/luks_status"),

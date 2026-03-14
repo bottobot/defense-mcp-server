@@ -1,7 +1,7 @@
 # Secure Interactive Sudo Session Design
 
 **Version:** 1.0  
-**Status:** Design Proposal  
+**Status:** Implemented
 **Author:** Defense MCP Architect  
 **Date:** 2026-03-12  
 **Replaces:** `mcpuser ALL=(ALL) NOPASSWD: ALL` — CRIT-001
@@ -888,9 +888,9 @@ RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh && \
 # The entrypoint uses su-exec/setpriv to drop to mcpuser
 
 ENV NODE_ENV=production
-ENV KALI_DEFENSE_DRY_RUN=false
-ENV KALI_DEFENSE_AUTO_INSTALL=false
-ENV KALI_DEFENSE_PREFLIGHT=true
+ENV DEFENSE_MCP_DRY_RUN=false
+ENV DEFENSE_MCP_AUTO_INSTALL=false
+ENV DEFENSE_MCP_PREFLIGHT=true
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD node -e "require('./build/index.js')" 2>/dev/null || exit 1

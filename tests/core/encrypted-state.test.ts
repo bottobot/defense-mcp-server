@@ -8,7 +8,7 @@ describe("SecureStateStore", () => {
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), "kali-defense-state-test-"));
+        tempDir = mkdtempSync(join(tmpdir(), "defense-mcp-state-test-"));
     });
 
     afterEach(() => {

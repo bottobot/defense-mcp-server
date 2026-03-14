@@ -405,10 +405,10 @@ let initialized = false;
  * mitigating TOCTOU (time-of-check-time-of-use) attacks where a binary is
  * replaced between startup resolution and runtime execution.
  *
- * Configurable via KALI_DEFENSE_RUNTIME_PATH_VERIFY env var.
+ * Configurable via DEFENSE_MCP_RUNTIME_PATH_VERIFY env var.
  * Default: true (verify at runtime). Set to "false" to disable for performance.
  */
-let runtimePathVerification = process.env.KALI_DEFENSE_RUNTIME_PATH_VERIFY !== "false";
+let runtimePathVerification = process.env.DEFENSE_MCP_RUNTIME_PATH_VERIFY !== "false";
 
 // Populate the map immediately so `isAllowlisted()` works before init
 for (const entry of ALLOWLIST_DEFINITIONS) {
@@ -435,7 +435,7 @@ export function initializeAllowlist(): void {
   reversePathMap.clear();
 
   // Re-read runtime path verification setting on re-init
-  runtimePathVerification = process.env.KALI_DEFENSE_RUNTIME_PATH_VERIFY !== "false";
+  runtimePathVerification = process.env.DEFENSE_MCP_RUNTIME_PATH_VERIFY !== "false";
 
   for (const entry of ALLOWLIST_DEFINITIONS) {
     entry.resolvedPath = undefined;

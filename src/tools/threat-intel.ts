@@ -1,5 +1,5 @@
 /**
- * Threat intelligence tools for Kali Defense MCP Server.
+ * Threat intelligence tools for Defense MCP Server.
  *
  * Registers 1 tool: threat_intel (actions: check_ip, check_hash, check_domain,
  * update_feeds, blocklist_apply)
@@ -22,7 +22,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 /** Base directory for threat intelligence feeds */
-const FEED_BASE_DIR = "/var/lib/kali-defense/threat-feeds";
+const FEED_BASE_DIR = "/var/lib/defense-mcp/threat-feeds";
 
 /** Subdirectory for hash-based feeds */
 const HASH_FEED_DIR = `${FEED_BASE_DIR}/hashes`;
@@ -846,7 +846,7 @@ export function registerThreatIntelTools(server: McpServer): void {
 
                 if (newEntries.length > 0) {
                   // Write new entries via tee
-                  const appendContent = "\n# ── Kali Defense Threat Intel Blocklist ──\n" +
+                  const appendContent = "\n# ── Defense Threat Intel Blocklist ──\n" +
                     newEntries.join("\n") + "\n";
 
                   const teeResult = await runCommand(

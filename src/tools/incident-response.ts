@@ -1,5 +1,5 @@
 /**
- * Incident response tools for Kali Defense MCP Server.
+ * Incident response tools for Defense MCP Server.
  *
  * Registers 1 tool:
  *   - incident_response (actions: collect, ioc_scan, timeline,
@@ -31,7 +31,7 @@ const CRYPTO_MINER_NAMES = [
 
 // ── Forensics constants ────────────────────────────────────────────────────
 
-const DEFAULT_FORENSICS_DIR = "/var/lib/kali-defense/forensics/";
+const DEFAULT_FORENSICS_DIR = "/var/lib/defense-mcp/forensics/";
 
 // ── Forensics helper ───────────────────────────────────────────────────────
 
@@ -128,7 +128,7 @@ export function registerIncidentResponseTools(server: McpServer): void {
       exclude_paths: z.string().optional().default("/proc,/sys,/dev,/run").describe("Comma-separated paths to exclude from search (timeline action)"),
       file_types: z.enum(["all", "executables", "configs", "scripts"]).optional().default("all").describe("Type of files to include in the timeline (timeline action)"),
       // shared incident_response
-      dry_run: z.boolean().optional().describe("Preview what would be done without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"),
+      dry_run: z.boolean().optional().describe("Preview what would be done without executing (defaults to DEFENSE_MCP_DRY_RUN env var)"),
       // forensics params
       case_id: z.string().optional().describe("Case identifier for chain-of-custody tracking"),
       device: z.string().optional().describe("Device path for disk imaging (e.g. /dev/sda1)"),

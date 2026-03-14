@@ -1,5 +1,5 @@
 /**
- * DNS security tools for Kali Defense MCP Server.
+ * DNS security tools for Defense MCP Server.
  *
  * Registers 1 tool: dns_security (actions: audit_resolv, check_dnssec,
  * detect_tunneling, block_domains, query_log_audit)
@@ -790,9 +790,9 @@ export function registerDnsSecurityTools(server: McpServer): void {
             }
 
             // Append new entries to /etc/hosts
-            const separator = "\n# ── Kali Defense DNS Blocklist ──\n";
+            const separator = "\n# ── Defense DNS Blocklist ──\n";
             const newContent = currentHosts.trimEnd() +
-              (currentHosts.includes("Kali Defense DNS Blocklist") ? "\n" : separator) +
+              (currentHosts.includes("Defense DNS Blocklist") ? "\n" : separator) +
               newEntries.join("\n") + "\n";
 
             try {

@@ -321,7 +321,7 @@ The `invalidatePreflightCaches()` function (exported from `tool-wrapper.ts`) is 
 
 ### `executor.ts` — Safe Command Execution
 
-Adapted directly from [`kali-mcp-server/src/core/executor.ts`](../kali-mcp-server/src/core/executor.ts). Uses `child_process.spawn` with `shell: false`.
+Adapted directly from [`defense-mcp-server/src/core/executor.ts`](../defense-mcp-server/src/core/executor.ts). Uses `child_process.spawn` with `shell: false`.
 
 ```typescript
 interface ExecuteOptions {
@@ -352,7 +352,7 @@ interface CommandResult {
 
 ### `config.ts` — Environment-Based Configuration
 
-Adapted from [`kali-mcp-server/src/core/config.ts`](../kali-mcp-server/src/core/config.ts) with defensive-first defaults.
+Adapted from [`defense-mcp-server/src/core/config.ts`](../defense-mcp-server/src/core/config.ts) with defensive-first defaults.
 
 ```typescript
 interface DefenseMcpConfig {
@@ -370,23 +370,23 @@ interface DefenseMcpConfig {
 
   // ── Defensive OPSec ──
   dryRun: boolean;                  // DEFOPSEC_DRY_RUN, default: true
-  changelogPath: string;            // DEFOPSEC_CHANGELOG_PATH, default: ~/.kali-defense/changelog.json
-  backupDir: string;                // DEFOPSEC_BACKUP_DIR, default: ~/.kali-defense/backups
+  changelogPath: string;            // DEFOPSEC_CHANGELOG_PATH, default: ~/.defense-mcp/changelog.json
+  backupDir: string;                // DEFOPSEC_BACKUP_DIR, default: ~/.defense-mcp/backups
   autoInstall: boolean;             // DEFOPSEC_AUTO_INSTALL, default: false
   requireConfirmation: boolean;     // DEFOPSEC_REQUIRE_CONFIRMATION, default: true
 
   // ── Policy engine ──
-  policyDir: string;                // DEFENSE_POLICY_DIR, default: ~/.kali-defense/policies
+  policyDir: string;                // DEFENSE_POLICY_DIR, default: ~/.defense-mcp/policies
   complianceProfile: string;        // DEFENSE_COMPLIANCE_PROFILE, default: "cis-level1"
 
   // ── Quarantine ──
-  quarantineDir: string;            // DEFENSE_QUARANTINE_DIR, default: ~/.kali-defense/quarantine
+  quarantineDir: string;            // DEFENSE_QUARANTINE_DIR, default: ~/.defense-mcp/quarantine
 }
 ```
 
 ### `sanitizer.ts` — Input Validation
 
-Adapted from [`kali-mcp-server/src/core/sanitizer.ts`](../kali-mcp-server/src/core/sanitizer.ts) with additional defensive validators.
+Adapted from [`defense-mcp-server/src/core/sanitizer.ts`](../defense-mcp-server/src/core/sanitizer.ts) with additional defensive validators.
 
 **Existing validators (reused):**
 - `validateTarget(target)` — hostname/IP/CIDR validation with allow/block lists
@@ -413,7 +413,7 @@ Adapted from [`kali-mcp-server/src/core/sanitizer.ts`](../kali-mcp-server/src/co
 
 ### `parsers.ts` — Output Parsing
 
-Adapted from [`kali-mcp-server/src/core/parsers.ts`](../kali-mcp-server/src/core/parsers.ts) with additional parsers.
+Adapted from [`defense-mcp-server/src/core/parsers.ts`](../defense-mcp-server/src/core/parsers.ts) with additional parsers.
 
 **Existing parsers (reused):**
 - `parseKeyValue(text, delimiter)` — key=value or key: value parsing
@@ -437,7 +437,7 @@ Adapted from [`kali-mcp-server/src/core/parsers.ts`](../kali-mcp-server/src/core
 
 ### `changelog.ts` — Audit Trail
 
-Reused directly from [`kali-mcp-server/src/core/changelog.ts`](../kali-mcp-server/src/core/changelog.ts).
+Reused directly from [`defense-mcp-server/src/core/changelog.ts`](../defense-mcp-server/src/core/changelog.ts).
 
 ```typescript
 interface ChangeEntry {
@@ -459,12 +459,12 @@ interface ChangeEntry {
 **Public API:**
 - `logChange(entry)` → appends to changelog JSON, returns complete `ChangeEntry`
 - `getChangelog(limit?)` → returns entries newest-first, optionally limited
-- `backupFile(filePath)` → copies file to `~/.kali-defense/backups/<timestamp>-<name>`
+- `backupFile(filePath)` → copies file to `~/.defense-mcp/backups/<timestamp>-<name>`
 - `restoreFile(backupPath, originalPath)` → copies backup back to original location
 
 ### `distro.ts` — Distribution Detection
 
-Reused directly from [`kali-mcp-server/src/core/distro.ts`](../kali-mcp-server/src/core/distro.ts).
+Reused directly from [`defense-mcp-server/src/core/distro.ts`](../defense-mcp-server/src/core/distro.ts).
 
 ```typescript
 interface DistroInfo {
@@ -483,7 +483,7 @@ interface DistroInfo {
 
 ### `installer.ts` — Defensive Tool Auto-Installation
 
-Adapted from [`kali-mcp-server/src/core/installer.ts`](../kali-mcp-server/src/core/installer.ts) with a defense-focused tool catalog.
+Adapted from [`defense-mcp-server/src/core/installer.ts`](../defense-mcp-server/src/core/installer.ts) with a defense-focused tool catalog.
 
 The `DEFENSIVE_TOOLS` catalog is expanded to include all tools used by the 11 modules (lynis, aide, rkhunter, chkrootkit, clamav, yara, oscap, snort, suricata, tcpdump, fail2ban, auditd, logwatch, openssl, docker, etc.) with cross-distro package mappings.
 
@@ -1719,29 +1719,29 @@ All configuration is via environment variables with defensive defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KALI_DEFENSE_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
+| `DEFENSE_MCP_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
 
 ### Filesystem Safety
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KALI_DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log` | Allowed filesystem directories |
+| `DEFENSE_MCP_ALLOWED_DIRS` | `/tmp,/home,/var/log` | Allowed filesystem directories |
 
 ### Defensive OPSec
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KALI_DEFENSE_DRY_RUN` | `true` | Dry-run mode — no actual changes unless `false` |
-| `KALI_DEFENSE_AUTO_INSTALL` | `true` | Auto-install missing tools via package manager |
-| `KALI_DEFENSE_BACKUP_ENABLED` | `true` | Auto-backup before system changes |
-| `KALI_DEFENSE_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
+| `DEFENSE_MCP_DRY_RUN` | `true` | Dry-run mode — no actual changes unless `false` |
+| `DEFENSE_MCP_AUTO_INSTALL` | `true` | Auto-install missing tools via package manager |
+| `DEFENSE_MCP_BACKUP_ENABLED` | `true` | Auto-backup before system changes |
+| `DEFENSE_MCP_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
 
 ### Pre-flight Validation
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KALI_DEFENSE_PREFLIGHT` | `true` | Enable pre-flight dependency checks |
-| `KALI_DEFENSE_PREFLIGHT_BANNERS` | `true` | Show pre-flight status banners in tool output |
+| `DEFENSE_MCP_PREFLIGHT` | `true` | Enable pre-flight dependency checks |
+| `DEFENSE_MCP_PREFLIGHT_BANNERS` | `true` | Show pre-flight status banners in tool output |
 
 ---
 
@@ -1945,7 +1945,7 @@ graph TD
 
 ### Tool Registration Pattern
 
-Every tool module follows this exact pattern (matching [`kali-mcp-server`](../kali-mcp-server/src/index.ts)):
+Every tool module follows this exact pattern (matching [`defense-mcp-server`](../defense-mcp-server/src/index.ts)):
 
 ```typescript
 // src/tools/<module>.ts

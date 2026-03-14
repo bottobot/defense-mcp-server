@@ -1,5 +1,5 @@
 /**
- * Compliance and audit tools for Kali Defense MCP Server.
+ * Compliance and audit tools for Defense MCP Server.
  *
  * Registers 1 consolidated tool: compliance
  * Actions: lynis_audit, oscap_scan, cis_check, framework_check,

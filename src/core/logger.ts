@@ -66,11 +66,11 @@ export class Logger {
   }
 
   /**
-   * Read the minimum log level from `KALI_DEFENSE_LOG_LEVEL` env var.
+   * Read the minimum log level from `DEFENSE_MCP_LOG_LEVEL` env var.
    * Falls back to `"info"` if unset or invalid.
    */
   private parseEnvLevel(): LogLevel {
-    const raw = process.env.KALI_DEFENSE_LOG_LEVEL?.toLowerCase();
+    const raw = process.env.DEFENSE_MCP_LOG_LEVEL?.toLowerCase();
     if (raw && raw in LOG_LEVEL_SEVERITY) {
       return raw as LogLevel;
     }

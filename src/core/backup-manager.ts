@@ -1,7 +1,7 @@
 /**
  * BackupManager — manages file backups with manifest tracking.
  *
- * Backups are stored under ~/.kali-defense/backups/ with timestamped filenames.
+ * Backups are stored under ~/.defense-mcp/backups/ with timestamped filenames.
  * A manifest.json tracks all backups for listing and restore operations.
  */
 
@@ -97,7 +97,7 @@ export class BackupManager {
   private readonly manifestPath: string;
 
   constructor(backupDir?: string) {
-    this.backupDir = backupDir ?? join(homedir(), ".kali-defense", "backups");
+    this.backupDir = backupDir ?? join(homedir(), ".defense-mcp", "backups");
     this.manifestPath = join(this.backupDir, "manifest.json");
   }
 

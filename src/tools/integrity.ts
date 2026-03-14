@@ -1,5 +1,5 @@
 /**
- * Integrity tools for Kali Defense MCP Server.
+ * Integrity tools for Defense MCP Server.
  *
  * Consolidates IDS (ids.ts) and drift-detection (drift-detection.ts) into a
  * single tool: `integrity` with 11 actions.
@@ -38,7 +38,7 @@ import { secureWriteFileSync } from "../core/secure-fs.js";
 const ALLOWED_IDS_DIRS = ["/etc", "/var/lib", "/tmp", "/home", "/opt", "/usr"];
 
 // ── Drift detection constants ──────────────────────────────────────────────
-const BASELINE_DIR = join(homedir(), ".kali-mcp-baselines");
+const BASELINE_DIR = join(homedir(), ".defense-mcp-baselines");
 
 /** Allowed directories for drift baseline files */
 const ALLOWED_BASELINE_DIRS = [
@@ -143,7 +143,7 @@ export function registerIntegrityTools(server: McpServer): void {
         .boolean()
         .optional()
         .describe(
-          "Preview the command without executing (defaults to KALI_DEFENSE_DRY_RUN env var)"
+          "Preview the command without executing (defaults to DEFENSE_MCP_DRY_RUN env var)"
         ),
       // rkhunter params
       update_first: z

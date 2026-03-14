@@ -31,45 +31,45 @@ describe("rate-limiter", () => {
 
     it("should read limits from environment variables", () => {
       const envBackup = {
-        perTool: process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL,
-        global: process.env.KALI_DEFENSE_RATE_LIMIT_GLOBAL,
-        window: process.env.KALI_DEFENSE_RATE_LIMIT_WINDOW,
+        perTool: process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL,
+        global: process.env.DEFENSE_MCP_RATE_LIMIT_GLOBAL,
+        window: process.env.DEFENSE_MCP_RATE_LIMIT_WINDOW,
       };
       try {
-        process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL = "5";
-        process.env.KALI_DEFENSE_RATE_LIMIT_GLOBAL = "20";
-        process.env.KALI_DEFENSE_RATE_LIMIT_WINDOW = "120";
+        process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL = "5";
+        process.env.DEFENSE_MCP_RATE_LIMIT_GLOBAL = "20";
+        process.env.DEFENSE_MCP_RATE_LIMIT_WINDOW = "120";
 
         limiter = new RateLimiter();
         expect(limiter.maxPerTool).toBe(5);
         expect(limiter.maxGlobal).toBe(20);
         expect(limiter.windowMs).toBe(120_000);
       } finally {
-        process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL = envBackup.perTool;
-        process.env.KALI_DEFENSE_RATE_LIMIT_GLOBAL = envBackup.global;
-        process.env.KALI_DEFENSE_RATE_LIMIT_WINDOW = envBackup.window;
+        process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL = envBackup.perTool;
+        process.env.DEFENSE_MCP_RATE_LIMIT_GLOBAL = envBackup.global;
+        process.env.DEFENSE_MCP_RATE_LIMIT_WINDOW = envBackup.window;
       }
     });
 
     it("should fall back to defaults for invalid env var values", () => {
-      const envBackup = process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL;
+      const envBackup = process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL;
       try {
-        process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL = "not_a_number";
+        process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL = "not_a_number";
         limiter = new RateLimiter();
         expect(limiter.maxPerTool).toBe(30); // default
       } finally {
-        process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL = envBackup;
+        process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL = envBackup;
       }
     });
 
     it("should fall back to defaults for negative env var values", () => {
-      const envBackup = process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL;
+      const envBackup = process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL;
       try {
-        process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL = "-5";
+        process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL = "-5";
         limiter = new RateLimiter();
         expect(limiter.maxPerTool).toBe(30); // default
       } finally {
-        process.env.KALI_DEFENSE_RATE_LIMIT_PER_TOOL = envBackup;
+        process.env.DEFENSE_MCP_RATE_LIMIT_PER_TOOL = envBackup;
       }
     });
   });

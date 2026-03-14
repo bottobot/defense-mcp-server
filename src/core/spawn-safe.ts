@@ -146,7 +146,7 @@ export function execFileSafe(
       throw new Error(
         `Command timed out after ${timeoutSec} seconds. ` +
         `The target may be unreachable or the operation is taking too long. ` +
-        `Consider increasing KALI_DEFENSE_COMMAND_TIMEOUT (current: ${timeoutSec}s).`
+        `Consider increasing DEFENSE_MCP_COMMAND_TIMEOUT (current: ${timeoutSec}s).`
       );
     }
     throw err;

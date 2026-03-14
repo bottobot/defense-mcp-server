@@ -1,5 +1,5 @@
 /**
- * Sudo privilege management tools for Kali Defense MCP Server.
+ * Sudo privilege management tools for Defense MCP Server.
  *
  * Registers 1 tool: sudo_session (actions: elevate, elevate_gui, status, drop, extend, preflight_check)
  *
@@ -260,7 +260,7 @@ export function registerSudoManagementTools(server: McpServer): void {
             const fs = await import("node:fs");
             const crypto = await import("node:crypto");
             const session = SudoSession.getInstance();
-            const SUDO_PW_FILE = "/tmp/.kali-sudo-pw";
+            const SUDO_PW_FILE = "/tmp/.defense-sudo-pw";
 
             // Check if already elevated
             if (session.isElevated()) {
@@ -383,7 +383,7 @@ export function registerSudoManagementTools(server: McpServer): void {
             const guiTool = await detectGuiPasswordTool();
             const toolCmd = guiTool
               ? `${guiTool.command} ${guiTool.args.map(a => `'${a}'`).join(" ")}`
-              : "zenity --password --title='Kali Defense — Sudo Authentication' --width=400";
+              : "zenity --password --title='Defense — Sudo Authentication' --width=400";
 
             return {
               content: [
@@ -391,7 +391,7 @@ export function registerSudoManagementTools(server: McpServer): void {
                   `🔐 SECURE ELEVATION — Step 1 of 2\n` +
                   `${"═".repeat(50)}\n\n` +
                   `To elevate securely, run this command via execute_command:\n\n` +
-                  `  ${toolCmd} > /tmp/.kali-sudo-pw 2>/dev/null && chmod 600 /tmp/.kali-sudo-pw && echo "READY" || echo "CANCELLED"\n\n` +
+                  `  ${toolCmd} > /tmp/.defense-sudo-pw 2>/dev/null && chmod 600 /tmp/.defense-sudo-pw && echo "READY" || echo "CANCELLED"\n\n` +
                   `This opens a password dialog on the user's screen.\n` +
                   `The password goes DIRECTLY to a secure temp file — it\n` +
                   `NEVER appears in terminal output or the AI chat.\n\n` +
@@ -770,7 +770,7 @@ async function detectGuiPasswordTool(): Promise<GuiPasswordTool | null> {
       command: "zenity",
       args: [
         "--password",
-        "--title=Kali Defense — Sudo Authentication",
+        "--title=Defense — Sudo Authentication",
         "--window-icon=dialog-password",
         "--width=400",
       ],
@@ -780,15 +780,15 @@ async function detectGuiPasswordTool(): Promise<GuiPasswordTool | null> {
       command: "kdialog",
       args: [
         "--password",
-        "Kali Defense MCP Server requires sudo privileges.\nEnter your password to continue:",
+        "Defense MCP Server requires sudo privileges.\nEnter your password to continue:",
         "--title",
-        "Kali Defense — Sudo Authentication",
+        "Defense — Sudo Authentication",
       ],
     },
     {
       name: "ssh-askpass",
       command: "ssh-askpass",
-      args: ["Kali Defense MCP Server requires sudo privileges. Enter password:"],
+      args: ["Defense MCP Server requires sudo privileges. Enter password:"],
     },
   ];
 
@@ -886,7 +886,7 @@ async function openGuiPasswordDialog(tool: GuiPasswordTool): Promise<string | nu
   // Create a secure temp directory
   let tmpDir: string;
   try {
-    tmpDir = fs.mkdtempSync("/tmp/kali-sudo-gui-");
+    tmpDir = fs.mkdtempSync("/tmp/defense-sudo-gui-");
     fs.chmodSync(tmpDir, 0o700);
   } catch {
     console.error("[sudo-gui] Failed to create temp dir");

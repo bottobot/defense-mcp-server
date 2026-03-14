@@ -51,10 +51,10 @@ describe("executor", () => {
             const result = await executeCommand({
                 command: "env",
                 args: [],
-                env: { TEST_KALI_EXEC_VAR: "kali_exec_test_123" },
+                env: { TEST_DEFENSE_EXEC_VAR: "defense_exec_test_123" },
             });
             expect(result.exitCode).toBe(0);
-            expect(result.stdout).toContain("kali_exec_test_123");
+            expect(result.stdout).toContain("defense_exec_test_123");
         });
 
         it("should return all CommandResult fields", async () => {
@@ -361,18 +361,18 @@ describe("executor", () => {
             const result = await executeCommand({
                 command: "env",
                 args: [],
-                env: { KALI_TEST_VAR_A: "alpha", KALI_TEST_VAR_B: "beta" },
+                env: { DEFENSE_TEST_VAR_A: "alpha", DEFENSE_TEST_VAR_B: "beta" },
             });
             expect(result.exitCode).toBe(0);
-            expect(result.stdout).toContain("KALI_TEST_VAR_A=alpha");
-            expect(result.stdout).toContain("KALI_TEST_VAR_B=beta");
+            expect(result.stdout).toContain("DEFENSE_TEST_VAR_A=alpha");
+            expect(result.stdout).toContain("DEFENSE_TEST_VAR_B=beta");
         });
 
         it("should still have PATH from process.env when custom env is set", async () => {
             const result = await executeCommand({
                 command: "env",
                 args: [],
-                env: { KALI_CUSTOM: "yes" },
+                env: { DEFENSE_CUSTOM: "yes" },
             });
             expect(result.exitCode).toBe(0);
             expect(result.stdout).toContain("PATH=");

@@ -625,7 +625,7 @@ describe("wireless-security tools", () => {
     it("should detect unknown APs when known list exists", async () => {
       setupRogueApMocks();
       mockExistsSync.mockImplementation((path: unknown) => {
-        return path === "/var/lib/kali-defense/wireless/known-aps.json";
+        return path === "/var/lib/defense-mcp/wireless/known-aps.json";
       });
       mockReadFileSync.mockImplementation(() => {
         return JSON.stringify([
@@ -643,7 +643,7 @@ describe("wireless-security tools", () => {
     it("should detect evil twin APs", async () => {
       setupRogueApMocks();
       mockExistsSync.mockImplementation((path: unknown) => {
-        return path === "/var/lib/kali-defense/wireless/known-aps.json";
+        return path === "/var/lib/defense-mcp/wireless/known-aps.json";
       });
       mockReadFileSync.mockImplementation(() => {
         return JSON.stringify([
@@ -665,7 +665,7 @@ describe("wireless-security tools", () => {
     it("should detect same SSID with different BSSID as evil twin", async () => {
       setupRogueApMocks();
       mockExistsSync.mockImplementation((path: unknown) => {
-        return path === "/var/lib/kali-defense/wireless/known-aps.json";
+        return path === "/var/lib/defense-mcp/wireless/known-aps.json";
       });
       mockReadFileSync.mockImplementation(() => {
         return JSON.stringify([

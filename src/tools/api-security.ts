@@ -1,5 +1,5 @@
 /**
- * API security tools for Kali Defense MCP Server.
+ * API security tools for Defense MCP Server.
  *
  * Registers 1 tool: api_security (actions: scan_local_apis, audit_auth,
  * check_rate_limiting, tls_verify, cors_check)

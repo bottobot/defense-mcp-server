@@ -1,5 +1,5 @@
 /**
- * Wireless security tools for Kali Defense MCP Server.
+ * Wireless security tools for Defense MCP Server.
  *
  * Registers 1 tool: wireless_security (actions: bt_audit, wifi_audit,
  * rogue_ap_detect, disable_unused)
@@ -23,7 +23,7 @@ import { existsSync, readFileSync } from "node:fs";
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 /** Path to known APs configuration file */
-const KNOWN_APS_PATH = "/var/lib/kali-defense/wireless/known-aps.json";
+const KNOWN_APS_PATH = "/var/lib/defense-mcp/wireless/known-aps.json";
 
 /** Wireless kernel modules that can be blacklisted */
 const WIRELESS_MODULES = ["bluetooth", "btusb", "iwlwifi", "ath9k", "ath10k_pci", "rt2800usb"];

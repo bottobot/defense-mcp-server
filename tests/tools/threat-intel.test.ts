@@ -370,7 +370,7 @@ describe("threat-intel tools", () => {
     it("should check IP against local feed files", async () => {
       // Set up feed directory with a matching feed
       mockExistsSync.mockImplementation((path: unknown) => {
-        return path === "/var/lib/kali-defense/threat-feeds";
+        return path === "/var/lib/defense-mcp/threat-feeds";
       });
       mockReaddirSync.mockImplementation(() => ["abuse-ips.txt"] as unknown as ReturnType<typeof readdirSync>);
       mockStatSync.mockImplementation(() => ({
@@ -501,7 +501,7 @@ describe("threat-intel tools", () => {
       const testHash = "d41d8cd98f00b204e9800998ecf8427e";
 
       mockExistsSync.mockImplementation((path: unknown) => {
-        return path === "/var/lib/kali-defense/threat-feeds/hashes";
+        return path === "/var/lib/defense-mcp/threat-feeds/hashes";
       });
       mockReaddirSync.mockImplementation(() => ["malware-hashes.txt"] as unknown as ReturnType<typeof readdirSync>);
       mockStatSync.mockImplementation(() => ({
@@ -584,7 +584,7 @@ describe("threat-intel tools", () => {
 
     it("should check domain against local blocklists", async () => {
       mockExistsSync.mockImplementation((path: unknown) => {
-        return path === "/var/lib/kali-defense/threat-feeds/domains";
+        return path === "/var/lib/defense-mcp/threat-feeds/domains";
       });
       mockReaddirSync.mockImplementation(() => ["phishing-domains.txt"] as unknown as ReturnType<typeof readdirSync>);
       mockStatSync.mockImplementation(() => ({
@@ -690,7 +690,7 @@ describe("threat-intel tools", () => {
   describe("update_feeds", () => {
     it("should list available feeds when no URL provided", async () => {
       mockExistsSync.mockImplementation((path: unknown) => {
-        return path === "/var/lib/kali-defense/threat-feeds";
+        return path === "/var/lib/defense-mcp/threat-feeds";
       });
       mockReaddirSync.mockImplementation(() => ["abuse-ips.txt", "tor-exit-nodes.txt"] as unknown as ReturnType<typeof readdirSync>);
       mockStatSync.mockImplementation(() => ({

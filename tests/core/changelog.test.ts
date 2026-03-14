@@ -18,17 +18,17 @@ describe("changelog", () => {
     let backupDir: string;
 
     // Save original env values
-    const origChangelogPath = process.env.KALI_DEFENSE_CHANGELOG_PATH;
-    const origBackupDir = process.env.KALI_DEFENSE_BACKUP_DIR;
+    const origChangelogPath = process.env.DEFENSE_MCP_CHANGELOG_PATH;
+    const origBackupDir = process.env.DEFENSE_MCP_BACKUP_DIR;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), "kali-defense-changelog-test-"));
+        tempDir = mkdtempSync(join(tmpdir(), "defense-mcp-changelog-test-"));
         changelogPath = join(tempDir, "changelog.json");
         backupDir = join(tempDir, "backups");
 
         // Redirect config to use temp paths
-        process.env.KALI_DEFENSE_CHANGELOG_PATH = changelogPath;
-        process.env.KALI_DEFENSE_BACKUP_DIR = backupDir;
+        process.env.DEFENSE_MCP_CHANGELOG_PATH = changelogPath;
+        process.env.DEFENSE_MCP_BACKUP_DIR = backupDir;
         // Invalidate config cache so getConfig() picks up new env vars
         invalidateConfigCache();
     });
@@ -38,14 +38,14 @@ describe("changelog", () => {
 
         // Restore original env values
         if (origChangelogPath === undefined) {
-            delete process.env.KALI_DEFENSE_CHANGELOG_PATH;
+            delete process.env.DEFENSE_MCP_CHANGELOG_PATH;
         } else {
-            process.env.KALI_DEFENSE_CHANGELOG_PATH = origChangelogPath;
+            process.env.DEFENSE_MCP_CHANGELOG_PATH = origChangelogPath;
         }
         if (origBackupDir === undefined) {
-            delete process.env.KALI_DEFENSE_BACKUP_DIR;
+            delete process.env.DEFENSE_MCP_BACKUP_DIR;
         } else {
-            process.env.KALI_DEFENSE_BACKUP_DIR = origBackupDir;
+            process.env.DEFENSE_MCP_BACKUP_DIR = origBackupDir;
         }
     });
 

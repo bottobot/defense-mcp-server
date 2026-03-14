@@ -1,7 +1,3 @@
-# CICD-021: Exclude development/assessment scripts from npm packages
-run-assessment.mjs
-mcp-call.sh
-
 # Development files
 src/
 tests/
@@ -9,11 +5,20 @@ coverage/
 .github/
 vitest.config.ts
 tsconfig.json
+eslint.config.mjs
 
-# Reports
-SECURITY-AUDIT-REPORT.md
-HARDENING-ASSESSMENT-REPORT.md
-REMEDIATION-PLAN.md
-PREFLIGHT-ARCHITECTURE.md
-ARCHITECTURE.md
-kali-defense-mcp-server-spec.md
+# Documentation (keep README.md, LICENSE, CHANGELOG.md for npm)
+docs/
+etc/
+scripts/
+plans/
+
+# Internal tracking
+TODO.md
+PROGRESS.md
+
+# IDE/tool config
+.roomodes
+.roo/
+.claude/
+*.code-workspace

@@ -146,11 +146,11 @@ Defined in [`src/index.ts`](src/index.ts). The `main()` function executes these 
 
 1. **Phase 0a — Initialize command allowlist**: [`initializeAllowlist()`](src/core/command-allowlist.ts) resolves all 115 allowlisted binary names to absolute paths via `fs.existsSync()`. Must run before any command execution.
 
-2. **Phase 0b — Harden state directories**: [`hardenDirPermissions()`](src/core/secure-fs.ts) fixes permissions on `~/.kali-defense/` and `~/.kali-defense/backups/` to `0o700`. Best-effort; silently skips if directories don't exist yet.
+2. **Phase 0b — Harden state directories**: [`hardenDirPermissions()`](src/core/secure-fs.ts) fixes permissions on `~/.defense-mcp/` and `~/.defense-mcp/backups/` to `0o700`. Best-effort; silently skips if directories don't exist yet.
 
 3. **Phase 0 — Detect distribution**: [`getDistroAdapter()`](src/core/distro-adapter.ts) detects the Linux distribution, package manager, init system, and firewall backend. Cached for process lifetime.
 
-4. **Phase 1 — Dependency validation**: [`validateAllDependencies()`](src/core/dependency-validator.ts) checks all required system binaries. If `KALI_DEFENSE_AUTO_INSTALL=true`, missing tools are automatically installed via the system package manager. Non-fatal: missing tools generate warnings but don't prevent startup.
+4. **Phase 1 — Dependency validation**: [`validateAllDependencies()`](src/core/dependency-validator.ts) checks all required system binaries. If `DEFENSE_MCP_AUTO_INSTALL=true`, missing tools are automatically installed via the system package manager. Non-fatal: missing tools generate warnings but don't prevent startup.
 
 5. **Phase 0.5 — Initialize pre-flight registry**: [`initializeRegistry()`](src/core/tool-registry.ts) populates the `ToolRegistry` singleton by migrating legacy `TOOL_DEPENDENCIES` and overlaying sudo/privilege metadata from `SUDO_OVERLAYS`.
 
@@ -255,7 +255,7 @@ dry_run: z.boolean().optional().default(true).describe("Preview changes")
 
 Every mutating tool call requires the caller to explicitly set `dry_run: false` to apply changes.
 
-**Confirmation requirement**: Configurable via `KALI_DEFENSE_REQUIRE_CONFIRMATION`.
+**Confirmation requirement**: Configurable via `DEFENSE_MCP_REQUIRE_CONFIRMATION`.
 
 **Automatic backup**: Files are backed up before modification via [`backup-manager.ts`](src/core/backup-manager.ts). Backup paths stored in changelog entries for rollback.
 
@@ -271,9 +271,9 @@ The [`RateLimiter`](src/core/rate-limiter.ts) provides sliding-window rate limit
 
 | Parameter | Environment Variable | Default |
 |-----------|---------------------|---------|
-| Per-tool max | `KALI_DEFENSE_RATE_LIMIT_PER_TOOL` | 30 invocations/window |
-| Global max | `KALI_DEFENSE_RATE_LIMIT_GLOBAL` | 100 invocations/window |
-| Window size | `KALI_DEFENSE_RATE_LIMIT_WINDOW` | 60 seconds |
+| Per-tool max | `DEFENSE_MCP_RATE_LIMIT_PER_TOOL` | 30 invocations/window |
+| Global max | `DEFENSE_MCP_RATE_LIMIT_GLOBAL` | 100 invocations/window |
+| Window size | `DEFENSE_MCP_RATE_LIMIT_WINDOW` | 60 seconds |
 
 Set any limit to `0` to disable that particular limit. Rate limit breaches are logged as security events.
 
@@ -369,20 +369,20 @@ All configuration via environment variables with defensive defaults:
 
 ```typescript
 interface DefenseConfig {
-  defaultTimeout: number;             // KALI_DEFENSE_TIMEOUT_DEFAULT (s→ms), default: 120s
-  maxBuffer: number;                  // KALI_DEFENSE_MAX_OUTPUT_SIZE, default: 10MB
-  allowedDirs: string[];              // KALI_DEFENSE_ALLOWED_DIRS, default: /tmp,/home,/var/log,/etc
-  logLevel: string;                   // KALI_DEFENSE_LOG_LEVEL, default: "info"
-  dryRun: boolean;                    // KALI_DEFENSE_DRY_RUN, default: false
-  changelogPath: string;              // KALI_DEFENSE_CHANGELOG_PATH
-  backupDir: string;                  // KALI_DEFENSE_BACKUP_DIR
-  autoInstall: boolean;               // KALI_DEFENSE_AUTO_INSTALL, default: false
-  protectedPaths: string[];           // KALI_DEFENSE_PROTECTED_PATHS
-  requireConfirmation: boolean;       // KALI_DEFENSE_REQUIRE_CONFIRMATION, default: true
-  quarantineDir: string;              // KALI_DEFENSE_QUARANTINE_DIR
-  policyDir: string;                  // KALI_DEFENSE_POLICY_DIR
-  toolTimeouts: Record<string, number>; // KALI_DEFENSE_TIMEOUT_<TOOL>
-  sudoSessionTimeout: number;         // KALI_DEFENSE_SUDO_TIMEOUT (min→ms), default: 15 min
+  defaultTimeout: number;             // DEFENSE_MCP_TIMEOUT_DEFAULT (s→ms), default: 120s
+  maxBuffer: number;                  // DEFENSE_MCP_MAX_OUTPUT_SIZE, default: 10MB
+  allowedDirs: string[];              // DEFENSE_MCP_ALLOWED_DIRS, default: /tmp,/home,/var/log,/etc
+  logLevel: string;                   // DEFENSE_MCP_LOG_LEVEL, default: "info"
+  dryRun: boolean;                    // DEFENSE_MCP_DRY_RUN, default: false
+  changelogPath: string;              // DEFENSE_MCP_CHANGELOG_PATH
+  backupDir: string;                  // DEFENSE_MCP_BACKUP_DIR
+  autoInstall: boolean;               // DEFENSE_MCP_AUTO_INSTALL, default: false
+  protectedPaths: string[];           // DEFENSE_MCP_PROTECTED_PATHS
+  requireConfirmation: boolean;       // DEFENSE_MCP_REQUIRE_CONFIRMATION, default: true
+  quarantineDir: string;              // DEFENSE_MCP_QUARANTINE_DIR
+  policyDir: string;                  // DEFENSE_MCP_POLICY_DIR
+  toolTimeouts: Record<string, number>; // DEFENSE_MCP_TIMEOUT_<TOOL>
+  sudoSessionTimeout: number;         // DEFENSE_MCP_SUDO_TIMEOUT (min→ms), default: 15 min
 }
 ```
 
@@ -441,15 +441,15 @@ interface ChangeEntry {
 }
 ```
 
-Stored at `~/.kali-defense/changelog.json` with version 1 schema. Max 10,000 entries with rotation.
+Stored at `~/.defense-mcp/changelog.json` with version 1 schema. Max 10,000 entries with rotation.
 
 **Rollback** ([`rollback.ts`](src/core/rollback.ts)):
 
-Change record types: `"file" | "sysctl" | "service" | "firewall"`. Stored at `~/.kali-defense/rollback-state.json`. Supports rollback by operation ID or session ID.
+Change record types: `"file" | "sysctl" | "service" | "firewall"`. Stored at `~/.defense-mcp/rollback-state.json`. Supports rollback by operation ID or session ID.
 
 **Backup Manager** ([`backup-manager.ts`](src/core/backup-manager.ts)):
 
-Stored at `~/.kali-defense/backups/manifest.json`. Supports backup, restore by ID, listing, and pruning by age.
+Stored at `~/.defense-mcp/backups/manifest.json`. Supports backup, restore by ID, listing, and pruning by age.
 
 ### 4.6 Distro Support ([`distro.ts`](src/core/distro.ts), [`distro-adapter.ts`](src/core/distro-adapter.ts))
 
@@ -573,10 +573,10 @@ All tools use a `prefix_subject` snake_case pattern. Prefixes match module names
 
 ## 6. State Management
 
-### 6.1 Directory Layout (`~/.kali-defense/`)
+### 6.1 Directory Layout (`~/.defense-mcp/`)
 
 ```
-~/.kali-defense/                      [0o700]
+~/.defense-mcp/                      [0o700]
 ├── changelog.json                    [0o600] — Versioned audit trail
 ├── rollback-state.json               [0o600] — Change tracking for rollback
 ├── backups/                          [0o700]
@@ -641,7 +641,7 @@ All tools use a `prefix_subject` snake_case pattern. Prefixes match module names
     {
       "id": "uuid",
       "originalPath": "/etc/ssh/sshd_config",
-      "backupPath": "/home/user/.kali-defense/backups/2026-03-04T10-30-00-000Z_sshd_config",
+      "backupPath": "/home/user/.defense-mcp/backups/2026-03-04T10-30-00-000Z_sshd_config",
       "timestamp": "2026-03-04T10:30:00.000Z",
       "sizeBytes": 3452
     }
@@ -793,25 +793,25 @@ Coverage targets `src/core/**/*.ts` only. Tool modules and the entry point are e
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KALI_DEFENSE_TIMEOUT_DEFAULT` | `120` (seconds) | Default command timeout |
-| `KALI_DEFENSE_MAX_OUTPUT_SIZE` | `10485760` (10MB) | Max stdout/stderr buffer |
-| `KALI_DEFENSE_ALLOWED_DIRS` | `/tmp,/home,/var/log,/etc` | Directories allowed for file operations |
-| `KALI_DEFENSE_LOG_LEVEL` | `info` | Log level: debug, info, warn, error, security |
-| `KALI_DEFENSE_DRY_RUN` | `false`* | Global dry-run mode (*tools default `true` individually) |
-| `KALI_DEFENSE_CHANGELOG_PATH` | `~/.kali-defense/changelog.json` | Changelog file location |
-| `KALI_DEFENSE_BACKUP_DIR` | `~/.kali-defense/backups` | Backup directory |
-| `KALI_DEFENSE_AUTO_INSTALL` | `false` | Auto-install missing tools via package manager |
-| `KALI_DEFENSE_PROTECTED_PATHS` | `/boot,/usr/lib/systemd,/usr/bin,/usr/sbin` | Paths protected from modification |
-| `KALI_DEFENSE_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
-| `KALI_DEFENSE_QUARANTINE_DIR` | `~/.kali-defense/quarantine` | Malware quarantine directory |
-| `KALI_DEFENSE_POLICY_DIR` | `~/.kali-defense/policies` | Custom compliance policy files |
-| `KALI_DEFENSE_SUDO_TIMEOUT` | `15` (minutes) | Sudo session expiry timeout |
-| `KALI_DEFENSE_PREFLIGHT` | `true` | Enable/disable pre-flight validation |
-| `KALI_DEFENSE_PREFLIGHT_BANNERS` | `true` | Prepend status banners to tool output |
-| `KALI_DEFENSE_RATE_LIMIT_PER_TOOL` | `30` | Max invocations per tool per window (0=disabled) |
-| `KALI_DEFENSE_RATE_LIMIT_GLOBAL` | `100` | Max total invocations per window (0=disabled) |
-| `KALI_DEFENSE_RATE_LIMIT_WINDOW` | `60` (seconds) | Rate limit window size |
-| `KALI_DEFENSE_TIMEOUT_<TOOL>` | — | Per-tool timeout in seconds |
+| `DEFENSE_MCP_TIMEOUT_DEFAULT` | `120` (seconds) | Default command timeout |
+| `DEFENSE_MCP_MAX_OUTPUT_SIZE` | `10485760` (10MB) | Max stdout/stderr buffer |
+| `DEFENSE_MCP_ALLOWED_DIRS` | `/tmp,/home,/var/log,/etc` | Directories allowed for file operations |
+| `DEFENSE_MCP_LOG_LEVEL` | `info` | Log level: debug, info, warn, error, security |
+| `DEFENSE_MCP_DRY_RUN` | `false`* | Global dry-run mode (*tools default `true` individually) |
+| `DEFENSE_MCP_CHANGELOG_PATH` | `~/.defense-mcp/changelog.json` | Changelog file location |
+| `DEFENSE_MCP_BACKUP_DIR` | `~/.defense-mcp/backups` | Backup directory |
+| `DEFENSE_MCP_AUTO_INSTALL` | `false` | Auto-install missing tools via package manager |
+| `DEFENSE_MCP_PROTECTED_PATHS` | `/boot,/usr/lib/systemd,/usr/bin,/usr/sbin` | Paths protected from modification |
+| `DEFENSE_MCP_REQUIRE_CONFIRMATION` | `true` | Require confirmation for destructive actions |
+| `DEFENSE_MCP_QUARANTINE_DIR` | `~/.defense-mcp/quarantine` | Malware quarantine directory |
+| `DEFENSE_MCP_POLICY_DIR` | `~/.defense-mcp/policies` | Custom compliance policy files |
+| `DEFENSE_MCP_SUDO_TIMEOUT` | `15` (minutes) | Sudo session expiry timeout |
+| `DEFENSE_MCP_PREFLIGHT` | `true` | Enable/disable pre-flight validation |
+| `DEFENSE_MCP_PREFLIGHT_BANNERS` | `true` | Prepend status banners to tool output |
+| `DEFENSE_MCP_RATE_LIMIT_PER_TOOL` | `30` | Max invocations per tool per window (0=disabled) |
+| `DEFENSE_MCP_RATE_LIMIT_GLOBAL` | `100` | Max total invocations per window (0=disabled) |
+| `DEFENSE_MCP_RATE_LIMIT_WINDOW` | `60` (seconds) | Rate limit window size |
+| `DEFENSE_MCP_TIMEOUT_<TOOL>` | — | Per-tool timeout in seconds |
 
 Per-tool timeout overrides support: `LYNIS`, `AIDE`, `CLAMAV`, `OSCAP`, `SNORT`, `SURICATA`, `RKHUNTER`, `CHKROOTKIT`, `TCPDUMP`, `AUDITD`, `NMAP`, `FAIL2BAN-CLIENT`, `DEBSUMS`, `YARA`.
 

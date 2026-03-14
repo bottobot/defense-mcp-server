@@ -180,32 +180,32 @@ describe("logger", () => {
   // ── Environment variable configuration ─────────────────────────────────
 
   describe("environment variable configuration", () => {
-    it("should read KALI_DEFENSE_LOG_LEVEL from environment", () => {
-      const backup = process.env.KALI_DEFENSE_LOG_LEVEL;
+    it("should read DEFENSE_MCP_LOG_LEVEL from environment", () => {
+      const backup = process.env.DEFENSE_MCP_LOG_LEVEL;
       try {
-        process.env.KALI_DEFENSE_LOG_LEVEL = "warn";
+        process.env.DEFENSE_MCP_LOG_LEVEL = "warn";
         const logger = new Logger();
         expect(logger.getLevel()).toBe("warn");
       } finally {
         if (backup === undefined) {
-          delete process.env.KALI_DEFENSE_LOG_LEVEL;
+          delete process.env.DEFENSE_MCP_LOG_LEVEL;
         } else {
-          process.env.KALI_DEFENSE_LOG_LEVEL = backup;
+          process.env.DEFENSE_MCP_LOG_LEVEL = backup;
         }
       }
     });
 
     it("should default to info for invalid env values", () => {
-      const backup = process.env.KALI_DEFENSE_LOG_LEVEL;
+      const backup = process.env.DEFENSE_MCP_LOG_LEVEL;
       try {
-        process.env.KALI_DEFENSE_LOG_LEVEL = "invalid_level";
+        process.env.DEFENSE_MCP_LOG_LEVEL = "invalid_level";
         const logger = new Logger();
         expect(logger.getLevel()).toBe("info");
       } finally {
         if (backup === undefined) {
-          delete process.env.KALI_DEFENSE_LOG_LEVEL;
+          delete process.env.DEFENSE_MCP_LOG_LEVEL;
         } else {
-          process.env.KALI_DEFENSE_LOG_LEVEL = backup;
+          process.env.DEFENSE_MCP_LOG_LEVEL = backup;
         }
       }
     });

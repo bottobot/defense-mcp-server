@@ -128,7 +128,7 @@ async function main() {
   // ── Phase 1: Dependency Validation & Auto-Install ────────────────────────
   //
   // Before registering tools, validate that all required system binaries
-  // are present. If KALI_DEFENSE_AUTO_INSTALL=true, missing tools will be
+  // are present. If DEFENSE_MCP_AUTO_INSTALL=true, missing tools will be
   // automatically installed via the system package manager.
   //
   const config = getConfig();
@@ -147,7 +147,7 @@ async function main() {
   // Fix permissions on any state files/dirs created before this security fix.
   // Best-effort: silently skips if directories don't exist yet.
   try {
-    const stateDir = join(homedir(), ".kali-defense");
+    const stateDir = join(homedir(), ".defense-mcp");
     hardenDirPermissions(stateDir);
     // Also harden the backups subdirectory if it exists
     hardenDirPermissions(join(stateDir, "backups"));
@@ -196,7 +196,7 @@ async function main() {
         "but affected tools may fail at runtime."
       );
       console.error(
-        "[startup] 💡 To auto-install: set KALI_DEFENSE_AUTO_INSTALL=true"
+        "[startup] 💡 To auto-install: set DEFENSE_MCP_AUTO_INSTALL=true"
       );
     }
 

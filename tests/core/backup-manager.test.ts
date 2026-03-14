@@ -23,7 +23,7 @@ describe("backup-manager", () => {
     let sourceDir: string;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), "kali-backup-test-"));
+        tempDir = mkdtempSync(join(tmpdir(), "defense-backup-test-"));
         backupDir = join(tempDir, "backups");
         sourceDir = join(tempDir, "source");
 

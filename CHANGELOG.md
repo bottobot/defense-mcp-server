@@ -236,13 +236,13 @@ Major security remediation release consolidating 157 tools down to 78 action-bas
 
 - **Fix 1.1: Password Buffer Pipeline** — Sudo password now stored in a zeroable `Buffer` (not V8-interned strings). Auto-expires after configurable timeout. Temp files overwritten with random bytes before deletion.
 - **Fix 1.2: Command Allowlist** — All commands executed via `spawn()` are resolved against a strict allowlist of known-safe binaries. Unknown binaries are rejected before execution. Paths resolved to absolute at startup.
-- **Fix 1.3: Auto-Install Hardening** — `KALI_DEFENSE_AUTO_INSTALL` now defaults to `false`. When enabled, only packages from the `DEFENSIVE_TOOLS` catalog are installable — arbitrary package names are blocked.
+- **Fix 1.3: Auto-Install Hardening** — `DEFENSE_MCP_AUTO_INSTALL` now defaults to `false`. When enabled, only packages from the `DEFENSIVE_TOOLS` catalog are installable — arbitrary package names are blocked.
 - **Fix 1.4: Secure File Permissions** — All state files (`changelog.json`, `rollback-state.json`, backups, quarantine) created with `0o600`/`0o700` permissions. Existing directories hardened at startup via `hardenDirPermissions()`.
 
 ### Test Infrastructure (Phase 2)
 
 - **Fix 2.1: Vitest Test Suite** — 221 tests across 6 test files covering sanitizer, config, command-allowlist, secure-fs, changelog, and safeguards modules. All tests pass with zero failures.
-- **Fix 2.2: Backup/Rollback Unification** — `BackupManager` and `RollbackManager` consolidated under `~/.kali-defense/` with consistent secure file permissions.
+- **Fix 2.2: Backup/Rollback Unification** — `BackupManager` and `RollbackManager` consolidated under `~/.defense-mcp/` with consistent secure file permissions.
 - **Fix 2.3: Safeguards Real Blockers** — `SafeguardRegistry.checkSafety()` now produces real blocking conditions, not just advisory warnings.
 - **Fix 2.4: spawn-safe.ts Circular Dependency** — Extracted safe spawn helper to break circular dependency between `executor.ts` and `sudo-session.ts`.
 
@@ -343,8 +343,8 @@ Adds a comprehensive pre-flight validation system that automatically checks depe
 - `formatStatusMessage()` — compact one-line status for prepending to tool output
 
 #### New Environment Variables
-- `KALI_DEFENSE_PREFLIGHT` (default: `true`) — enable/disable pre-flight checks entirely
-- `KALI_DEFENSE_PREFLIGHT_BANNERS` (default: `true`) — show pre-flight status banners in tool output
+- `DEFENSE_MCP_PREFLIGHT` (default: `true`) — enable/disable pre-flight checks entirely
+- `DEFENSE_MCP_PREFLIGHT_BANNERS` (default: `true`) — show pre-flight status banners in tool output
 
 ### Changed
 
@@ -485,7 +485,7 @@ Major release expanding the server from 69 tools across 12 categories to 130+ to
 - All detection errors are caught gracefully and converted to warnings rather than failures
 
 #### `src/core/backup-manager.ts` — BackupManager
-- Manages file backups with manifest tracking under `~/.kali-mcp-backups/`
+- Manages file backups with manifest tracking under `~/.defense-mcp-backups/`
 - Each backup entry has a UUID, original path, backup path, timestamp, and size
 - `manifest.json` maintains the full backup inventory for list and restore operations
 - `backup(filePath)` — creates timestamped copy and adds to manifest, returns UUID
@@ -495,7 +495,7 @@ Major release expanding the server from 69 tools across 12 categories to 130+ to
 
 #### `src/core/rollback.ts` — RollbackManager
 - Singleton that tracks system changes within and across sessions
-- State persisted to `~/.kali-defense/rollback-state.json`
+- State persisted to `~/.defense-mcp/rollback-state.json`
 - Supports four change types: `file` (backup path), `sysctl` (previous value), `service` (previous state), `firewall` (rollback command)
 - `rollback(operationId)` — reverses all changes for a specific operation in reverse order
 - `rollbackSession(sessionId)` — reverses all changes from the current session

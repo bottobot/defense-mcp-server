@@ -4,7 +4,7 @@
  * Handles installation of missing dependencies across system package managers
  * (apt, dnf, yum, pacman, apk, zypper, brew), pip, and npm.  This module is
  * part of the pre-flight validation pipeline and is invoked when
- * `KALI_DEFENSE_AUTO_INSTALL=true`.
+ * `DEFENSE_MCP_AUTO_INSTALL=true`.
  *
  * Design constraints:
  *   - Uses `execFileSafe` from `spawn-safe.ts` (NOT the executor) to avoid
@@ -385,7 +385,7 @@ export class AutoInstaller {
           type: "binary",
           method: "skipped",
           success: false,
-          message: "Auto-install is disabled (set KALI_DEFENSE_AUTO_INSTALL=true to enable)",
+          message: "Auto-install is disabled (set DEFENSE_MCP_AUTO_INSTALL=true to enable)",
         });
       }
       for (const dep of missingPython ?? []) {
@@ -394,7 +394,7 @@ export class AutoInstaller {
           type: "python-module",
           method: "skipped",
           success: false,
-          message: "Auto-install is disabled (set KALI_DEFENSE_AUTO_INSTALL=true to enable)",
+          message: "Auto-install is disabled (set DEFENSE_MCP_AUTO_INSTALL=true to enable)",
         });
       }
       for (const dep of missingNpm ?? []) {
@@ -403,7 +403,7 @@ export class AutoInstaller {
           type: "npm-package",
           method: "skipped",
           success: false,
-          message: "Auto-install is disabled (set KALI_DEFENSE_AUTO_INSTALL=true to enable)",
+          message: "Auto-install is disabled (set DEFENSE_MCP_AUTO_INSTALL=true to enable)",
         });
       }
       for (const dep of missingLibraries ?? []) {
@@ -412,7 +412,7 @@ export class AutoInstaller {
           type: "library",
           method: "skipped",
           success: false,
-          message: "Auto-install is disabled (set KALI_DEFENSE_AUTO_INSTALL=true to enable)",
+          message: "Auto-install is disabled (set DEFENSE_MCP_AUTO_INSTALL=true to enable)",
         });
       }
 

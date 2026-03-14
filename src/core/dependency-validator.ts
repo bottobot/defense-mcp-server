@@ -1,9 +1,9 @@
 /**
- * Dependency Validator for Kali Defense MCP Server.
+ * Dependency Validator for Defense MCP Server.
  *
  * Provides three key capabilities:
  * 1. **Startup validation** — checks all tool dependencies when the server starts
- *    and auto-installs missing ones if KALI_DEFENSE_AUTO_INSTALL=true
+ *    and auto-installs missing ones if DEFENSE_MCP_AUTO_INSTALL=true
  * 2. **Runtime dependency check** — `ensureDependencies()` can be called before
  *    any tool execution to verify (and optionally install) required binaries
  * 3. **Dependency status cache** — avoids redundant `which` calls by caching
@@ -321,7 +321,7 @@ export async function validateAllDependencies(): Promise<ValidationReport> {
       );
     }
     console.error(
-      `[dep-validator] Set KALI_DEFENSE_AUTO_INSTALL=true to auto-install missing tools`
+      `[dep-validator] Set DEFENSE_MCP_AUTO_INSTALL=true to auto-install missing tools`
     );
   }
 
@@ -450,7 +450,7 @@ export function formatValidationReport(report: ValidationReport): string {
   const lines: string[] = [];
 
   lines.push("╔══════════════════════════════════════════════════════════╗");
-  lines.push("║       Kali Defense MCP — Dependency Validation          ║");
+  lines.push("║       Defense MCP — Dependency Validation          ║");
   lines.push("╚══════════════════════════════════════════════════════════╝");
   lines.push("");
   lines.push(`  Binaries checked:    ${report.totalChecked}`);
@@ -492,7 +492,7 @@ export function formatValidationReport(report: ValidationReport): string {
   lines.push("");
   lines.push(`  Auto-install: ${report.autoInstallEnabled ? "ENABLED" : "DISABLED"}`);
   if (!report.autoInstallEnabled && report.missing.length > 0) {
-    lines.push("  💡 Set KALI_DEFENSE_AUTO_INSTALL=true to auto-install missing tools");
+    lines.push("  💡 Set DEFENSE_MCP_AUTO_INSTALL=true to auto-install missing tools");
   }
   lines.push(`  Duration: ${report.durationMs}ms`);
 

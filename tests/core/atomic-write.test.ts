@@ -8,7 +8,7 @@ describe("atomicWriteFileSync", () => {
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), "kali-defense-atomic-test-"));
+        tempDir = mkdtempSync(join(tmpdir(), "defense-mcp-atomic-test-"));
     });
 
     afterEach(() => {
@@ -113,7 +113,7 @@ describe("secureWriteFileSync with atomic option", () => {
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), "kali-defense-secure-atomic-test-"));
+        tempDir = mkdtempSync(join(tmpdir(), "defense-mcp-secure-atomic-test-"));
     });
 
     afterEach(() => {

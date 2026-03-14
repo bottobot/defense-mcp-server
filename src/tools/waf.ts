@@ -1,5 +1,5 @@
 /**
- * WAF (Web Application Firewall) management tools for Kali Defense MCP Server.
+ * WAF (Web Application Firewall) management tools for Defense MCP Server.
  *
  * Registers 1 tool: waf_manage (actions: modsec_audit, modsec_rules,
  * rate_limit_config, owasp_crs_deploy, blocked_requests)

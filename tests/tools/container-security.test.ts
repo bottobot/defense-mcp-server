@@ -106,7 +106,7 @@ describe("container-security tools", () => {
       action: "seccomp_profile",
       allowedSyscalls: ["read", "write"],
       defaultAction: "SCMP_ACT_ERRNO",
-      outputPath: "/tmp/kali-defense/seccomp/test.json",
+      outputPath: "/tmp/defense-mcp/seccomp/test.json",
       dryRun: false,
     });
     // secureWriteFileSync should have been called

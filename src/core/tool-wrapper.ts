@@ -47,13 +47,13 @@ export interface WrapperOptions {
   additionalBypass?: string[];
   /**
    * Enable/disable pre-flight globally.
-   * @default `true` (unless `KALI_DEFENSE_PREFLIGHT=false`)
+   * @default `true` (unless `DEFENSE_MCP_PREFLIGHT=false`)
    */
   enabled?: boolean;
   /**
    * Prepend status banners to successful responses that have warnings
    * or auto-installed dependencies.
-   * @default `true` (unless `KALI_DEFENSE_PREFLIGHT_BANNERS=false`)
+   * @default `true` (unless `DEFENSE_MCP_PREFLIGHT_BANNERS=false`)
    */
   prependBanners?: boolean;
 }
@@ -96,15 +96,15 @@ export function createPreflightServer(
   options: WrapperOptions = {},
 ): McpServer {
   const {
-    enabled = process.env.KALI_DEFENSE_PREFLIGHT !== "false",
-    prependBanners = process.env.KALI_DEFENSE_PREFLIGHT_BANNERS !== "false",
+    enabled = process.env.DEFENSE_MCP_PREFLIGHT !== "false",
+    prependBanners = process.env.DEFENSE_MCP_PREFLIGHT_BANNERS !== "false",
     additionalBypass = [],
   } = options;
 
   // Short-circuit: if disabled globally, return the raw server untouched
   if (!enabled) {
     console.error(
-      "[preflight] Pre-flight validation DISABLED (KALI_DEFENSE_PREFLIGHT=false)",
+      "[preflight] Pre-flight validation DISABLED (DEFENSE_MCP_PREFLIGHT=false)",
     );
     return server;
   }
