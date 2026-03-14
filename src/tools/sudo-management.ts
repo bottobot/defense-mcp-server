@@ -18,6 +18,7 @@ import { z } from "zod";
 import { spawnSafe } from "../core/spawn-safe.js";
 import { SudoSession } from "../core/sudo-session.js";
 import { getConfig } from "../core/config.js";
+import { resolveCommand } from "../core/command-allowlist.js";
 import {
   createTextContent,
   createErrorContent,
@@ -159,7 +160,7 @@ export function registerSudoManagementTools(server: McpServer): void {
                 `  Auth method: password (sudo -S)`,
               ];
               if (isHeadless) {
-                lines.push(`  Environment: headless container (no display server)`);
+                lines.push(`  Environment: headless (no display server)`);
               }
               lines.push(``);
               lines.push(`All tools that require sudo will now work automatically.`);
@@ -191,10 +192,8 @@ export function registerSudoManagementTools(server: McpServer): void {
               : `Attempts remaining before lockout: ${rlAfter.attemptsRemaining}`;
 
             const passwordSource = isHeadless
-              ? `\n\nNote: Running in headless container. The mcpuser password is set at\n` +
-                `container startup via:\n` +
-                `  • Docker secret: mcpuser-password (recommended)\n` +
-                `  • Environment variable: MCPUSER_PASSWORD (less secure)`
+              ? `\n\nNote: Running in a headless environment (no display server).\n` +
+                `Use sudo_session action=elevate with your system password.`
               : "";
 
             return {
@@ -222,45 +221,18 @@ export function registerSudoManagementTools(server: McpServer): void {
 
         // ── elevate_gui ────────────────────────────────────────────────────
         //
-        // Secure two-phase elevation flow:
-        //   Phase 1: LLM launches zenity via execute_command, password goes to temp file
-        //            (password NEVER appears in terminal output or LLM context)
-        //   Phase 2: LLM calls this action which reads file → elevates → securely wipes
+        // Single-step secure GUI elevation:
+        //   1. Detect graphical session environment (even if MCP server lacks DISPLAY)
+        //   2. Spawn a native password dialog (zenity/kdialog/ssh-askpass)
+        //   3. Capture password via secure temp file (never visible to AI)
+        //   4. Elevate and wipe the password
         //
         // The password is NEVER visible to the LLM at any point.
 
         case "elevate_gui": {
           const { timeout_minutes } = params;
           try {
-            // ── Phase 4: Headless environment detection ───────────────────────
-            // GUI dialogs (zenity, kdialog, ssh-askpass) require a display server.
-            // In headless Docker containers, none of these are available.
-            const hasDisplay =
-              Boolean(process.env.DISPLAY) || Boolean(process.env.WAYLAND_DISPLAY);
-
-            if (!hasDisplay) {
-              return {
-                content: [
-                  createErrorContent(
-                    `❌ GUI elevation is not available in headless environments.\n\n` +
-                    `The Defense MCP Server is running in a Docker container without\n` +
-                    `a display server (no DISPLAY or WAYLAND_DISPLAY is set).\n` +
-                    `Use sudo_session action=elevate instead:\n\n` +
-                    `  Action: elevate\n` +
-                    `  Parameter: password = <your sudo password>\n\n` +
-                    `The mcpuser password is set at container startup via:\n` +
-                    `  • Docker secret (recommended): docker run --secret mcpuser-password ...\n` +
-                    `  • Environment variable (less secure): docker run -e MCPUSER_PASSWORD='...' ...`
-                  ),
-                ],
-                isError: true,
-              };
-            }
-
-            const fs = await import("node:fs");
-            const crypto = await import("node:crypto");
             const session = SudoSession.getInstance();
-            const SUDO_PW_FILE = "/tmp/.defense-sudo-pw";
 
             // Check if already elevated
             if (session.isElevated()) {
@@ -277,129 +249,126 @@ export function registerSudoManagementTools(server: McpServer): void {
               };
             }
 
-            // Check if the password file exists (Phase 2 of the two-phase flow)
-            if (fs.existsSync(SUDO_PW_FILE)) {
-              console.error("[sudo-gui] Phase 2: Reading password from secure temp file...");
-
-              // Verify file ownership and permissions for safety
-              const stat = fs.statSync(SUDO_PW_FILE);
-              const mode = (stat.mode & 0o777).toString(8);
-              if (mode !== "600") {
-                // Wipe insecure file
-                try {
-                  const size = stat.size || 64;
-                  fs.writeFileSync(SUDO_PW_FILE, crypto.randomBytes(size));
-                  fs.unlinkSync(SUDO_PW_FILE);
-                } catch { console.error("[sudo-gui] Failed to wipe insecure password file"); }
-                return {
-                  content: [
-                    createErrorContent(
-                      `❌ Security error: Password file has insecure permissions (${mode}).\n` +
-                      `Expected 600. File has been securely wiped.\n` +
-                      `Please run the zenity command again.`
-                    ),
-                  ],
-                  isError: true,
-                };
-              }
-
-              // Read password from file
-              let password: string;
-              try {
-                password = fs.readFileSync(SUDO_PW_FILE, "utf-8").trim();
-              } catch (err) {
-                return {
-                  content: [
-                    createErrorContent(
-                      `❌ Could not read password file: ${err instanceof Error ? err.message : String(err)}`
-                    ),
-                  ],
-                  isError: true,
-                };
-              }
-
-              // Securely wipe the file IMMEDIATELY (before elevation attempt)
-              try {
-                const fileSize = Buffer.byteLength(password, "utf-8") + 16;
-                fs.writeFileSync(SUDO_PW_FILE, crypto.randomBytes(fileSize));
-                fs.writeFileSync(SUDO_PW_FILE, crypto.randomBytes(fileSize)); // Double overwrite
-                fs.unlinkSync(SUDO_PW_FILE);
-                console.error("[sudo-gui] Password file securely wiped (2x random overwrite + unlink)");
-              } catch {
-                try { fs.unlinkSync(SUDO_PW_FILE); } catch { console.error("[sudo-gui] Failed to unlink password file during wipe fallback"); }
-              }
-
-              if (!password || password.length === 0) {
-                return {
-                  content: [
-                    createErrorContent(
-                      `❌ Empty password file. Please run the zenity command again and enter your password.`
-                    ),
-                  ],
-                  isError: true,
-                };
-              }
-
-              // Elevate using the captured password
-              const timeoutMs = timeout_minutes * 60 * 1000;
-              const config = getConfig();
-              if (config.sudoSessionTimeout) {
-                session.setDefaultTimeout(config.sudoSessionTimeout);
-              }
-
-              const result = await session.elevate(password, timeoutMs);
-
-              if (result.success) {
-                invalidatePreflightCaches();
-                const status = session.getStatus();
-                return {
-                  content: [
-                    createTextContent(
-                      `🔓 Privileges elevated successfully!\n\n` +
-                      `  User: ${status.username}\n` +
-                      `  Expires: ${status.expiresAt ?? "never (running as root)"}\n` +
-                      `  Timeout: ${timeout_minutes} minutes\n` +
-                      `  Method: Secure GUI dialog (password never visible to AI)\n\n` +
-                      `All tools that require sudo will now work automatically.\n` +
-                      `Use sudo_session action=status to check session state, or sudo_session action=drop to end early.`
-                    ),
-                  ],
-                };
-              }
-
+            // ── Pre-flight rate-limit check ──────────────────────────────────
+            const rlStatus = session.getRateLimitStatus();
+            if (rlStatus.limited) {
+              const resetAt = rlStatus.resetAt
+                ? new Date(rlStatus.resetAt).toLocaleTimeString()
+                : "unknown";
               return {
                 content: [
                   createErrorContent(
-                    `❌ Elevation failed: ${result.error}\n\n` +
-                    `The password file was securely wiped. Please try again.`
+                    `❌ Authentication rate limit exceeded.\n\n` +
+                    `Too many failed attempts. Please wait until ${resetAt} before retrying.`
                   ),
                 ],
                 isError: true,
               };
             }
 
-            // Phase 1: No password file found — instruct the LLM to launch the GUI dialog
-            // Detect which GUI tool is available for the instruction
+            // ── Detect graphical session ──────────────────────────────────────
+            // The MCP server process may not inherit DISPLAY/WAYLAND_DISPLAY,
+            // so we probe the user's desktop session processes via /proc.
+            const sessionEnv = await getGraphicalSessionEnv();
+            const hasDisplay =
+              Boolean(sessionEnv.DISPLAY) || Boolean(sessionEnv.WAYLAND_DISPLAY);
+
+            if (!hasDisplay) {
+              return {
+                content: [
+                  createErrorContent(
+                    `❌ GUI elevation is not available — no graphical session detected.\n\n` +
+                    `Could not find DISPLAY or WAYLAND_DISPLAY in the current process\n` +
+                    `or any desktop session process (gnome-shell, plasmashell, etc.).\n\n` +
+                    `Use sudo_session action=elevate with your password instead.`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            // ── Detect available GUI dialog tool ─────────────────────────────
             const guiTool = await detectGuiPasswordTool();
-            const toolCmd = guiTool
-              ? `${guiTool.command} ${guiTool.args.map(a => `'${a}'`).join(" ")}`
-              : "zenity --password --title='Defense — Sudo Authentication' --width=400";
+            if (!guiTool) {
+              return {
+                content: [
+                  createErrorContent(
+                    `❌ No GUI password dialog tool found.\n\n` +
+                    `Install one of: zenity, kdialog, or ssh-askpass\n` +
+                    `  sudo apt install zenity    # GNOME/GTK\n` +
+                    `  sudo apt install kdialog   # KDE/Qt\n\n` +
+                    `Or use sudo_session action=elevate with your password instead.`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            console.error(`[sudo-gui] Launching ${guiTool.name} password dialog...`);
+
+            // ── Launch GUI dialog and capture password ────────────────────────
+            // openGuiPasswordDialog spawns the dialog with the correct graphical
+            // session environment, captures the password via a secure temp file,
+            // and wipes it immediately after reading.
+            const password = await openGuiPasswordDialog(guiTool);
+
+            if (!password) {
+              return {
+                content: [
+                  createErrorContent(
+                    `❌ Password dialog was cancelled or timed out.\n\n` +
+                    `No password was entered. Try again with:\n` +
+                    `  sudo_session action=elevate_gui\n\n` +
+                    `Or provide your password directly with:\n` +
+                    `  sudo_session action=elevate`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            // ── Elevate using captured password ──────────────────────────────
+            const timeoutMs = timeout_minutes * 60 * 1000;
+            const config = getConfig();
+            if (config.sudoSessionTimeout) {
+              session.setDefaultTimeout(config.sudoSessionTimeout);
+            }
+
+            const result = await session.elevate(password, timeoutMs);
+
+            if (result.success) {
+              invalidatePreflightCaches();
+              const status = session.getStatus();
+              return {
+                content: [
+                  createTextContent(
+                    `🔓 Privileges elevated successfully!\n\n` +
+                    `  User: ${status.username}\n` +
+                    `  Expires: ${status.expiresAt ?? "never (running as root)"}\n` +
+                    `  Timeout: ${timeout_minutes} minutes\n` +
+                    `  Method: Secure GUI dialog (${guiTool.name}) — password never visible to AI\n\n` +
+                    `All tools that require sudo will now work automatically.\n` +
+                    `Use sudo_session action=status to check session state, or sudo_session action=drop to end early.`
+                  ),
+                ],
+              };
+            }
+
+            // ── Elevation failed ─────────────────────────────────────────────
+            const rlAfter = session.getRateLimitStatus();
+            const attemptsLine = rlAfter.limited
+              ? `Rate limit reached — locked out until ${rlAfter.resetAt ? new Date(rlAfter.resetAt).toLocaleTimeString() : "unknown"}.`
+              : `Attempts remaining before lockout: ${rlAfter.attemptsRemaining}`;
 
             return {
               content: [
-                createTextContent(
-                  `🔐 SECURE ELEVATION — Step 1 of 2\n` +
-                  `${"═".repeat(50)}\n\n` +
-                  `To elevate securely, run this command via execute_command:\n\n` +
-                  `  ${toolCmd} > /tmp/.defense-sudo-pw 2>/dev/null && chmod 600 /tmp/.defense-sudo-pw && echo "READY" || echo "CANCELLED"\n\n` +
-                  `This opens a password dialog on the user's screen.\n` +
-                  `The password goes DIRECTLY to a secure temp file — it\n` +
-                  `NEVER appears in terminal output or the AI chat.\n\n` +
-                  `After the user enters their password (output shows "READY"),\n` +
-                  `call sudo_session action=elevate_gui again to complete elevation.\n` +
-                  `The tool will read the file, elevate, and securely wipe it.`
+                createErrorContent(
+                  `❌ Authentication failed: ${result.error}\n\n` +
+                  `${attemptsLine}\n\n` +
+                  `The password was securely wiped. Please try again.`
                 ),
               ],
+              isError: true,
             };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -761,6 +730,7 @@ interface GuiPasswordTool {
 
 /**
  * Detect which GUI password dialog tool is available.
+ * Uses the command allowlist for resolution (no spawning `which`).
  * Preference order: zenity > kdialog > ssh-askpass
  */
 async function detectGuiPasswordTool(): Promise<GuiPasswordTool | null> {
@@ -794,15 +764,14 @@ async function detectGuiPasswordTool(): Promise<GuiPasswordTool | null> {
 
   for (const tool of candidates) {
     try {
-      const result = await new Promise<boolean>((resolve) => {
-        const child = spawnSafe("which", [tool.command], {
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        child.on("close", (code) => resolve(code === 0));
-        child.on("error", () => resolve(false));
-      });
-      if (result) return tool;
+      // resolveCommand checks the allowlist and verifies the binary exists on disk
+      const resolved = resolveCommand(tool.command);
+      if (resolved) {
+        console.error(`[sudo-gui] Found GUI tool: ${tool.name} at ${resolved}`);
+        return { ...tool, command: resolved };
+      }
     } catch {
+      // Binary not found or not in allowlist — try next candidate
       continue;
     }
   }
@@ -821,11 +790,28 @@ async function getGraphicalSessionEnv(): Promise<Record<string, string>> {
     const { readFile } = await import("node:fs/promises");
     const { execFileSafe } = await import("../core/spawn-safe.js");
 
-    // Find a PID from the user's graphical session (sddm-greeter, Xwayland, or the desktop itself)
+    // Find a PID from the user's graphical session.
+    // We need a process that INHERITS display vars from the compositor.
+    // The compositor itself (gnome-shell, kwin_wayland) often doesn't have
+    // DISPLAY/WAYLAND_DISPLAY in its own /proc/environ — so we prefer child
+    // processes like gjs, nautilus, plasmashell that do inherit them.
     const uid = process.getuid?.() ?? 1000;
-    // Get a graphical session process PID owned by the current user
     let pid: string | null = null;
-    const candidates = ["sddm", "kwin_wayland", "plasmashell", "gnome-shell", "Xwayland", "xfce4-session"];
+    const candidates = [
+      "gjs",               // GNOME shell extensions (always has display vars)
+      "nautilus",           // GNOME file manager
+      "plasmashell",       // KDE
+      "kwin_wayland",      // KDE compositor
+      "xfce4-panel",       // XFCE
+      "xfce4-session",     // XFCE
+      "cinnamon",          // Cinnamon
+      "budgie-panel",      // Budgie
+      "lxqt-panel",        // LXQt
+      "sway",              // Sway
+      "hyprland",          // Hyprland
+      "Xwayland",          // X11-on-Wayland bridge
+      "gnome-shell",       // GNOME compositor (may lack display vars)
+    ];
     for (const proc of candidates) {
       try {
         const result = (execFileSafe("pgrep", ["-u", String(uid), "-o", proc], { encoding: "utf-8", stdio: "pipe" }) as string).trim();
@@ -985,5 +971,3 @@ async function openGuiPasswordDialog(tool: GuiPasswordTool): Promise<string | nu
   }
 }
 
-// Suppress unused warning — openGuiPasswordDialog is kept for potential future use
-void openGuiPasswordDialog;

@@ -1545,13 +1545,32 @@ export function registerFirewallTools(server: McpServer): void {
               findings.push({ check: "iptables_rule_count", status: ruleCount > 0 ? "INFO" : "WARN", value: String(ruleCount), description: "Total iptables rules" });
             }
 
-            // Check UFW status
-            const ufwResult = await executeCommand({ command: "sudo", args: ["ufw", "status"], timeout: 10000, toolName: "firewall" });
-            if (ufwResult.exitCode === 0) {
-              const active = ufwResult.stdout.includes("Status: active");
-              findings.push({ check: "ufw_active", status: active ? "PASS" : "FAIL", value: active ? "active" : "inactive", description: "UFW firewall status" });
+            // Check UFW status — distinguish "not installed" from "command failed"
+            const ufwWhich = await executeCommand({ command: "which", args: ["ufw"], timeout: 5000, toolName: "firewall" });
+            if (ufwWhich.exitCode === 0) {
+              // UFW binary exists — try to get status
+              const ufwResult = await executeCommand({ command: "sudo", args: ["ufw", "status"], timeout: 10000, toolName: "firewall" });
+              if (ufwResult.exitCode === 0) {
+                const active = ufwResult.stdout.includes("Status: active");
+                findings.push({ check: "ufw_active", status: active ? "PASS" : "FAIL", value: active ? "active" : "inactive", description: "UFW firewall status" });
+              } else {
+                // UFW exists but status command failed — check nftables for UFW chains as fallback
+                const nftFallback = await executeCommand({ command: "sudo", args: ["nft", "list", "ruleset"], timeout: 10000, toolName: "firewall" });
+                const hasUfwChains = nftFallback.exitCode === 0 && nftFallback.stdout.includes("ufw-");
+                if (hasUfwChains) {
+                  findings.push({ check: "ufw_active", status: "PASS", value: "active (nftables backend)", description: "UFW firewall status (detected via nftables ruleset)" });
+                } else {
+                  findings.push({ check: "ufw_active", status: "WARN", value: "installed but status check failed", description: "UFW installed but 'ufw status' failed — may need sudo or service restart" });
+                }
+              }
             } else {
-              findings.push({ check: "ufw_installed", status: "FAIL", value: "not installed", description: "UFW firewall availability" });
+              // UFW binary not found — check if nftables has rules directly
+              const nftDirect = await executeCommand({ command: "sudo", args: ["nft", "list", "ruleset"], timeout: 10000, toolName: "firewall" });
+              if (nftDirect.exitCode === 0 && nftDirect.stdout.trim().length > 50) {
+                findings.push({ check: "nftables_active", status: "PASS", value: "active (nftables native)", description: "Firewall active via nftables (no UFW)" });
+              } else {
+                findings.push({ check: "ufw_installed", status: "FAIL", value: "not installed", description: "No firewall detected (UFW not found, nftables empty)" });
+              }
             }
 
             // Check ip6tables

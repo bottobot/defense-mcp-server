@@ -234,7 +234,7 @@ async function main() {
       console.error(
         `[startup] ⚠️  SECURITY CRITICAL: NOPASSWD:ALL detected in sudoers ` +
         `(${nopasswdCheck.location}). sudo_elevate credential validation is NON-FUNCTIONAL. ` +
-        `Rebuild the Docker image with the updated Dockerfile.`
+        `Remove the NOPASSWD entry from sudoers and set a real password for the MCP user.`
       );
     } else {
       console.error('[startup] ✅ Sudoers check: NOPASSWD:ALL not detected — credential validation active');
