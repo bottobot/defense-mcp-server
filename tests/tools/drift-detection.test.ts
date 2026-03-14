@@ -71,19 +71,19 @@ describe("drift-detection tools", () => {
     tools = mock.tools;
   });
 
-  it("should register integrity tool", () => {
-    expect(tools.has("integrity")).toBe(true);
+  it("should register drift_integrity_check tool", () => {
+    expect(tools.has("drift_integrity_check")).toBe(true);
   });
 
   it("should default dryRun to true", async () => {
-    const handler = tools.get("integrity")!.handler;
+    const handler = tools.get("drift_integrity_check")!.handler;
     const result = await handler({ action: "baseline_create", name: "test", directories: ["/etc"], dryRun: true });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("dryRun");
   });
 
   it("should list baselines from the baseline directory", async () => {
-    const handler = tools.get("integrity")!.handler;
+    const handler = tools.get("drift_integrity_check")!.handler;
     const result = await handler({ action: "baseline_list" });
     expect(result.isError).toBeUndefined();
   });
@@ -91,7 +91,7 @@ describe("drift-detection tools", () => {
   it("should return error when comparing non-existent baseline", async () => {
     const fs = await import("node:fs");
     vi.mocked(fs.existsSync).mockReturnValue(false);
-    const handler = tools.get("integrity")!.handler;
+    const handler = tools.get("drift_integrity_check")!.handler;
     const result = await handler({ action: "baseline_compare", name: "nonexistent" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("not found");
@@ -108,13 +108,13 @@ describe("drift-detection tools", () => {
     vi.mocked(fs.statSync).mockReturnValue({ size: 100, mtime: new Date() } as ReturnType<typeof fs.statSync>);
     vi.mocked(fs.readFileSync).mockReturnValue(Buffer.from("content"));
 
-    const handler = tools.get("integrity")!.handler;
+    const handler = tools.get("drift_integrity_check")!.handler;
     const result = await handler({ action: "baseline_create", name: "test", directories: ["/etc"], dryRun: false });
     expect(result.isError).toBeUndefined();
   });
 
   it("should handle unknown action", async () => {
-    const handler = tools.get("integrity")!.handler;
+    const handler = tools.get("drift_integrity_check")!.handler;
     const result = await handler({ action: "unknown" as string });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Unknown action");

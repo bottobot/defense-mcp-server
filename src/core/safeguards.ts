@@ -73,6 +73,11 @@ const SSH_OPERATIONS = [
   "ssh", "sshd", "access_ssh",
 ];
 
+const PAM_OPERATIONS = [
+  "pam_configure", "pam", "faillock", "pwquality",
+  "common-auth", "common-password", "system-auth",
+];
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Check if a TCP port accepts connections (timeout 1s). */
@@ -483,7 +488,24 @@ export class SafeguardRegistry {
         }
       }
 
-      // D. Stopping critical database services with active connections
+      // D. PAM lockout prevention — warn on PAM modifications
+      if (matchesAny(operation, PAM_OPERATIONS)) {
+        warnings.push(
+          "PAM configuration changes affect system authentication. " +
+            "A corrupted PAM config can lock you out of the system entirely. " +
+            "A backup has been created. If authentication fails after this change, restore from the backup.",
+        );
+
+        if (isSSHSession()) {
+          warnings.push(
+            "WARNING: Modifying PAM configuration while connected via SSH. " +
+              "If authentication breaks, you may lose access to this system. " +
+              "Ensure you have physical/console access as a fallback.",
+          );
+        }
+      }
+
+      // E. Stopping critical database services with active connections
       if (matchesAny(operation, SERVICE_OPERATIONS)) {
         const svcAction = getParam(params, "action")?.toLowerCase();
         const svcName = getParam(params, "service")?.toLowerCase() ?? "";

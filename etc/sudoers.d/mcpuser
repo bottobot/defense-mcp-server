@@ -11,7 +11,6 @@
 
 Defaults:mcpuser !requiretty
 Defaults:mcpuser passwd_tries=1
-Defaults:mcpuser badpass_message=""
 Defaults:mcpuser timestamp_timeout=0
 
 # ── Firewall ─────────────────────────────────────────────────────────────────

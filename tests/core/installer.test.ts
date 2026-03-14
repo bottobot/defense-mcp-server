@@ -17,9 +17,21 @@ vi.mock("../../src/core/config.js", () => ({
   getConfig: vi.fn(),
 }));
 
+// Mock command-allowlist to control resolveCommand behavior (new impl uses this instead of `which`)
+vi.mock("../../src/core/command-allowlist.js", () => ({
+  resolveCommand: vi.fn(),
+}));
+
+// Mock node:fs to control existsSync fallback in checkTool
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn(),
+}));
+
 import { executeCommand } from "../../src/core/executor.js";
 import { detectDistro, getInstallCommand, getUpdateCommand } from "../../src/core/distro.js";
 import { getConfig } from "../../src/core/config.js";
+import { resolveCommand } from "../../src/core/command-allowlist.js";
+import { existsSync } from "node:fs";
 import {
   checkTool,
   checkAllTools,
@@ -34,6 +46,8 @@ const mockDetectDistro = vi.mocked(detectDistro);
 const mockGetInstallCommand = vi.mocked(getInstallCommand);
 const mockGetUpdateCommand = vi.mocked(getUpdateCommand);
 const mockGetConfig = vi.mocked(getConfig);
+const mockResolveCommand = vi.mocked(resolveCommand);
+const mockExistsSync = vi.mocked(existsSync);
 
 /** Helper to build a full CommandResult with defaults. */
 function cmdResult(overrides: {
@@ -76,6 +90,12 @@ describe("installer", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
+    // Default: binary not found — resolveCommand throws and existsSync returns false.
+    // Individual tests override these for the "installed" scenario.
+    mockResolveCommand.mockImplementation(() => {
+      throw new Error("Command not in allowlist or not found on this system");
+    });
+    mockExistsSync.mockReturnValue(false);
   });
 
   // ── DEFENSIVE_TOOLS registry ────────────────────────────────────────────
@@ -107,8 +127,8 @@ describe("installer", () => {
 
   describe("checkTool", () => {
     it("should return installed=false when binary is not found", async () => {
-      mockExecute.mockResolvedValueOnce(cmdResult({ exitCode: 1, stderr: "not found" }));
-
+      // resolveCommand throws (default) and existsSync returns false (default)
+      // → binaryPath remains undefined → installed: false
       const result = await checkTool("nonexistent");
       expect(result.installed).toBe(false);
       expect(result.version).toBeUndefined();
@@ -116,7 +136,9 @@ describe("installer", () => {
     });
 
     it("should return installed=true with version from --version", async () => {
-      mockExecute.mockResolvedValueOnce(cmdResult({ stdout: "/usr/bin/lynis\n" }));
+      // resolveCommand returns the resolved path for "lynis"
+      mockResolveCommand.mockReturnValueOnce("/usr/bin/lynis");
+      // --version succeeds
       mockExecute.mockResolvedValueOnce(cmdResult({ stdout: "Lynis 3.0.8\nMore info\n" }));
 
       const result = await checkTool("lynis");
@@ -126,8 +148,11 @@ describe("installer", () => {
     });
 
     it("should fallback to -V when --version fails", async () => {
-      mockExecute.mockResolvedValueOnce(cmdResult({ stdout: "/usr/sbin/iptables\n" }));
+      // resolveCommand returns the resolved path for "iptables"
+      mockResolveCommand.mockReturnValueOnce("/usr/sbin/iptables");
+      // --version fails
       mockExecute.mockResolvedValueOnce(cmdResult({ exitCode: 1 }));
+      // -V succeeds
       mockExecute.mockResolvedValueOnce(cmdResult({ stdout: "iptables v1.8.9\n" }));
 
       const result = await checkTool("iptables");
@@ -136,8 +161,11 @@ describe("installer", () => {
     });
 
     it("should return installed=true without version if all version checks fail", async () => {
-      mockExecute.mockResolvedValueOnce(cmdResult({ stdout: "/usr/bin/tool\n" }));
+      // resolveCommand returns the resolved path for "tool"
+      mockResolveCommand.mockReturnValueOnce("/usr/bin/tool");
+      // --version fails
       mockExecute.mockResolvedValueOnce(cmdResult({ exitCode: 1 }));
+      // -V also fails
       mockExecute.mockResolvedValueOnce(cmdResult({ exitCode: 1 }));
 
       const result = await checkTool("tool");
@@ -152,9 +180,8 @@ describe("installer", () => {
   describe("checkAllTools", () => {
     it("should filter by category when provided", async () => {
       const encryptionTools = DEFENSIVE_TOOLS.filter((t) => t.category === "encryption");
-      for (const _t of encryptionTools) {
-        mockExecute.mockResolvedValueOnce(cmdResult({ exitCode: 1 }));
-      }
+      // resolveCommand throws (default) and existsSync returns false (default)
+      // → all encryption tools appear not installed → no executeCommand calls needed
 
       const results = await checkAllTools("encryption");
       expect(results.length).toBe(encryptionTools.length);
@@ -251,9 +278,10 @@ describe("installer", () => {
     it("should return empty array when all tools are installed", async () => {
       mockGetConfig.mockReturnValue({ dryRun: false, autoInstall: false } as ReturnType<typeof getConfig>);
 
-      const tools = DEFENSIVE_TOOLS;
-      for (const _t of tools) {
-        mockExecute.mockResolvedValueOnce(cmdResult({ stdout: "/usr/bin/tool\n" }));
+      // Mock resolveCommand to return a path for every tool, and --version to succeed.
+      // This makes checkTool() report installed=true for all DEFENSIVE_TOOLS.
+      for (const t of DEFENSIVE_TOOLS) {
+        mockResolveCommand.mockReturnValueOnce(`/usr/bin/${t.binary}`);
         mockExecute.mockResolvedValueOnce(cmdResult({ stdout: "1.0\n" }));
       }
 
@@ -264,12 +292,12 @@ describe("installer", () => {
     it("should report dry-run results when dryRun is true", async () => {
       mockGetConfig.mockReturnValue({ dryRun: true, autoInstall: false } as ReturnType<typeof getConfig>);
 
+      // resolveCommand throws (default) and existsSync returns false (default)
+      // → all container tools appear not installed → installMissing returns [DRY RUN] entries
       const containerTools = DEFENSIVE_TOOLS.filter((t) => t.category === "container");
-      for (const _t of containerTools) {
-        mockExecute.mockResolvedValueOnce(cmdResult({ exitCode: 1 }));
-      }
 
       const results = await installMissing("container");
+      expect(results.length).toBe(containerTools.length);
       for (const r of results) {
         expect(r.message).toContain("[DRY RUN]");
         expect(r.success).toBe(false);

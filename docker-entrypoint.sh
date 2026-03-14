@@ -2,7 +2,10 @@
 # Defense MCP Server — Container Entrypoint
 #
 # Runs as root at container startup.
-# Sets mcpuser password from Docker secret or env var, then drops to mcpuser.
+# Sets the host-user's password from Docker secret or env var, then drops to
+# that user. The MCP_USER env var (baked in at image build time via ARG HOST_USER)
+# determines which account receives the password and which identity the Node.js
+# process runs as.
 #
 # Security properties:
 #   - Password is read from /run/secrets/mcpuser-password (preferred) or
@@ -19,7 +22,15 @@
 #   docker run -e MCPUSER_PASSWORD='...' defense-mcp-server
 set -euo pipefail
 
-MCPUSER="mcpuser"
+# MCP_USER is baked into the image at build time via ENV MCP_USER=${HOST_USER}.
+# This env var must be set — it is provided automatically by the Dockerfile.
+if [[ -z "${MCP_USER:-}" ]]; then
+  echo "[entrypoint] ERROR: MCP_USER env var is not set." >&2
+  echo "[entrypoint] This image must be built with --build-arg HOST_USER=\$(whoami)." >&2
+  echo "[entrypoint] Run scripts/setup-credentials.sh to rebuild correctly." >&2
+  exit 1
+fi
+MCPUSER="${MCP_USER}"
 SECRET_FILE="/run/secrets/mcpuser-password"
 LOG_PREFIX="[entrypoint]"
 
@@ -59,7 +70,7 @@ else
   err "  OR:     docker run -e MCPUSER_PASSWORD='...' defense-mcp-server"
 fi
 
-# ── Set the mcpuser password ──────────────────────────────────────────────────
+# ── Set the host user's password ──────────────────────────────────────────────
 if [[ -n "${PW}" ]]; then
   # Use printf to avoid shell interpretation of password metacharacters.
   # chpasswd reads "username:password" from stdin — the password is NEVER
@@ -88,17 +99,18 @@ chmod 640 /var/log/sudo-mcpuser.log
 log "Sudo audit log initialized at /var/log/sudo-mcpuser.log."
 
 # ── Validate sudoers configuration before drop ───────────────────────────────
-if command -v visudo >/dev/null 2>&1 && [[ -f /etc/sudoers.d/mcpuser ]]; then
-  if visudo -c -f /etc/sudoers.d/mcpuser >/dev/null 2>&1; then
-    log "Sudoers configuration valid."
+SUDOERS_FILE="/etc/sudoers.d/${MCPUSER}"
+if command -v visudo >/dev/null 2>&1 && [[ -f "${SUDOERS_FILE}" ]]; then
+  if visudo -c -f "${SUDOERS_FILE}" >/dev/null 2>&1; then
+    log "Sudoers configuration valid (${SUDOERS_FILE})."
   else
     err "Sudoers configuration INVALID — sudo will not work!"
-    err "Check /etc/sudoers.d/mcpuser for syntax errors."
+    err "Check ${SUDOERS_FILE} for syntax errors."
     # Continue anyway — the server still starts, but sudo tools will fail
   fi
 fi
 
-# ── Drop to mcpuser and exec the MCP server ──────────────────────────────────
+# ── Drop to the host user and exec the MCP server ────────────────────────────
 log "Dropping privileges to ${MCPUSER} and starting MCP server..."
 
 # Prefer su-exec (minimal setuid binary, no shell escape surface)

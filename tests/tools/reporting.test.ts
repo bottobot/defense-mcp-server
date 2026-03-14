@@ -258,8 +258,8 @@ describe("reporting tools", () => {
 
   // ── Registration ────────────────────────────────────────────────────────
 
-  it("should register the defense_mgmt tool (via re-export stub)", () => {
-    expect(tools.has("defense_mgmt")).toBe(true);
+  it("should register the defense_report_mgmt tool (via re-export stub)", () => {
+    expect(tools.has("defense_report_mgmt")).toBe(true);
   });
 
   it("should register with server.tool called once", () => {
@@ -267,7 +267,7 @@ describe("reporting tools", () => {
     registerReportingTools(mock.server);
     expect(mock.server.tool).toHaveBeenCalledTimes(1);
     expect(mock.server.tool).toHaveBeenCalledWith(
-      "defense_mgmt",
+      "defense_report_mgmt",
       expect.any(String),
       expect.any(Object),
       expect.any(Function),
@@ -277,7 +277,7 @@ describe("reporting tools", () => {
   // ── report_formats action ────────────────────────────────────────────────
 
   it("should return supported formats for report_formats action", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({ action: "report_formats" });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("markdown");
@@ -287,7 +287,7 @@ describe("reporting tools", () => {
   });
 
   it("should return report types in report_formats action", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({ action: "report_formats" });
     expect(result.content[0].text).toContain("executive_summary");
     expect(result.content[0].text).toContain("technical_detail");
@@ -297,7 +297,7 @@ describe("reporting tools", () => {
   });
 
   it("should return available sections in report_formats action", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({ action: "report_formats" });
     expect(result.content[0].text).toContain("system_overview");
     expect(result.content[0].text).toContain("firewall_status");
@@ -308,7 +308,7 @@ describe("reporting tools", () => {
 
   it("should handle report_list when directory does not exist", async () => {
     vi.mocked(existsSync).mockReturnValue(false);
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({ action: "report_list" });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("does not exist");
@@ -322,7 +322,7 @@ describe("reporting tools", () => {
       "random.txt" as unknown as ReturnType<typeof readdirSync>[0],
     ]);
 
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({ action: "report_list" });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("report-2025-01-01.md");
@@ -338,7 +338,7 @@ describe("reporting tools", () => {
       "report-c.csv" as unknown as ReturnType<typeof readdirSync>[0],
     ]);
 
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({ action: "report_list" });
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.totalReports).toBe(3);
@@ -347,7 +347,7 @@ describe("reporting tools", () => {
   // ── report_generate action — markdown format ─────────────────────────────
 
   it("should generate a markdown report with all sections", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -361,7 +361,7 @@ describe("reporting tools", () => {
   });
 
   it("should include system info in markdown report", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -372,7 +372,7 @@ describe("reporting tools", () => {
   // ── report_generate action — html format ────────────────────────────────
 
   it("should generate an HTML report", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "html",
@@ -386,7 +386,7 @@ describe("reporting tools", () => {
   // ── report_generate action — json format ────────────────────────────────
 
   it("should generate a JSON report", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "json",
@@ -402,7 +402,7 @@ describe("reporting tools", () => {
   // ── report_generate action — csv format ─────────────────────────────────
 
   it("should generate a CSV report", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "csv",
@@ -415,7 +415,7 @@ describe("reporting tools", () => {
   // ── report_generate with include_sections filter ─────────────────────────
 
   it("should only include specified sections", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -431,7 +431,7 @@ describe("reporting tools", () => {
   // ── report_generate with output_path (file write) ───────────────────────
 
   it("should write report to file when output_path is provided", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -450,7 +450,7 @@ describe("reporting tools", () => {
       throw new Error("Permission denied");
     });
 
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -463,7 +463,7 @@ describe("reporting tools", () => {
   // ── report_generate with since parameter ────────────────────────────────
 
   it("should pass since parameter to login gathering", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -484,7 +484,7 @@ describe("reporting tools", () => {
       return createMockChildProcess("", "command not found", 127) as any;
     });
 
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -499,7 +499,7 @@ describe("reporting tools", () => {
       throw new Error("Binary not in allowlist");
     });
 
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "json",
@@ -511,7 +511,7 @@ describe("reporting tools", () => {
   // ── Report type variations ───────────────────────────────────────────────
 
   it("should accept executive_summary report type", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -522,7 +522,7 @@ describe("reporting tools", () => {
   });
 
   it("should accept hardening_status report type", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "json",
@@ -536,7 +536,7 @@ describe("reporting tools", () => {
   // ── Recommendations generation ───────────────────────────────────────────
 
   it("should generate recommendations based on gathered data", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -559,7 +559,7 @@ describe("reporting tools", () => {
       return createMockChildProcess("", "", 0) as any;
     });
 
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",
@@ -571,7 +571,7 @@ describe("reporting tools", () => {
   // ── Summary metadata ─────────────────────────────────────────────────────
 
   it("should include summary metadata for non-json formats", async () => {
-    const handler = tools.get("defense_mgmt")!.handler;
+    const handler = tools.get("defense_report_mgmt")!.handler;
     const result = await handler({
       action: "report_generate",
       format: "markdown",

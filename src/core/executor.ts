@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join as pathJoin } from "node:path";
 import { getConfig, getToolTimeout } from "./config.js";
 import { SudoSession } from "./sudo-session.js";
 import { SudoGuard } from "./sudo-guard.js";
@@ -10,14 +12,25 @@ import { resolveCommand, resolveSudoCommand } from "./command-allowlist.js";
 /**
  * Ordered list of known graphical sudo/SSH askpass helpers.
  * The first one found on the system will be used as the SUDO_ASKPASS program.
+ *
+ * NOTE: The user-local MCP askpass helper is checked first (highest priority)
+ * since it is installed as part of the native deployment setup and is the
+ * preferred path for desktop environments running the server natively.
+ * It is placed at ~/.local/bin/mcp-askpass with mode 0700 (owner-only).
  */
-const ASKPASS_CANDIDATES = [
-  "/usr/bin/ssh-askpass",     // Generic (often symlinked to ksshaskpass/gnome)
-  "/usr/bin/ksshaskpass",     // KDE Plasma
-  "/usr/lib/ssh/x11-ssh-askpass", // X11 classic
-  "/usr/libexec/openssh/gnome-ssh-askpass", // GNOME
-  "/usr/bin/lxqt-sudo",      // LXQt
-];
+function getAskpassCandidates(): string[] {
+  return [
+    // User-local MCP askpass wrapper (zenity/pinentry, installed by setup)
+    pathJoin(homedir(), ".local", "bin", "mcp-askpass"),
+    // System-level alternatives
+    "/usr/local/bin/mcp-askpass",   // System-wide MCP askpass (if installed by admin)
+    "/usr/bin/ssh-askpass",         // Generic (often symlinked to ksshaskpass/gnome)
+    "/usr/bin/ksshaskpass",         // KDE Plasma
+    "/usr/lib/ssh/x11-ssh-askpass", // X11 classic
+    "/usr/libexec/openssh/gnome-ssh-askpass", // GNOME
+    "/usr/bin/lxqt-sudo",           // LXQt
+  ];
+}
 
 /** Cached result of askpass detection (null = not yet checked, undefined = not found) */
 let cachedAskpass: string | undefined | null = null;
@@ -49,14 +62,14 @@ function findAskpassHelper(): string | undefined {
     return undefined;
   }
 
-  for (const candidate of ASKPASS_CANDIDATES) {
+  for (const candidate of getAskpassCandidates()) {
     if (existsSync(candidate)) {
       // SECURITY (CORE-016): Validate each candidate's ownership, permissions, and integrity
       const validation = SudoGuard.validateAskpassPath(candidate);
       if (validation.valid) {
         cachedAskpass = candidate;
         console.error(`[executor] Found verified askpass helper: ${candidate}`);
-        return cachedAskpass;
+        return candidate;
       }
       console.error(`[executor] Skipping askpass candidate ${candidate}: ${validation.reason}`);
     }
@@ -131,8 +144,18 @@ export interface CommandResult {
  * `command: "sudo", args: ["iptables", ...]`.
  */
 function prepareSudoOptions(options: ExecuteOptions): ExecuteOptions {
-  // Only transform calls where the command is "sudo"
-  if (options.command !== "sudo") return options;
+  // FIX (ordering bug): By the time this function is called, the allowlist block
+  // in executeCommand() has already resolved "sudo" → "/usr/bin/sudo" (absolute
+  // path). The original guard `if (options.command !== "sudo")` would therefore
+  // always return early, permanently bypassing credential injection.
+  //
+  // Fix: accept both the bare name "sudo" (pre-allowlist, from tests or direct
+  // callers) and any absolute path ending in "/sudo" (post-allowlist resolution,
+  // the normal runtime path) so that injection works in both cases.
+  const isSudoCommand =
+    options.command === "sudo" || options.command.endsWith("/sudo");
+
+  if (!isSudoCommand) return options;
 
   // Skip if the caller explicitly opted out (e.g. sudo-session.ts itself)
   if (options.skipSudoInjection) return options;

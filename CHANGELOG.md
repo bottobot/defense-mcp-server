@@ -6,6 +6,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.7.1] — 2026-03-14
+
+### v0.7.1 — Critical PAM Hardening Fix
+
+#### Security Fix
+- **CRITICAL**: Fixed `pam_configure` action corrupting `/etc/pam.d/common-auth` — sed commands stripped whitespace separators between PAM fields, breaking ALL authentication system-wide (required GRUB recovery to fix)
+- **CRITICAL**: Fixed `[success=N]` jump count not being updated after faillock rule insertion — would cause authentication denial on Debian/Ubuntu systems
+
+#### New Module: `src/core/pam-utils.ts`
+- Safe in-memory PAM config parser/serializer replacing fragile sed-based manipulation
+- `parsePamConfig()` — Lossless parser handling comments, blanks, `@include`, bracket-style controls
+- `serializePamConfig()` — Serializer with proper formatting (matching `pam-auth-update` canonical format)
+- `validatePamConfig()` — Triple validation: field formatting, module existence, and `[success=N]` jump count correctness
+- `adjustJumpCounts()` — Automatically updates bracket-control jump counts when rules are inserted/removed
+- Manipulation helpers: `removeModuleRules()`, `insertBeforeModule()`, `insertAfterModule()` with pamType filter
+- Sudo-aware I/O: `readPamFile()`, `writePamFile()` (atomic via `sudo install`), `backupPamFile()`, `restorePamFile()`
+
+#### Safety Layers (Defense-in-Depth)
+- Mandatory backup before any PAM file modification
+- In-memory validation before writing (catches corrupted fields, missing pam_unix.so, wrong jump counts)
+- Atomic file write using `sudo install -m 644 -o root -g root` (no partial state)
+- Post-write re-read validation
+- Auto-rollback on ANY failure (restores from backup automatically)
+
+#### Security Review Remediations
+- Fixed partial write state on chmod/chown failure (atomic `sudo install`)
+- Fixed temp file symlink race (secure `mkdtempSync`)
+- Fixed insert helpers matching by module only (added pamType filter)
+- Fixed `backupPamFile` mutating BackupEntry internal state
+- Fixed `restorePamFile` leaking PAM content to stdout via `tee`
+- Added PAM modification warning to SafeguardRegistry
+
+#### Testing
+- 63 new tests in `tests/core/pam-utils.test.ts` covering parser, serializer, validator, jump count adjustment, manipulation helpers, and full faillock integration flow
+- 7 new tests in `tests/tools/access-control.test.ts` for pam_configure regression testing
+- Critical regression test: verifies concatenated PAM fields (the original lockout bug) can never be produced
+
 ## [0.7.0] — 2026-03-12
 
 ### v0.7.0 — Tool Consolidation & Sudo Hardening Overhaul

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { executeCommand } from "./executor.js";
 import {
   detectDistro,
@@ -6,6 +7,7 @@ import {
   type PackageManager,
 } from "./distro.js";
 import { getConfig } from "./config.js";
+import { resolveCommand } from "./command-allowlist.js";
 
 /**
  * Category of a defensive tool.
@@ -1017,25 +1019,46 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
   },
 ];
 
+/** Standard binary directories to probe when a binary is not in the command allowlist. */
+const STANDARD_BINARY_DIRS = [
+  "/usr/bin",
+  "/usr/sbin",
+  "/bin",
+  "/sbin",
+  "/usr/local/bin",
+  "/usr/local/sbin",
+];
+
 /**
  * Checks whether a tool binary is available on the system.
- * Uses `which` to find the binary, then attempts `--version` for version info.
+ * Uses the command allowlist (which already resolved paths via existsSync at
+ * startup) or falls back to probing standard binary directories with
+ * existsSync. This avoids shelling out to `which`, which is blocked by the
+ * command allowlist.
  */
 export async function checkTool(
   binary: string
 ): Promise<{ installed: boolean; version?: string; path?: string }> {
-  // Check if binary exists
-  const whichResult = await executeCommand({
-    command: "which",
-    args: [binary],
-    timeout: 5000,
-  });
-
-  if (whichResult.exitCode !== 0) {
-    return { installed: false };
+  // Attempt to resolve via the command allowlist first (O(1) lookup, already
+  // verified with existsSync at startup).
+  let binaryPath: string | undefined;
+  try {
+    binaryPath = resolveCommand(binary);
+  } catch {
+    // Binary not in the allowlist or not yet resolved; fall back to probing
+    // standard directories with existsSync.
+    for (const dir of STANDARD_BINARY_DIRS) {
+      const candidate = `${dir}/${binary}`;
+      if (existsSync(candidate)) {
+        binaryPath = candidate;
+        break;
+      }
+    }
   }
 
-  const binaryPath = whichResult.stdout.trim();
+  if (!binaryPath) {
+    return { installed: false };
+  }
 
   // Try to get version
   let version: string | undefined;

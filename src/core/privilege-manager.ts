@@ -22,7 +22,12 @@ import type { ToolManifest } from "./tool-registry.js";
 
 // ── Askpass helper detection (mirrors executor.ts) ───────────────────────────
 
+import { homedir } from "node:os";
+import { join as pathJoin } from "node:path";
+
 const ASKPASS_CANDIDATES = [
+  pathJoin(homedir(), ".local", "bin", "mcp-askpass"), // User-local MCP askpass wrapper
+  "/usr/local/bin/mcp-askpass",   // System-wide MCP askpass (if installed by admin)
   "/usr/bin/ssh-askpass",
   "/usr/bin/ksshaskpass",
   "/usr/lib/ssh/x11-ssh-askpass",

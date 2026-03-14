@@ -23,6 +23,21 @@ import {
   backupFile,
 } from "../core/changelog.js";
 import { sanitizeArgs } from "../core/sanitizer.js";
+import {
+  parsePamConfig,
+  serializePamConfig,
+  validatePamConfig,
+  createPamRule,
+  removeModuleRules,
+  insertBeforeModule,
+  insertAfterModule,
+  adjustJumpCounts,
+  readPamFile,
+  writePamFile,
+  backupPamFile,
+  restorePamFile,
+  PamWriteError,
+} from "../core/pam-utils.js";
 
 // ── SSH hardening recommendations ────────────────────────────────────────
 
@@ -1113,62 +1128,74 @@ export function registerAccessControlTools(server: McpServer): void {
                 };
               }
 
-              // Backup the target file
-              await executeCommand({
-                command: "sudo",
-                args: ["cp", targetFile, `${targetFile}.bak.${Date.now()}`],
-                toolName: "access_control",
-              });
+              // Backup the target file using BackupManager
+              const pwqBackupPath = backupFile(targetFile);
 
-              // Read current file content
-              const currentResult = await executeCommand({
-                command: "sudo",
-                args: ["cat", targetFile],
-                toolName: "access_control",
-              });
+              try {
+                // Read current file content
+                const currentResult = await executeCommand({
+                  command: "sudo",
+                  args: ["cat", targetFile],
+                  toolName: "access_control",
+                });
 
-              let currentContent = currentResult.exitCode === 0 ? currentResult.stdout : "";
+                let currentContent = currentResult.exitCode === 0 ? currentResult.stdout : "";
 
-              // Update each setting
-              for (const line of configLines) {
-                const key = line.split(/\s*=\s*/)[0].replace(/^#\s*/, "").trim();
-                const keyRegex = new RegExp(`^#?\\s*${key}(\\s*=|\\s|$)`, "m");
-                if (keyRegex.test(currentContent)) {
-                  currentContent = currentContent.replace(
-                    new RegExp(`^#?\\s*${key}(\\s*=.*|\\s*)$`, "m"),
-                    line
-                  );
-                } else {
-                  currentContent += `\n${line}`;
+                // Update each setting
+                for (const line of configLines) {
+                  const key = line.split(/\s*=\s*/)[0].replace(/^#\s*/, "").trim();
+                  const keyRegex = new RegExp(`^#?\\s*${key}(\\s*=|\\s|$)`, "m");
+                  if (keyRegex.test(currentContent)) {
+                    currentContent = currentContent.replace(
+                      new RegExp(`^#?\\s*${key}(\\s*=.*|\\s*)$`, "m"),
+                      line
+                    );
+                  } else {
+                    currentContent += `\n${line}`;
+                  }
                 }
+
+                await executeCommand({
+                  command: "sudo",
+                  args: ["tee", targetFile],
+                  toolName: "access_control",
+                  timeout: getToolTimeout("access_control"),
+                  stdin: currentContent,
+                });
+
+                const entry = createChangeEntry({
+                  tool: "access_control",
+                  action: "Configure pam_pwquality",
+                  target: targetFile,
+                  after: JSON.stringify(merged),
+                  backupPath: pwqBackupPath,
+                  dryRun: false,
+                  success: true,
+                });
+                logChange(entry);
+
+                return {
+                  content: [
+                    createTextContent(
+                      `pam_pwquality configured in ${targetFile}:\n\n` +
+                        configLines.map((l) => `  ${l}`).join("\n")
+                    ),
+                  ],
+                };
+              } catch (pwqErr: unknown) {
+                // Auto-rollback on failure
+                try {
+                  await executeCommand({
+                    command: "sudo",
+                    args: ["cp", pwqBackupPath, targetFile],
+                    toolName: "access_control",
+                  });
+                  console.error(`[access_control] Rolled back ${targetFile} from ${pwqBackupPath}`);
+                } catch (rollbackErr) {
+                  console.error(`[access_control] CRITICAL: pwquality rollback failed: ${rollbackErr}`);
+                }
+                throw pwqErr;
               }
-
-              await executeCommand({
-                command: "sudo",
-                args: ["tee", targetFile],
-                toolName: "access_control",
-                timeout: getToolTimeout("access_control"),
-                stdin: currentContent,
-              });
-
-              const entry = createChangeEntry({
-                tool: "access_control",
-                action: "Configure pam_pwquality",
-                target: targetFile,
-                after: JSON.stringify(merged),
-                dryRun: false,
-                success: true,
-              });
-              logChange(entry);
-
-              return {
-                content: [
-                  createTextContent(
-                    `pam_pwquality configured in ${targetFile}:\n\n` +
-                      configLines.map((l) => `  ${l}`).join("\n")
-                  ),
-                ],
-              };
             }
 
             // module === "faillock"
@@ -1185,9 +1212,14 @@ export function registerAccessControlTools(server: McpServer): void {
             };
 
             const targetFile = (await getDistroAdapter()).paths.pamAuth;
-            const failArgs = `deny=${merged.deny} unlock_time=${merged.unlock_time} fail_interval=${merged.fail_interval}`;
+            const failArgsList = [
+              `deny=${merged.deny}`,
+              `unlock_time=${merged.unlock_time}`,
+              `fail_interval=${merged.fail_interval}`,
+            ];
+            const failArgs = failArgsList.join(" ");
             const preLine = `auth    required    pam_faillock.so preauth silent ${failArgs}`;
-            const authLine = `auth    [default=die] pam_faillock.so authfail ${failArgs}`;
+            const authLine = `auth    [default=die]    pam_faillock.so authfail ${failArgs}`;
 
             if (isDryRun) {
               const entry = createChangeEntry({
@@ -1211,68 +1243,83 @@ export function registerAccessControlTools(server: McpServer): void {
               };
             }
 
-            // Backup the target file
-            await executeCommand({
-              command: "sudo",
-              args: ["cp", targetFile, `${targetFile}.bak.${Date.now()}`],
-              toolName: "access_control",
-            });
+            // Safe PAM modification using pam-utils (replaces fragile sed commands)
+            // 1. Backup via BackupManager
+            const backupEntry = await backupPamFile(targetFile);
 
-            // Remove existing pam_faillock lines first
-            await executeCommand({
-              command: "sudo",
-              args: [
-                "sed",
-                "-i",
-                "/pam_faillock\\.so/d",
-                targetFile,
-              ],
-              toolName: "access_control",
-            });
+            try {
+              // 2. Read & parse current PAM config
+              const content = await readPamFile(targetFile);
+              let lines = parsePamConfig(content);
 
-            // Insert preauth line before pam_unix.so auth line
-            await executeCommand({
-              command: "sudo",
-              args: [
-                "sed",
-                "-i",
-                `0,/pam_unix\\.so/s|.*pam_unix\\.so.*|${preLine}\\n&|`,
-                targetFile,
-              ],
-              toolName: "access_control",
-            });
+              // 3. Remove existing faillock rules
+              lines = removeModuleRules(lines, "pam_faillock.so");
 
-            // Insert authfail line after pam_unix.so auth line
-            await executeCommand({
-              command: "sudo",
-              args: [
-                "sed",
-                "-i",
-                `0,/pam_unix\\.so/{/pam_unix\\.so/a\\${authLine}}`,
-                targetFile,
-              ],
-              toolName: "access_control",
-            });
+              // 4. Create new faillock rules
+              const preRule = createPamRule("auth", "required", "pam_faillock.so", [
+                "preauth", "silent", ...failArgsList,
+              ]);
+              const authFailRule = createPamRule("auth", "[default=die]", "pam_faillock.so", [
+                "authfail", ...failArgsList,
+              ]);
 
-            const entry = createChangeEntry({
-              tool: "access_control",
-              action: "Configure pam_faillock",
-              target: targetFile,
-              after: JSON.stringify(merged),
-              dryRun: false,
-              success: true,
-            });
-            logChange(entry);
+              // 5. Insert before/after pam_unix.so (filtered by pamType: "auth")
+              lines = insertBeforeModule(lines, "pam_unix.so", preRule, { pamType: "auth" });
+              lines = insertAfterModule(lines, "pam_unix.so", authFailRule, { pamType: "auth" });
 
-            return {
-              content: [
-                createTextContent(
-                  `pam_faillock configured in ${targetFile}:\n\n` +
-                    `  ${preLine}\n  ${authLine}\n\n` +
-                    `Settings: ${JSON.stringify(merged)}`
-                ),
-              ],
-            };
+              // 5b. Adjust [success=N] jump counts after insertions
+              lines = adjustJumpCounts(lines);
+
+              // 6. Serialize & validate
+              const newContent = serializePamConfig(lines);
+
+              // 7. Double-check: parse the serialized output and validate
+              const recheckLines = parsePamConfig(newContent);
+              const recheckValidation = validatePamConfig(recheckLines);
+              if (!recheckValidation.valid) {
+                throw new PamWriteError(
+                  `Generated PAM config failed validation: ${recheckValidation.errors.join("; ")}`,
+                  targetFile,
+                  backupEntry.id,
+                );
+              }
+
+              // 8. Write (validates pre and post-write internally)
+              await writePamFile(targetFile, newContent);
+
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: "Configure pam_faillock",
+                target: targetFile,
+                after: JSON.stringify(merged),
+                backupPath: backupEntry.backupPath,
+                dryRun: false,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `pam_faillock configured in ${targetFile}:\n\n` +
+                      `  ${preLine}\n  ${authLine}\n\n` +
+                      `Settings: ${JSON.stringify(merged)}\n` +
+                      `Backup: ${backupEntry.backupPath}`
+                  ),
+                ],
+              };
+            } catch (err) {
+              // 9. Auto-rollback on ANY failure
+              try {
+                await restorePamFile(backupEntry);
+                console.error(`[access_control] Rolled back ${targetFile} from backup ${backupEntry.id}`);
+              } catch (restoreErr) {
+                console.error(
+                  `[access_control] CRITICAL: PAM rollback failed for ${targetFile}: ${restoreErr}`,
+                );
+              }
+              throw err;
+            }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             return { content: [createErrorContent(msg)], isError: true };

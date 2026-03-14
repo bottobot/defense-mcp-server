@@ -464,7 +464,7 @@ describe("siem-integration tools", () => {
   // ── Registration ────────────────────────────────────────────────────────
 
   it("should register the log_management tool", () => {
-    expect(tools.has("log_management")).toBe(true);
+    expect(tools.has("siem_log_management")).toBe(true);
   });
 
   it("should register with server.tool called once", () => {
@@ -472,7 +472,7 @@ describe("siem-integration tools", () => {
     registerSiemIntegrationTools(mock.server);
     expect(mock.server.tool).toHaveBeenCalledTimes(1);
     expect(mock.server.tool).toHaveBeenCalledWith(
-      "log_management",
+      "siem_log_management",
       expect.any(String),
       expect.any(Object),
       expect.any(Function),
@@ -482,7 +482,7 @@ describe("siem-integration tools", () => {
   // ── Unknown action ──────────────────────────────────────────────────────
 
   it("should report error for unknown action", async () => {
-    const handler = tools.get("log_management")!.handler;
+    const handler = tools.get("siem_log_management")!.handler;
     const result = await handler({ action: "nonexistent" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Unknown action");
@@ -517,7 +517,7 @@ describe("siem-integration tools", () => {
 
   describe("siem_syslog_forward", () => {
     it("should detect rsyslog as installed", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.syslogDaemon).toBe("rsyslog");
@@ -526,7 +526,7 @@ describe("siem-integration tools", () => {
 
     it("should detect syslog-ng as installed", async () => {
       setupSyslogNgMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.syslogDaemon).toBe("syslog-ng");
@@ -535,7 +535,7 @@ describe("siem-integration tools", () => {
 
     it("should handle no syslog daemon installed", async () => {
       setupNoSyslogMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.syslogDaemon).toBe("none");
@@ -545,7 +545,7 @@ describe("siem-integration tools", () => {
 
     it("should detect existing forwarding rules", async () => {
       setupRsyslogWithForwardingMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.existingForwardingRules.length).toBeGreaterThan(0);
@@ -553,7 +553,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should report no forwarding rules when none exist", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.existingForwardingRules.length).toBe(0);
@@ -562,7 +562,7 @@ describe("siem-integration tools", () => {
 
     it("should detect loaded rsyslog modules", async () => {
       setupRsyslogWithForwardingMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.rsyslogModules.imtcp).toBe(true);
@@ -570,14 +570,14 @@ describe("siem-integration tools", () => {
 
     it("should detect TLS support", async () => {
       setupRsyslogWithForwardingMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.tlsSupport).toBe(true);
     });
 
     it("should generate recommended config when siem_host provided", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_syslog_forward",
         siem_host: "siem.example.com",
@@ -590,7 +590,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should generate UDP forwarding config", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_syslog_forward",
         siem_host: "siem.example.com",
@@ -603,7 +603,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should generate TLS forwarding config", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_syslog_forward",
         siem_host: "siem.example.com",
@@ -616,7 +616,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should warn about TLS when rsyslog-gnutls not installed", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_syslog_forward",
         siem_host: "siem.example.com",
@@ -628,7 +628,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should generate config with specific log sources", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_syslog_forward",
         siem_host: "siem.example.com",
@@ -641,7 +641,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should return text format by default", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward" });
       expect(result.content[0].text).toContain("Syslog Forwarding Configuration");
       expect(result.content[0].text).toContain("Syslog Daemon");
@@ -653,7 +653,7 @@ describe("siem-integration tools", () => {
   describe("siem_filebeat", () => {
     it("should detect filebeat when installed", async () => {
       setupFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.installed).toBe(true);
@@ -662,7 +662,7 @@ describe("siem-integration tools", () => {
 
     it("should handle filebeat not installed", async () => {
       setupNoFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.installed).toBe(false);
@@ -671,7 +671,7 @@ describe("siem-integration tools", () => {
 
     it("should list enabled filebeat modules", async () => {
       setupFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.enabledModules).toContain("system");
@@ -680,7 +680,7 @@ describe("siem-integration tools", () => {
 
     it("should list disabled filebeat modules", async () => {
       setupFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.disabledModules).toContain("apache");
@@ -689,7 +689,7 @@ describe("siem-integration tools", () => {
 
     it("should check filebeat service status", async () => {
       setupFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.serviceRunning).toBe(true);
@@ -697,7 +697,7 @@ describe("siem-integration tools", () => {
 
     it("should generate recommended config with siem_host", async () => {
       setupFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_filebeat",
         siem_host: "logstash.example.com",
@@ -729,7 +729,7 @@ describe("siem-integration tools", () => {
         return createMockChildProcess("", "", 1);
       });
 
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.recommendations.some((r: string) => r.includes("No Filebeat modules enabled"))).toBe(true);
@@ -755,7 +755,7 @@ describe("siem-integration tools", () => {
         return createMockChildProcess("", "", 1);
       });
 
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.serviceRunning).toBe(false);
@@ -764,7 +764,7 @@ describe("siem-integration tools", () => {
 
     it("should return text format with filebeat info", async () => {
       setupFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat" });
       expect(result.content[0].text).toContain("Filebeat Configuration");
       expect(result.content[0].text).toContain("Installed: yes");
@@ -775,7 +775,7 @@ describe("siem-integration tools", () => {
 
   describe("siem_audit_forwarding", () => {
     it("should detect no forwarding configured", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.rsyslogForwarding).toBe(false);
@@ -785,7 +785,7 @@ describe("siem-integration tools", () => {
 
     it("should detect rsyslog forwarding as configured", async () => {
       setupRsyslogWithForwardingMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.rsyslogForwarding).toBe(true);
@@ -795,7 +795,7 @@ describe("siem-integration tools", () => {
 
     it("should detect filebeat as running forwarding", async () => {
       setupFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.filebeatRunning).toBe(true);
@@ -803,7 +803,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should check critical log source coverage", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.criticalSourcesCovered.length).toBe(4); // auth, syslog, kern, audit
@@ -815,7 +815,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should report missing sources when no forwarding", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.missingSourcesCount).toBe(4);
@@ -824,14 +824,14 @@ describe("siem-integration tools", () => {
 
     it("should report all sources covered with wildcard forwarding", async () => {
       setupRsyslogWithForwardingMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.missingSourcesCount).toBe(0);
     });
 
     it("should check log rotation configuration", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.logRotationInterferes).toBe(false);
@@ -855,14 +855,14 @@ describe("siem-integration tools", () => {
         return createMockChildProcess("", "", 1);
       });
 
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.logRotationInterferes).toBe(true);
     });
 
     it("should include CIS benchmark reference", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.cisBenchmark).toContain("CIS Benchmark");
@@ -870,7 +870,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should check custom log sources", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_audit_forwarding",
         log_sources: ["auth", "kern"],
@@ -881,14 +881,14 @@ describe("siem-integration tools", () => {
     });
 
     it("should report CRITICAL recommendation when no forwarding", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.recommendations.some((r: string) => r.includes("CRITICAL"))).toBe(true);
     });
 
     it("should return text format with audit summary", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding" });
       expect(result.content[0].text).toContain("Log Forwarding Audit");
       expect(result.content[0].text).toContain("CIS Reference");
@@ -899,14 +899,14 @@ describe("siem-integration tools", () => {
 
   describe("siem_test_connectivity", () => {
     it("should require siem_host parameter", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_test_connectivity" });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("requires siem_host");
     });
 
     it("should validate siem_host format", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_test_connectivity", siem_host: "-invalid!" });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Invalid siem_host");
@@ -914,7 +914,7 @@ describe("siem-integration tools", () => {
 
     it("should test successful connectivity", async () => {
       setupConnectivitySuccessMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -929,7 +929,7 @@ describe("siem-integration tools", () => {
 
     it("should test failed connectivity", async () => {
       setupConnectivityFailureMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "unreachable.example.com",
@@ -944,7 +944,7 @@ describe("siem-integration tools", () => {
 
     it("should detect firewall blocking", async () => {
       setupConnectivityFailureMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -958,7 +958,7 @@ describe("siem-integration tools", () => {
 
     it("should test TLS connectivity", async () => {
       setupTlsConnectivityMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -974,7 +974,7 @@ describe("siem-integration tools", () => {
 
     it("should handle TLS failure", async () => {
       setupConnectivityFailureMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -989,7 +989,7 @@ describe("siem-integration tools", () => {
 
     it("should use default port 514 when not specified", async () => {
       setupConnectivitySuccessMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -1001,7 +1001,7 @@ describe("siem-integration tools", () => {
 
     it("should send test syslog message on success", async () => {
       setupConnectivitySuccessMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -1029,7 +1029,7 @@ describe("siem-integration tools", () => {
         return createMockChildProcess("", "", 0);
       });
 
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -1041,7 +1041,7 @@ describe("siem-integration tools", () => {
 
     it("should return text format with connectivity summary", async () => {
       setupConnectivitySuccessMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -1052,7 +1052,7 @@ describe("siem-integration tools", () => {
 
     it("should recommend checking SIEM when unreachable", async () => {
       setupConnectivityFailureMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -1069,7 +1069,7 @@ describe("siem-integration tools", () => {
 
   describe("output formats", () => {
     it("should return JSON for siem_syslog_forward", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.action).toBe("siem_syslog_forward");
@@ -1077,14 +1077,14 @@ describe("siem-integration tools", () => {
 
     it("should return JSON for siem_filebeat", async () => {
       setupFilebeatMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_filebeat", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.action).toBe("siem_filebeat");
     });
 
     it("should return JSON for siem_audit_forwarding", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_audit_forwarding", output_format: "json" });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.action).toBe("siem_audit_forwarding");
@@ -1092,7 +1092,7 @@ describe("siem-integration tools", () => {
 
     it("should return JSON for siem_test_connectivity", async () => {
       setupConnectivitySuccessMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "siem.example.com",
@@ -1103,7 +1103,7 @@ describe("siem-integration tools", () => {
     });
 
     it("should default to text format", async () => {
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward" });
       expect(result.content[0].text).toContain("SIEM Integration");
     });
@@ -1117,7 +1117,7 @@ describe("siem-integration tools", () => {
         throw new Error("spawn failed");
       });
 
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       // siem_syslog_forward catches errors internally in runCommand
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       expect(result.content).toBeDefined();
@@ -1128,7 +1128,7 @@ describe("siem-integration tools", () => {
         return createMockChildProcess("", "command failed", 1);
       });
 
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
 
       // Actions that don't require siem_host should handle failures gracefully
       for (const action of ["siem_syslog_forward", "siem_filebeat", "siem_audit_forwarding"]) {
@@ -1143,7 +1143,7 @@ describe("siem-integration tools", () => {
         throw new Error("Command not in allowlist");
       });
 
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({ action: "siem_syslog_forward", output_format: "json" });
       // runCommand catches the error and returns it as CommandResult
       expect(result.content).toBeDefined();
@@ -1151,7 +1151,7 @@ describe("siem-integration tools", () => {
 
     it("should handle unreachable host in connectivity test", async () => {
       setupConnectivityFailureMocks();
-      const handler = tools.get("log_management")!.handler;
+      const handler = tools.get("siem_log_management")!.handler;
       const result = await handler({
         action: "siem_test_connectivity",
         siem_host: "unreachable.host",
