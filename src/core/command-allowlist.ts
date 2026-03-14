@@ -300,6 +300,7 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   // ── GUI askpass helpers (sudo-management.ts) ───────────────────────────
   { binary: "zenity",       candidates: ["/usr/bin/zenity"] },
   { binary: "kdialog",      candidates: ["/usr/bin/kdialog"] },
+  { binary: "setsid",       candidates: ["/usr/bin/setsid", "/usr/sbin/setsid"] },
   { binary: "ksshaskpass",  candidates: ["/usr/bin/ksshaskpass"] },
   { binary: "lxqt-sudo",    candidates: ["/usr/bin/lxqt-sudo"] },
 

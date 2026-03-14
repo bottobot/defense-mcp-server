@@ -28,6 +28,7 @@ import {
   validateSysctlKey,
 } from "../core/sanitizer.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
+import { SudoSession } from "../core/sudo-session.js";
 import { readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
@@ -47,7 +48,16 @@ function checkPrivileges(): { ok: boolean; message?: string } {
     return { ok: true };
   }
 
-  // Check if sudo is available and the user has passwordless sudo
+  // Check if MCP sudo session is elevated (sudo -S with cached password)
+  try {
+    if (SudoSession.getInstance().isElevated()) {
+      return { ok: true };
+    }
+  } catch {
+    // SudoSession not available — fall through to sudo -n check
+  }
+
+  // Fallback: Check if sudo is available without password (NOPASSWD)
   try {
     execSync("sudo -n true 2>/dev/null", { timeout: 3000, stdio: "ignore" });
     return { ok: true };
@@ -55,8 +65,8 @@ function checkPrivileges(): { ok: boolean; message?: string } {
     return {
       ok: false,
       message:
-        "Insufficient privileges. This operation requires root access or sudo. " +
-        "Run this tool as root or ensure sudo is available without a password prompt.",
+        "Insufficient privileges. This operation requires root access or an active sudo session. " +
+        "Use sudo_session action=elevate_gui to authenticate first.",
     };
   }
 }

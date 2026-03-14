@@ -181,14 +181,14 @@ export class SudoGuard {
             "nopasswd_detected",
             "SECURITY CRITICAL: NOPASSWD:ALL detected in sudoers configuration. " +
             "Authentication via sudo_elevate is NON-FUNCTIONAL — any password will be accepted. " +
-            "Remove NOPASSWD from the sudoers file and set a real password for mcpuser. " +
+            "Remove NOPASSWD from the sudoers file and set a real password for the user. " +
             "See docs/SUDO-SESSION-DESIGN.md for remediation steps.",
             {
               severity: "CRITICAL",
               location: filePath,
               remediation:
-                "Rebuild the Docker image with the updated Dockerfile that uses " +
-                "etc/sudoers.d/mcpuser (scoped allowlist, no NOPASSWD).",
+                "Update the sudoers configuration to use a scoped allowlist " +
+                "with no NOPASSWD. See docs/SUDO-SESSION-DESIGN.md for details.",
             }
           );
           return { nopasswdDetected: true, location: filePath };

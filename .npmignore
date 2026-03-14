@@ -17,6 +17,12 @@ plans/
 TODO.md
 PROGRESS.md
 
+# Security audit and fix reports (system-specific, never publish)
+SECURITY-AUDIT-REPORT.md
+*-AUDIT-*.md
+*-FIX-*.md
+*-REMEDIATION-*.md
+
 # IDE/tool config
 .roomodes
 .roo/

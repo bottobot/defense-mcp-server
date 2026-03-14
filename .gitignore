@@ -6,3 +6,9 @@ coverage/
 *.code-workspace
 .roomodes
 .roo/
+
+# Security audit and fix reports (system-specific, never commit)
+SECURITY-AUDIT-REPORT.md
+*-AUDIT-*.md
+*-FIX-*.md
+*-REMEDIATION-*.md
