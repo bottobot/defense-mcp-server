@@ -54,6 +54,10 @@ export const DESKTOP_BREAKING_PROFILES = new Set([
   "github-desktop",
   "polypane",
   "qutebrowser",
+  // Container runtimes — same ABI 4.0 default-deny issue breaks Docker
+  "runc",
+  "crun",
+  "rootlesskit",
 ]);
 
 // ── Registration entry point ───────────────────────────────────────────────
