@@ -50,7 +50,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
 }));
 
-import { registerContainerSecurityTools } from "../../src/tools/container-security.js";
+import { registerContainerSecurityTools, DESKTOP_BREAKING_PROFILES } from "../../src/tools/container-security.js";
 
 // ── Helper ─────────────────────────────────────────────────────────────────
 
@@ -182,5 +182,61 @@ describe("container-security tools", () => {
     const result = await handler({ action: "image_scan" });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("image is required");
+  });
+
+  // ── DESKTOP_BREAKING_PROFILES ────────────────────────────────────────
+
+  it("should have DESKTOP_BREAKING_PROFILES set with known dangerous profiles", () => {
+    expect(DESKTOP_BREAKING_PROFILES).toBeDefined();
+    expect(DESKTOP_BREAKING_PROFILES.has("flatpak")).toBe(true);
+    expect(DESKTOP_BREAKING_PROFILES.has("chromium")).toBe(true);
+    expect(DESKTOP_BREAKING_PROFILES.has("unprivileged_userns")).toBe(true);
+    expect(DESKTOP_BREAKING_PROFILES.has("firefox")).toBe(true);
+    expect(DESKTOP_BREAKING_PROFILES.has("code")).toBe(true);
+  });
+
+  // ── AppArmor Install Safety ──────────────────────────────────────────
+
+  it("apparmor_install dry-run should warn about desktop-breaking profiles", async () => {
+    const handler = tools.get("container_isolation")!.handler;
+    const result = await handler({ action: "apparmor_install", dry_run: true });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("COMPLAIN mode");
+    expect(result.content[0].text).toContain("desktop applications");
+  });
+
+  // ── AppArmor Enforce Safety ──────────────────────────────────────────
+
+  it("apparmor_enforce dry-run should warn when enforcing desktop-breaking profile", async () => {
+    const handler = tools.get("container_isolation")!.handler;
+    const result = await handler({ action: "apparmor_enforce", profile: "flatpak", dry_run: true });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("WARNING");
+    expect(result.content[0].text).toContain("desktop applications");
+  });
+
+  it("apparmor_enforce dry-run should NOT warn for non-desktop profiles", async () => {
+    const handler = tools.get("container_isolation")!.handler;
+    const result = await handler({ action: "apparmor_enforce", profile: "my_custom_profile", dry_run: true });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).not.toContain("WARNING");
+    expect(result.content[0].text).not.toContain("desktop applications");
+  });
+
+  it("apparmor_enforce dry-run should warn for profile path containing desktop profile name", async () => {
+    const handler = tools.get("container_isolation")!.handler;
+    const result = await handler({ action: "apparmor_enforce", profile: "/etc/apparmor.d/chromium", dry_run: true });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("WARNING");
+  });
+
+  it("apparmor_complain should provide rollback command to enforce", async () => {
+    const { executeCommand } = await import("../../src/core/executor.js");
+    vi.mocked(executeCommand).mockResolvedValueOnce({ exitCode: 0, stdout: "Setting profile to complain mode", stderr: "" });
+    const { createChangeEntry } = await import("../../src/core/changelog.js");
+    const handler = tools.get("container_isolation")!.handler;
+    await handler({ action: "apparmor_complain", profile: "test_profile", dry_run: false });
+    // Should NOT have a rollback command for complain (it's safe)
+    expect(vi.mocked(createChangeEntry)).toHaveBeenCalled();
   });
 });

@@ -29,6 +29,33 @@ import { secureWriteFileSync } from "../core/secure-fs.js";
 // ── TOOL-011 remediation: safe directory for seccomp profiles ──────────────
 const SECCOMP_PROFILE_DIR = "/tmp/defense-mcp/seccomp";
 
+// ── AppArmor profiles known to break desktop applications ─────────────────
+// These profiles ship in apparmor-profiles-extra and use ABI 4.0 default-deny
+// with only `userns` granted. In enforce mode they block shared library loading
+// for flatpak, chromium, and other GUI apps via the dynamic linker.
+export const DESKTOP_BREAKING_PROFILES = new Set([
+  "flatpak",
+  "chromium",
+  "unprivileged_userns",
+  "chrome",
+  "brave",
+  "Discord",
+  "element-desktop",
+  "firefox",
+  "signal-desktop",
+  "slack",
+  "vivaldi-bin",
+  "opera",
+  "msedge",
+  "obsidian",
+  "steam",
+  "code",
+  "epiphany",
+  "github-desktop",
+  "polypane",
+  "qutebrowser",
+]);
+
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerContainerSecurityTools(server: McpServer): void {
@@ -474,15 +501,28 @@ export function registerContainerSecurityTools(server: McpServer): void {
             const cmdMap: Record<string, string> = { enforce: "aa-enforce", complain: "aa-complain", disable: "aa-disable" };
             const cmd = cmdMap[baseAction];
 
+            // Extract just the profile name from a potential path
+            const profileBaseName = profile.replace(/.*\//, "");
+            const isDesktopProfile = DESKTOP_BREAKING_PROFILES.has(profileBaseName);
+
+            // SAFETY: Warn when enforcing profiles known to break desktop apps
+            const desktopWarning = (baseAction === "enforce" && isDesktopProfile)
+              ? `\n\n⚠️ WARNING: Profile '${profileBaseName}' is known to break desktop applications ` +
+                `(flatpak, browsers, GUI apps) when enforced.\n` +
+                `These profiles use ABI 4.0 default-deny and block shared library loading.\n` +
+                `This may prevent Chromium, Firefox, Flatpak apps, and similar from launching.\n` +
+                `Consider using complain mode instead, or test thoroughly before enforcing.`
+              : "";
+
             if (dry_run ?? getConfig().dryRun) {
-              return { content: [createTextContent(`[DRY RUN] Would set profile '${profile}' to ${baseAction} mode.\n  Command: sudo ${cmd} ${profile}`)] };
+              return { content: [createTextContent(`[DRY RUN] Would set profile '${profile}' to ${baseAction} mode.\n  Command: sudo ${cmd} ${profile}${desktopWarning}`)] };
             }
 
             const result = await executeCommand({ command: "sudo", args: [cmd, profile], toolName: "container_isolation", timeout: getToolTimeout("container_apparmor_manage") });
             if (result.exitCode !== 0) return { content: [createErrorContent(`Failed to ${baseAction} profile '${profile}': ${result.stderr}`)], isError: true };
 
-            logChange(createChangeEntry({ tool: "container_isolation", action: baseAction, target: profile, after: `${baseAction} mode`, dryRun: false, success: true, rollbackCommand: baseAction === "disable" ? `sudo aa-enforce ${profile}` : undefined }));
-            return { content: [createTextContent(`✅ Profile '${profile}' set to ${baseAction} mode.\n${result.stdout || result.stderr}`)] };
+            logChange(createChangeEntry({ tool: "container_isolation", action: baseAction, target: profile, after: `${baseAction} mode`, dryRun: false, success: true, rollbackCommand: baseAction === "disable" ? `sudo aa-enforce ${profile}` : baseAction === "enforce" ? `sudo aa-complain ${profile}` : undefined }));
+            return { content: [createTextContent(`✅ Profile '${profile}' set to ${baseAction} mode.\n${result.stdout || result.stderr}${desktopWarning}`)] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
@@ -494,14 +534,43 @@ export function registerContainerSecurityTools(server: McpServer): void {
             const packages = ["apparmor-profiles", "apparmor-profiles-extra"];
 
             if (isDryRun) {
-              return { content: [createTextContent(`[DRY RUN] Would install: ${packages.join(", ")}\n  Command: sudo apt-get install -y ${packages.join(" ")}`)] };
+              return { content: [createTextContent(
+                `[DRY RUN] Would install: ${packages.join(", ")}\n` +
+                `  Command: sudo apt-get install -y ${packages.join(" ")}\n\n` +
+                `⚠️ After installation, the following profiles will be set to COMPLAIN mode\n` +
+                `to prevent breaking desktop applications (flatpak, browsers, etc.):\n` +
+                `  ${[...DESKTOP_BREAKING_PROFILES].join(", ")}\n\n` +
+                `Use apparmor_enforce to selectively enforce profiles after testing.`
+              )] };
             }
 
             const installResult = await executeCommand({ command: "sudo", args: ["apt-get", "install", "-y", ...packages], toolName: "container_isolation", timeout: 120000 });
             if (installResult.exitCode !== 0) return { content: [createErrorContent(`Failed to install: ${installResult.stderr}`)], isError: true };
 
-            logChange(createChangeEntry({ tool: "container_isolation", action: "install_profiles", target: packages.join(", "), after: "installed", dryRun: false, success: true, rollbackCommand: `sudo apt-get remove -y ${packages.join(" ")}` }));
-            return { content: [createTextContent(`✅ Successfully installed: ${packages.join(", ")}`)] };
+            // SAFETY: Set desktop-breaking profiles to complain mode to prevent
+            // breaking flatpak, chromium, and other GUI applications.
+            // These profiles use ABI 4.0 default-deny with only `userns` granted,
+            // which blocks the dynamic linker from loading shared libraries.
+            const complainResults: string[] = [];
+            for (const profileName of DESKTOP_BREAKING_PROFILES) {
+              const profilePath = `/etc/apparmor.d/${profileName}`;
+              const checkResult = await executeCommand({ command: "test", args: ["-f", profilePath], toolName: "container_isolation", timeout: 5000 });
+              if (checkResult.exitCode === 0) {
+                const complainResult = await executeCommand({ command: "sudo", args: ["aa-complain", profilePath], toolName: "container_isolation", timeout: 10000 });
+                if (complainResult.exitCode === 0) {
+                  complainResults.push(`  ✓ ${profileName} → complain mode`);
+                } else {
+                  complainResults.push(`  ✗ ${profileName} → failed: ${complainResult.stderr.trim()}`);
+                }
+              }
+            }
+
+            const complainSection = complainResults.length > 0
+              ? `\n\n⚠️ Desktop-safe profiles set to complain mode (prevents breaking GUI apps):\n${complainResults.join("\n")}\n\nUse apparmor_enforce to selectively enforce profiles after testing.`
+              : "";
+
+            logChange(createChangeEntry({ tool: "container_isolation", action: "install_profiles", target: packages.join(", "), after: `installed; ${complainResults.length} profiles set to complain`, dryRun: false, success: true, rollbackCommand: `sudo apt-get remove -y ${packages.join(" ")}` }));
+            return { content: [createTextContent(`✅ Successfully installed: ${packages.join(", ")}${complainSection}`)] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
