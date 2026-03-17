@@ -50,13 +50,11 @@ import { registerSudoManagementTools } from "./tools/sudo-management.js";
 
 // ── New tool modules ─────────────────────────────────────────────────────────
 import { registerSupplyChainSecurityTools } from "./tools/supply-chain-security.js";
-import { registerDriftDetectionTools } from "./tools/drift-detection.js";
 import { registerZeroTrustNetworkTools } from "./tools/zero-trust-network.js";
 import { registerEbpfSecurityTools } from "./tools/ebpf-security.js";
 import { registerAppHardeningTools } from "./tools/app-hardening.js";
 
 // ── v0.6.0 tool modules ─────────────────────────────────────────────────────
-import { registerReportingTools } from "./tools/reporting.js";
 import { registerDnsSecurityTools } from "./tools/dns-security.js";
 import { registerVulnerabilityManagementTools } from "./tools/vulnerability-management.js";
 import { registerProcessSecurityTools } from "./tools/process-security.js";
@@ -66,7 +64,6 @@ import { registerCloudSecurityTools } from "./tools/cloud-security.js";
 import { registerApiSecurityTools } from "./tools/api-security.js";
 import { registerDeceptionTools } from "./tools/deception.js";
 import { registerWirelessSecurityTools } from "./tools/wireless-security.js";
-import { registerSiemIntegrationTools } from "./tools/siem-integration.js";
 
 // ── Graceful shutdown handler ────────────────────────────────────────────────
 
@@ -102,6 +99,10 @@ function gracefulShutdown(signal: string) {
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
+// Client disconnected (closed our stdin pipe) — stdio transport convention.
+// The MCP client terminates us via stdin close → SIGTERM → SIGKILL.
+process.stdin.on("close", () => gracefulShutdown("stdin closed (client disconnected)"));
+
 // SECURITY (CORE-020): uncaughtException/unhandledRejection handlers must use
 // only synchronous operations. Async operations (file writes, network, cleanup)
 // are NOT guaranteed to complete after an uncaught exception. Async cleanup is
@@ -112,9 +113,10 @@ process.on("uncaughtException", (err) => {
   process.exit(1);
 });
 
+// Prevent unhandled rejections from crashing the server silently.
+// Don't exit — let the SDK handle protocol-level errors.
 process.on("unhandledRejection", (reason) => {
-  console.error(`[fatal] Unhandled rejection: ${reason}`);
-  process.exit(1);
+  console.error("[error] Unhandled rejection:", reason);
 });
 
 // ── Main entry point ─────────────────────────────────────────────────────────
@@ -285,7 +287,6 @@ async function main() {
 
   // New tool modules
   safeRegister("supply-chain-security", registerSupplyChainSecurityTools);
-  safeRegister("drift-detection", registerDriftDetectionTools);
   safeRegister("zero-trust-network", registerZeroTrustNetworkTools);
   safeRegister("ebpf-security", registerEbpfSecurityTools);
   safeRegister("app-hardening", registerAppHardeningTools);
@@ -296,8 +297,6 @@ async function main() {
   safeRegister("deception", registerDeceptionTools);
   safeRegister("dns-security", registerDnsSecurityTools);
   safeRegister("process-security", registerProcessSecurityTools);
-  safeRegister("reporting", registerReportingTools);
-  safeRegister("siem-integration", registerSiemIntegrationTools);
   safeRegister("threat-intel", registerThreatIntelTools);
   safeRegister("vulnerability-management", registerVulnerabilityManagementTools);
   safeRegister("waf", registerWafTools);
@@ -313,7 +312,10 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`Defense MCP Server v${VERSION} running on stdio`);
-  console.error(`Registered ${registered} of ${registered + failed} tool modules with 31 consolidated defensive security tools${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`);
+  console.error(
+    `Registered ${registered} tool modules with consolidated defensive security tools` +
+    `${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`
+  );
   console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }
 

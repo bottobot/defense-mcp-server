@@ -47,7 +47,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-import { registerIdsTools } from "../../src/tools/ids.js";
+import { registerIntegrityTools as registerIdsTools } from "../../src/tools/integrity.js";
 
 type ToolHandler = (params: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>;
 
