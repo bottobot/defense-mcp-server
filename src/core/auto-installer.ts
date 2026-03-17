@@ -295,6 +295,55 @@ function binaryAvailable(binary: string): boolean {
   }
 }
 
+// ── Post-install binary identity verification ────────────────────────────────
+
+/**
+ * Expected version output patterns for binaries that come from third-party repos.
+ * Protects against package name collisions in third-party or default repos
+ * (e.g., Trivy and Grype don't exist in stock Debian/Ubuntu repos).
+ */
+const BINARY_VERSION_PATTERNS: Record<string, RegExp> = {
+  trivy: /trivy/i,
+  grype: /grype/i,
+  syft: /syft/i,
+  cosign: /cosign/i,
+};
+
+/**
+ * After installing a package, verify the binary is the expected tool.
+ * Checks `--version` output against known patterns.
+ * Protects against package name collisions in third-party or default repos.
+ *
+ * @returns `true` if verified or no verification needed, `false` if mismatch detected
+ */
+function verifyInstalledBinary(binary: string): boolean {
+  const pattern = BINARY_VERSION_PATTERNS[binary];
+  if (!pattern) return true; // No verification needed for well-known distro packages
+
+  try {
+    const stdout = execFileSafe(binary, ["--version"], {
+      timeout: 10_000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }) as string;
+
+    if (!pattern.test(stdout ?? "")) {
+      console.error(
+        `[auto-installer] ⚠️  Installed '${binary}' but --version output doesn't match ` +
+        `expected pattern /${pattern.source}/. The package may be a name collision, not the security tool.`
+      );
+      return false;
+    }
+    return true;
+  } catch {
+    // Can't verify — warn but don't block
+    console.error(
+      `[auto-installer] ⚠️  Could not verify '${binary}' identity via --version (non-fatal)`
+    );
+    return false;
+  }
+}
+
 // ── Helper: resolve package install command args per distro ───────────────────
 
 function getInstallArgs(
@@ -606,6 +655,18 @@ export class AutoInstaller {
     // Verify installation
     const installed = binaryAvailable(binary);
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+
+    // Post-install identity verification for third-party repo binaries
+    if (installed) {
+      const verified = verifyInstalledBinary(binary);
+      if (!verified) {
+        console.error(
+          `[auto-installer] ⚠️  Binary '${binary}' installed but identity verification failed. ` +
+          `The package may be a name collision (not the expected security tool). ` +
+          `Trivy, Grype, Syft, and Cosign require third-party repositories.`
+        );
+      }
+    }
 
     if (installed) {
       console.error(

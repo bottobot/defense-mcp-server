@@ -1,7 +1,7 @@
 {
   "name": "defense-mcp-server",
   "version": "0.7.3",
-  "description": "Defense MCP Server — 94 defensive security tools across 32 modules for system hardening and threat detection",
+  "description": "Defense MCP Server — 31 defensive security tools across 29 modules for system hardening and threat detection",
   "type": "module",
   "main": "build/index.js",
   "bin": {
@@ -35,7 +35,8 @@
     "release:git": "./scripts/release.sh patch --git-only",
     "release:npm": "./scripts/release.sh --npm-only",
     "push": "git add -A && git commit -m 'chore: update' && git push origin $(git rev-parse --abbrev-ref HEAD)",
-    "sbom": "./scripts/generate-sbom.sh"
+    "sbom": "./scripts/generate-sbom.sh",
+    "test:integration": "npm run build && vitest run tests/integration/"
   },
   "keywords": [
     "mcp",

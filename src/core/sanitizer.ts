@@ -1,4 +1,5 @@
 import { resolve, normalize, sep } from "node:path";
+import { realpathSync } from "node:fs";
 import { getConfig, type DefenseConfig } from "./config.js";
 
 /**
@@ -197,6 +198,32 @@ export function validateFilePath(
 
   if (isProtected) {
     throw new Error(`File path is in a protected location: ${filePath}`);
+  }
+
+  // Symlink protection: resolve symlinks and re-validate the resolved path
+  // against allowed directories. Only for paths that exist on disk.
+  try {
+    const realResolved = realpathSync(normalized);
+    const realInAllowed = cfg.allowedDirs.some((dir) => {
+      const normalizedDir = normalize(resolve(dir));
+      return (
+        realResolved === normalizedDir ||
+        realResolved.startsWith(normalizedDir + "/")
+      );
+    });
+
+    if (!realInAllowed) {
+      throw new Error(
+        `Path '${filePath}' resolves to '${realResolved}' which is outside allowed directories: ` +
+        `[${cfg.allowedDirs.join(", ")}]. Possible symlink attack.`
+      );
+    }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes("symlink attack")) {
+      throw err; // Re-throw our own security errors
+    }
+    // File doesn't exist yet (e.g., creating a new file) — skip realpath check.
+    // The string-level validation above is sufficient for non-existent paths.
   }
 
   return normalized;

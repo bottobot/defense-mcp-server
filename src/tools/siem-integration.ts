@@ -1,26 +1,8 @@
-// Legacy re-export stub — logic merged into logging.ts (tool consolidation)
-// Registered as "siem_log_management" to avoid collision with the canonical "log_management" tool
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerLoggingTools } from "./logging.js";
+/**
+ * @deprecated Merged into logging.ts as of v0.7.0.
+ * This file exists only for backward-compatible re-exports.
+ * It is NOT registered in index.ts — do not call registerSiemIntegrationTools().
+ */
 export { validateSiemHost } from "./logging.js";
 
-export function registerSiemIntegrationTools(server: McpServer): void {
-  // Proxy server.tool() to rename "log_management" → "siem_log_management",
-  // preventing a duplicate-tool-name error when both logging.ts and
-  // siem-integration.ts are registered in index.ts.
-  const proxy = new Proxy(server, {
-    get(target, prop, receiver) {
-      if (prop === "tool") {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return (name: string, ...rest: any[]) =>
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (target.tool as (...args: any[]) => unknown)(
-            name === "log_management" ? "siem_log_management" : name,
-            ...rest
-          );
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  });
-  registerLoggingTools(proxy);
-}
+// Removed: registerSiemIntegrationTools (was re-registering all logging tools under alias)

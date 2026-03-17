@@ -5,7 +5,7 @@
 | Field | Value |
 |-------|-------|
 | **Name** | defense-mcp-server |
-| **Version** | 0.6.0 |
+| **Version** | 0.7.3 |
 | **Language** | TypeScript 5.9+ |
 | **Target** | ES2022 |
 | **Module System** | Node16 (ESM with `.js` extensions in imports) |
@@ -22,7 +22,7 @@
 
 ## 1. Overview
 
-The defense-mcp-server is a Model Context Protocol (MCP) server that exposes **94 defensive security tools** across **32 modules**, backed by **26 core modules**. It enables AI agents (Claude, Roo Code, etc.) to perform system hardening, compliance auditing, intrusion detection, malware scanning, firewall management, container security, secrets scanning, drift detection, zero-trust networking, eBPF security monitoring, cloud security, API security, threat intelligence, WAF management, wireless security, and incident response on Linux systems.
+The defense-mcp-server is a Model Context Protocol (MCP) server that exposes **31 defensive security tools** across **29 modules**, backed by **26 core modules**. It enables AI agents (Claude, Roo Code, etc.) to perform system hardening, compliance auditing, intrusion detection, malware scanning, firewall management, container security, secrets scanning, drift detection, zero-trust networking, eBPF security monitoring, cloud security, API security, threat intelligence, WAF management, wireless security, and incident response on Linux systems.
 
 The server runs as a child process communicating over stdio JSON-RPC. It wraps Linux security binaries (iptables, lynis, aide, rkhunter, ClamAV, etc.) with input validation, command allowlist enforcement, privilege management, rate limiting, structured logging, and audit trails.
 
@@ -30,8 +30,8 @@ The server runs as a child process communicating over stdio JSON-RPC. It wraps L
 
 | Metric | Value |
 |--------|-------|
-| Tool count | 78 |
-| Tool modules (`src/tools/`) | 21 files |
+| Tool count | 31 |
+| Tool modules (`src/tools/`) | 29 files |
 | Core modules (`src/core/`) | 26 files |
 | Test files | 47 |
 | Test count | 873 |
@@ -57,7 +57,7 @@ src/
 │   ├── command-allowlist.ts    — Binary allowlist with path resolution & TOCTOU verification
 │   ├── config.ts               — Environment-based configuration with defaults
 │   ├── safeguards.ts           — Application detection + safety checking
-│   ├── tool-registry.ts        — ToolManifest registry (78 entries)
+│   ├── tool-registry.ts        — ToolManifest registry (31 entries)
 │   ├── tool-wrapper.ts         — Proxy-based McpServer middleware
 │   ├── policy-engine.ts        — Compliance policy evaluation with Zod + ReDoS protection
 │   ├── backup-manager.ts       — File backup with manifest tracking
@@ -502,7 +502,7 @@ export function registerXxxTools(server: McpServer): void {
 }
 ```
 
-**Action parameter pattern**: Most tools use a single `action` enum parameter to consolidate related operations. This pattern reduced the tool count from 157 (pre-v0.5.0) to 78, then grew to 94 with v0.6.0 additions.
+**Action parameter pattern**: Most tools use a single `action` enum parameter to consolidate related operations. This pattern reduced the tool count from 157 (pre-v0.5.0) to 78, then consolidated to 31 tools with v0.7.0.
 
 ### 5.2 Tool Naming Convention
 
@@ -532,7 +532,7 @@ All tools use a `prefix_subject` snake_case pattern. Prefixes match module names
 | `ebpf_` | eBPF Security | `ebpf_list_programs`, `ebpf_falco` |
 | `app_` | App Hardening | `app_harden` |
 
-### 5.3 Tool Modules (32 files, 94 tools)
+### 5.3 Tool Modules (29 files, 31 tools)
 
 | # | Module | File | Tools | Tool Names |
 |---|--------|------|:-----:|------------|

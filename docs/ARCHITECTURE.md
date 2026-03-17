@@ -1,7 +1,7 @@
 # Defense MCP Server — Architecture Document
 
 > **Project**: `defense-mcp-server`
-> **Version**: 0.6.0
+> **Version**: 0.7.3
 > **Purpose**: Standalone MCP server for defensive security, system hardening, and blue team operations
 > **SDK**: `@modelcontextprotocol/sdk` v1.27.1 · `zod` v3.25.76
 > **Transport**: StdioServerTransport
@@ -78,7 +78,7 @@ defense-mcp-server/
 │   │   ├── distro-adapter.ts    ← cross-distro command adaptation
 │   │   ├── installer.ts         ← defensive tool auto-installation
 │   │   ├── policy-engine.ts     ← policy evaluation engine for compliance checks
-│   │   ├── tool-registry.ts     ← tool manifest registry (94 tools, sudo/capability declarations)
+│   │   ├── tool-registry.ts     ← tool manifest registry (31 tools, sudo/capability declarations)
 │   │   ├── privilege-manager.ts ← privilege detection (UID/EUID, Linux capabilities, sudo status)
 │   │   ├── auto-installer.ts    ← multi-package-manager auto-dependency resolution
 │   │   ├── preflight.ts         ← pre-flight orchestration engine with caching
@@ -143,7 +143,7 @@ graph TB
     end
 
     subgraph Server_Core
-        MCP[McpServer - defense-mcp-server v0.6.0]
+        MCP[McpServer - defense-mcp-server v0.7.3]
     end
 
     subgraph Core_Modules
@@ -218,7 +218,7 @@ The pre-flight validation system is a transparent middleware layer that sits bet
 
 | Module | File | Responsibility |
 |--------|------|----------------|
-| **Tool Registry** | [`tool-registry.ts`](src/core/tool-registry.ts) | Enhanced manifest registry for all 94 tools. Each `ToolManifest` declares required/optional binaries, Python modules, npm packages, system libraries, required files, sudo level (`never`/`always`/`conditional`), Linux capabilities, and category metadata. Singleton with O(1) lookup by tool name. |
+| **Tool Registry** | [`tool-registry.ts`](src/core/tool-registry.ts) | Enhanced manifest registry for all 31 tools. Each `ToolManifest` declares required/optional binaries, Python modules, npm packages, system libraries, required files, sudo level (`never`/`always`/`conditional`), Linux capabilities, and category metadata. Singleton with O(1) lookup by tool name. |
 | **Privilege Manager** | [`privilege-manager.ts`](src/core/privilege-manager.ts) | Detects current privilege level by querying UID/EUID, parsing Linux capabilities from `/proc/self/status` CapEff bitmask (41 capability names mapped), testing passwordless sudo via `sudo -n true`, checking `SudoSession` cached credentials, and reading group memberships via `id -Gn`. Results cached for 30 seconds. |
 | **Auto-Installer** | [`auto-installer.ts`](src/core/auto-installer.ts) | Multi-package-manager dependency resolver supporting 8 package managers: apt, dnf, yum, pacman, apk, zypper, brew, pip, and npm. Resolves distro-specific package names from the `DEFENSIVE_TOOLS` catalog. Tries user-site installs before sudo. Verifies installation after each attempt. |
 | **Pre-flight Engine** | [`preflight.ts`](src/core/preflight.ts) | Orchestration engine that runs the full validation pipeline: manifest resolution → dependency checking → auto-installation → privilege validation → pass/fail determination. Returns a structured `PreflightResult` with human-readable summaries. Results cached for 60 seconds (passing results only). |
@@ -231,7 +231,7 @@ graph TD
     subgraph "Pre-flight Layer"
         WRAPPER["tool-wrapper.ts<br/>Proxy&lt;McpServer&gt;<br/>intercepts .tool() registrations"]
         PREFLIGHT["preflight.ts<br/>PreflightEngine<br/>orchestrates pipeline"]
-        REGISTRY["tool-registry.ts<br/>ToolRegistry<br/>78 ToolManifest entries"]
+        REGISTRY["tool-registry.ts<br/>ToolRegistry<br/>31 ToolManifest entries"]
         PRIV["privilege-manager.ts<br/>PrivilegeManager<br/>UID · capabilities · sudo"]
         AUTO["auto-installer.ts<br/>AutoInstaller<br/>apt · dnf · pip · npm · ..."]
     end
@@ -2057,13 +2057,13 @@ registerMetaTools(server);              // 6 tools
 //   reporting, dns-security, vulnerability-management, process-security,
 //   waf, threat-intel, cloud-security, api-security, deception,
 //   wireless-security, siem-integration
-                                        // TOTAL: 94 tools across 32 modules
+                                        // TOTAL: 31 tools across 29 modules
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Defense MCP Server v0.6.0 running on stdio");
-  console.error("Registered 32 tool modules with ~94 defensive security tools");
+  console.error("Defense MCP Server v0.7.3 running on stdio");
+  console.error("Registered 29 tool modules with ~31 defensive security tools");
 }
 
 main().catch((err) => {
@@ -2078,7 +2078,7 @@ main().catch((err) => {
 {
   "name": "defense-mcp-server",
   "version": "0.6.0",
-  "description": "Defense MCP Server — 94 defensive security tools for system hardening and threat detection",
+  "description": "Defense MCP Server — 31 defensive security tools for system hardening and threat detection",
   "type": "module",
   "main": "build/index.js",
   "scripts": {
@@ -2135,4 +2135,4 @@ main().catch((err) => {
 | Deception / Honeypots | `deception.ts` | 1 |
 | Wireless Security | `wireless-security.ts` | 1 |
 | SIEM Integration | `siem-integration.ts` | 1 |
-| **Total** | **32 modules** | **94** |
+| **Total** | **29 modules** | **31 tools** |
