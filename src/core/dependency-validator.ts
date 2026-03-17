@@ -235,6 +235,7 @@ export async function validateAllDependencies(): Promise<ValidationReport> {
 
     console.error(`[dep-validator] Updating package lists via ${distro.packageManager}...`);
     await executeCommand({
+      toolName: "_internal",
       command: "sudo",
       args: updateCmd,
       timeout: 120_000,

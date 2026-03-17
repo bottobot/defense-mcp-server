@@ -7,9 +7,17 @@
  * Supports standard log levels plus a `security` level for security-relevant
  * events (authentication, privilege escalation, policy violations).
  *
+ * Optional file-based logging with size-based rotation via:
+ *   DEFENSE_MCP_LOG_FILE=/path/to/logfile.json
+ *   DEFENSE_MCP_LOG_MAX_SIZE=10485760  (10 MB default)
+ *   DEFENSE_MCP_LOG_MAX_FILES=5        (keep 5 rotated files)
+ *
  * @module logger
  * @see CICD-027
  */
+
+import { appendFileSync, statSync, renameSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +50,47 @@ export interface LogEntry {
   details?: Record<string, unknown>;
 }
 
+// ── Log Rotation ─────────────────────────────────────────────────────────────
+
+/** Default max log file size: 10 MB */
+const DEFAULT_MAX_SIZE = 10 * 1024 * 1024;
+/** Default number of rotated files to keep */
+const DEFAULT_MAX_FILES = 5;
+
+/**
+ * Rotate a log file using numbered suffixes: log.json → log.json.1 → log.json.2 etc.
+ * Oldest files beyond maxFiles are deleted.
+ *
+ * @param filePath - The active log file path
+ * @param maxFiles - Maximum number of rotated files to keep
+ */
+function rotateLogFile(filePath: string, maxFiles: number): void {
+  try {
+    // Delete the oldest file if it would exceed maxFiles
+    const oldest = `${filePath}.${maxFiles}`;
+    if (existsSync(oldest)) {
+      unlinkSync(oldest);
+    }
+
+    // Shift existing rotated files: .4 → .5, .3 → .4, etc.
+    for (let i = maxFiles - 1; i >= 1; i--) {
+      const src = `${filePath}.${i}`;
+      const dst = `${filePath}.${i + 1}`;
+      if (existsSync(src)) {
+        renameSync(src, dst);
+      }
+    }
+
+    // Move the current log file to .1
+    if (existsSync(filePath)) {
+      renameSync(filePath, `${filePath}.1`);
+    }
+  } catch {
+    // Best-effort rotation — don't crash the server if rotation fails
+    process.stderr.write(`[logger] WARNING: Log rotation failed for ${filePath}\n`);
+  }
+}
+
 // ── Logger Class ─────────────────────────────────────────────────────────────
 
 /**
@@ -49,6 +98,9 @@ export interface LogEntry {
  *
  * Uses stderr so log output doesn't interfere with MCP protocol messages
  * on stdout (StdioServerTransport).
+ *
+ * Optionally writes to a file with automatic size-based rotation when
+ * DEFENSE_MCP_LOG_FILE is set.
  *
  * Usage:
  * ```typescript
@@ -60,9 +112,27 @@ export interface LogEntry {
  */
 export class Logger {
   private minLevel: LogLevel;
+  private logFile: string | null;
+  private maxFileSize: number;
+  private maxFiles: number;
 
   constructor(minLevel?: LogLevel) {
     this.minLevel = minLevel ?? this.parseEnvLevel();
+    this.logFile = process.env.DEFENSE_MCP_LOG_FILE || null;
+    this.maxFileSize = parseInt(process.env.DEFENSE_MCP_LOG_MAX_SIZE || "", 10) || DEFAULT_MAX_SIZE;
+    this.maxFiles = parseInt(process.env.DEFENSE_MCP_LOG_MAX_FILES || "", 10) || DEFAULT_MAX_FILES;
+
+    // Ensure log directory exists if file logging is enabled
+    if (this.logFile) {
+      try {
+        const dir = dirname(this.logFile);
+        mkdirSync(dir, { recursive: true });
+      } catch {
+        // Fall back to stderr-only if directory creation fails
+        process.stderr.write(`[logger] WARNING: Cannot create log directory for ${this.logFile}, falling back to stderr-only\n`);
+        this.logFile = null;
+      }
+    }
   }
 
   /**
@@ -80,6 +150,28 @@ export class Logger {
   /** Check whether a message at `level` should be emitted. */
   private shouldLog(level: LogLevel): boolean {
     return LOG_LEVEL_SEVERITY[level] >= LOG_LEVEL_SEVERITY[this.minLevel];
+  }
+
+  /**
+   * Write a log line to the file, with size-based rotation.
+   * This is best-effort — file write failures don't throw.
+   */
+  private writeToFile(line: string): void {
+    if (!this.logFile) return;
+
+    try {
+      // Check if rotation is needed before writing
+      if (existsSync(this.logFile)) {
+        const stats = statSync(this.logFile);
+        if (stats.size >= this.maxFileSize) {
+          rotateLogFile(this.logFile, this.maxFiles);
+        }
+      }
+
+      appendFileSync(this.logFile, line, { encoding: "utf-8" });
+    } catch {
+      // Best-effort — don't crash the server on write failure
+    }
   }
 
   /**
@@ -110,7 +202,11 @@ export class Logger {
     };
 
     // Single-line JSON to stderr — safe for MCP stdio transport
-    process.stderr.write(JSON.stringify(entry) + "\n");
+    const line = JSON.stringify(entry) + "\n";
+    process.stderr.write(line);
+
+    // Also write to file if configured (with rotation)
+    this.writeToFile(line);
   }
 
   /** Log a debug-level message. */

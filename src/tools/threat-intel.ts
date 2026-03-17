@@ -643,6 +643,25 @@ export function registerThreatIntelTools(server: McpServer): void {
               };
             }
 
+
+            // SECURITY: Enforce HTTPS for feed downloads (audit finding #11)
+            try {
+              const parsedUrl = new URL(feed_url);
+              if (parsedUrl.protocol !== "https:") {
+                return {
+                  content: [createErrorContent(
+                    `Feed URL must use HTTPS. Got: '${parsedUrl.protocol}'. ` +
+                    `Insecure HTTP connections are rejected to prevent MITM attacks on threat feeds.`
+                  )],
+                  isError: true,
+                };
+              }
+            } catch {
+              return {
+                content: [createErrorContent(`Invalid feed URL: '${feed_url}'`)],
+                isError: true,
+              };
+            }
             // Ensure feed directory exists
             await runCommand("mkdir", ["-p", FEED_BASE_DIR]);
 
@@ -650,13 +669,13 @@ export function registerThreatIntelTools(server: McpServer): void {
 
             // Try curl first, fall back to wget
             let downloadResult = await runCommand(
-              "curl", ["-sS", "-o", outputPath, "-L", "--max-time", "60", feed_url], 65_000,
+              "curl", ["-sS", "--proto", "=https", "-o", outputPath, "-L", "--max-time", "60", feed_url], 65_000,
             );
 
             if (downloadResult.exitCode !== 0) {
               // Fall back to wget
               downloadResult = await runCommand(
-                "wget", ["-q", "-O", outputPath, feed_url], 65_000,
+                "wget", ["--https-only", "-q", "-O", outputPath, feed_url], 65_000,
               );
             }
 

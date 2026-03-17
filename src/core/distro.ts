@@ -116,7 +116,7 @@ function parseOsRelease(content: string): Record<string, string> {
 }
 
 async function binaryExists(name: string): Promise<boolean> {
-  const result = await executeCommand({ command: "which", args: [name], timeout: 5000 });
+  const result = await executeCommand({ toolName: "_internal", command: "which", args: [name], timeout: 5000 });
   return result.exitCode === 0;
 }
 
@@ -181,8 +181,8 @@ export async function detectDistro(): Promise<DistroInfo> {
   if (process.platform === "darwin") {
     osFamily = "darwin";
     try {
-      const productResult = await executeCommand({ command: "sw_vers", args: ["-productName"], timeout: 5000 });
-      const versionResult = await executeCommand({ command: "sw_vers", args: ["-productVersion"], timeout: 5000 });
+      const productResult = await executeCommand({ toolName: "_internal", command: "sw_vers", args: ["-productName"], timeout: 5000 });
+      const versionResult = await executeCommand({ toolName: "_internal", command: "sw_vers", args: ["-productVersion"], timeout: 5000 });
       if (productResult.exitCode === 0) {
         id = "macos";
         name = productResult.stdout.trim();
@@ -214,7 +214,7 @@ export async function detectDistro(): Promise<DistroInfo> {
   // lsb_release
   if (id === "unknown") {
     try {
-      const result = await executeCommand({ command: "lsb_release", args: ["-a"], timeout: 5000 });
+      const result = await executeCommand({ toolName: "_internal", command: "lsb_release", args: ["-a"], timeout: 5000 });
       if (result.exitCode === 0) {
         for (const line of result.stdout.split("\n")) {
           if (line.startsWith("Distributor ID:")) id = line.split(":")[1]?.trim().toLowerCase() ?? id;
@@ -523,7 +523,7 @@ export async function hasTPM(): Promise<boolean> {
 
 export async function hasSecureBoot(): Promise<boolean> {
   return safeCap(async () => {
-    const r = await executeCommand({ command: "mokutil", args: ["--sb-state"], timeout: 5000 });
+    const r = await executeCommand({ toolName: "_internal", command: "mokutil", args: ["--sb-state"], timeout: 5000 });
     return r.exitCode === 0 && r.stdout.toLowerCase().includes("secureboot enabled");
   });
 }

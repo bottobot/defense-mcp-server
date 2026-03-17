@@ -574,9 +574,10 @@ export function registerSecretsTools(server: McpServer): void {
               };
             }
 
-            const thWhich = await executeCommand({ command: "which", args: ["trufflehog"], timeout: 5000 });
+            const thWhich = await executeCommand({ toolName: "secrets", command: "which", args: ["trufflehog"], timeout: 5000 });
             if (thWhich.exitCode === 0) {
               const result = await executeCommand({
+                toolName: "secrets",
                 command: "trufflehog",
                 args: ["git", `file://${repoPath}`, "--json"],
                 timeout: 300000,
@@ -594,9 +595,10 @@ export function registerSecretsTools(server: McpServer): void {
               };
             }
 
-            const glWhich = await executeCommand({ command: "which", args: ["gitleaks"], timeout: 5000 });
+            const glWhich = await executeCommand({ toolName: "secrets", command: "which", args: ["gitleaks"], timeout: 5000 });
             if (glWhich.exitCode === 0) {
               const result = await executeCommand({
+                toolName: "secrets",
                 command: "gitleaks",
                 args: ["detect", "--source", repoPath, "--report-format", "json", "--report-path", "/dev/stdout"],
                 timeout: 300000,

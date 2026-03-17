@@ -519,6 +519,7 @@ describe("policy-engine", () => {
         command: "sysctl",
         args: ["-n", "net.ipv4.ip_forward"],
         timeout: 30_000,
+        toolName: "_internal",
       });
     });
 

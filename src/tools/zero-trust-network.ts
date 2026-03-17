@@ -81,13 +81,14 @@ export function registerZeroTrustNetworkTools(server: McpServer): void {
             }
 
             // Generate keys
-            const privKeyResult = await executeCommand({ command: "wg", args: ["genkey"], timeout: 5000 });
+            const privKeyResult = await executeCommand({ toolName: "zero_trust", command: "wg", args: ["genkey"], timeout: 5000 });
             if (privKeyResult.exitCode !== 0) {
               return { content: [createErrorContent("WireGuard tools not installed. Install wireguard-tools.")], isError: true };
             }
             const privateKey = privKeyResult.stdout.trim();
 
             const pubKeyResult = await executeCommand({
+              toolName: "zero_trust",
               command: "wg",
               args: ["pubkey"],
               stdin: privateKey,
@@ -122,6 +123,7 @@ ListenPort = ${listenPort}
             }
 
             const writeResult = await executeCommand({
+              toolName: "zero_trust",
               command: "tee",
               args: [configPath],
               stdin: config,
@@ -129,7 +131,7 @@ ListenPort = ${listenPort}
             });
 
             // Set permissions
-            await executeCommand({ command: "chmod", args: ["600", configPath], timeout: 5000 });
+            await executeCommand({ toolName: "zero_trust", command: "chmod", args: ["600", configPath], timeout: 5000 });
 
             const entry = createChangeEntry({
               tool: "zero_trust",
@@ -166,6 +168,7 @@ ListenPort = ${listenPort}
 
             if (peer_action === "list") {
               const result = await executeCommand({
+                toolName: "zero_trust",
                 command: "wg",
                 args: ["show", interfaceName],
                 timeout: 10000,
@@ -195,7 +198,7 @@ ListenPort = ${listenPort}
                 return { content: [formatToolOutput({ dryRun: true, command: `wg ${args.join(" ")}` })] };
               }
 
-              const result = await executeCommand({ command: "wg", args, timeout: 10000 });
+              const result = await executeCommand({ toolName: "zero_trust", command: "wg", args, timeout: 10000 });
 
               const entry = createChangeEntry({
                 tool: "zero_trust",
@@ -217,7 +220,7 @@ ListenPort = ${listenPort}
                 return { content: [formatToolOutput({ dryRun: true, command: `wg ${args.join(" ")}` })] };
               }
 
-              const result = await executeCommand({ command: "wg", args, timeout: 10000 });
+              const result = await executeCommand({ toolName: "zero_trust", command: "wg", args, timeout: 10000 });
               const entry = createChangeEntry({
                 tool: "zero_trust",
                 action: `Remove peer ${publicKey.slice(0, 12)}...`,
@@ -259,10 +262,11 @@ ListenPort = ${listenPort}
             }
 
             // Create output directory
-            await executeCommand({ command: "mkdir", args: ["-p", outputDir], timeout: 5000 });
+            await executeCommand({ toolName: "zero_trust", command: "mkdir", args: ["-p", outputDir], timeout: 5000 });
 
             // Generate CA key and cert
             await executeCommand({
+              toolName: "zero_trust",
               command: "openssl",
               args: ["req", "-x509", "-newkey", "rsa:4096", "-keyout", `${outputDir}/ca.key`,
                 "-out", `${outputDir}/ca.crt`, "-days", String(validDays), "-nodes",
@@ -272,12 +276,14 @@ ListenPort = ${listenPort}
 
             // Generate server key, CSR, and sign with CA
             await executeCommand({
+              toolName: "zero_trust",
               command: "openssl",
               args: ["req", "-newkey", "rsa:4096", "-keyout", `${outputDir}/server.key`,
                 "-out", `${outputDir}/server.csr`, "-nodes", "-subj", `/CN=${serverCN}`],
               timeout: 30000,
             });
             await executeCommand({
+              toolName: "zero_trust",
               command: "openssl",
               args: ["x509", "-req", "-in", `${outputDir}/server.csr`, "-CA", `${outputDir}/ca.crt`,
                 "-CAkey", `${outputDir}/ca.key`, "-CAcreateserial", "-out", `${outputDir}/server.crt`,
@@ -287,12 +293,14 @@ ListenPort = ${listenPort}
 
             // Generate client key, CSR, and sign with CA
             await executeCommand({
+              toolName: "zero_trust",
               command: "openssl",
               args: ["req", "-newkey", "rsa:4096", "-keyout", `${outputDir}/client.key`,
                 "-out", `${outputDir}/client.csr`, "-nodes", "-subj", `/CN=${clientCN}`],
               timeout: 30000,
             });
             await executeCommand({
+              toolName: "zero_trust",
               command: "openssl",
               args: ["x509", "-req", "-in", `${outputDir}/client.csr`, "-CA", `${outputDir}/ca.crt`,
                 "-CAkey", `${outputDir}/ca.key`, "-CAcreateserial", "-out", `${outputDir}/client.crt`,
@@ -301,7 +309,7 @@ ListenPort = ${listenPort}
             });
 
             // Set permissions on keys
-            await executeCommand({ command: "chmod", args: ["600", `${outputDir}/ca.key`, `${outputDir}/server.key`, `${outputDir}/client.key`], timeout: 5000 });
+            await executeCommand({ toolName: "zero_trust", command: "chmod", args: ["600", `${outputDir}/ca.key`, `${outputDir}/server.key`, `${outputDir}/client.key`], timeout: 5000 });
 
             const entry = createChangeEntry({
               tool: "zero_trust",
@@ -389,6 +397,7 @@ ListenPort = ${listenPort}
             for (const rule of rules) {
               // Execute directly with parameterized arrays — no shell string splitting
               const result = await executeCommand({
+                toolName: "zero_trust",
                 command: rule.command,
                 args: rule.args,
                 timeout: 10000,

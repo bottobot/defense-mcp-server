@@ -598,7 +598,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
             // TOOL-009: Use secure-fs instead of direct writeFileSync
             secureWriteFileSync(profilePath, profileContent, "utf-8");
 
-            const result = await executeCommand({ command: "apparmor_parser", args: ["-r", profilePath], timeout: 15000 });
+            const result = await executeCommand({ toolName: "container_docker", command: "apparmor_parser", args: ["-r", profilePath], timeout: 15000 });
 
             logChange(createChangeEntry({ tool: "container_isolation", action: `Create AppArmor profile ${profileName}`, target: profilePath, dryRun: false, success: result.exitCode === 0, rollbackCommand: `apparmor_parser -R ${profilePath} && rm ${profilePath}` }));
 
@@ -788,13 +788,13 @@ export function registerContainerSecurityTools(server: McpServer): void {
             const safety = await SafeguardRegistry.getInstance().checkSafety("setup_rootless_containers", { username });
             const checks: Record<string, unknown> = {};
 
-            const newuidmap = await executeCommand({ command: "which", args: ["newuidmap"], timeout: 5000 });
+            const newuidmap = await executeCommand({ toolName: "container_docker", command: "which", args: ["newuidmap"], timeout: 5000 });
             checks.newuidmap = newuidmap.exitCode === 0;
-            const newgidmap = await executeCommand({ command: "which", args: ["newgidmap"], timeout: 5000 });
+            const newgidmap = await executeCommand({ toolName: "container_docker", command: "which", args: ["newgidmap"], timeout: 5000 });
             checks.newgidmap = newgidmap.exitCode === 0;
-            const ns = await executeCommand({ command: "sysctl", args: ["-n", "kernel.unprivileged_userns_clone"], timeout: 5000 });
+            const ns = await executeCommand({ toolName: "container_docker", command: "sysctl", args: ["-n", "kernel.unprivileged_userns_clone"], timeout: 5000 });
             checks.userNamespacesEnabled = ns.exitCode === 0 && ns.stdout.trim() === "1";
-            const subuidCheck = await executeCommand({ command: "grep", args: [username, "/etc/subuid"], timeout: 5000 });
+            const subuidCheck = await executeCommand({ toolName: "container_docker", command: "grep", args: [username, "/etc/subuid"], timeout: 5000 });
             checks.subuidConfigured = subuidCheck.exitCode === 0;
 
             if (dryRun) {
@@ -803,11 +803,11 @@ export function registerContainerSecurityTools(server: McpServer): void {
 
             const results: { step: string; success: boolean; output: string }[] = [];
             if (!checks.subuidConfigured) {
-              const r = await executeCommand({ command: "usermod", args: ["--add-subuids", `100000-${100000 + subuidCount - 1}`, "--add-subgids", `100000-${100000 + subuidCount - 1}`, username], timeout: 10000 });
+              const r = await executeCommand({ toolName: "container_docker", command: "usermod", args: ["--add-subuids", `100000-${100000 + subuidCount - 1}`, "--add-subgids", `100000-${100000 + subuidCount - 1}`, username], timeout: 10000 });
               results.push({ step: "Configure subuid/subgid", success: r.exitCode === 0, output: r.stderr || r.stdout });
             }
             if (!checks.userNamespacesEnabled) {
-              const r = await executeCommand({ command: "sysctl", args: ["-w", "kernel.unprivileged_userns_clone=1"], timeout: 10000 });
+              const r = await executeCommand({ toolName: "container_docker", command: "sysctl", args: ["-w", "kernel.unprivileged_userns_clone=1"], timeout: 10000 });
               results.push({ step: "Enable user namespaces", success: r.exitCode === 0, output: r.stdout });
             }
 

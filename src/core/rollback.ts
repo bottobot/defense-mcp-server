@@ -285,6 +285,7 @@ export class RollbackManager {
             throw new Error(`[rollback] Invalid sysctl value (contains shell metacharacters): ${record.originalValue}`);
           }
           await executeCommand({
+            toolName: "_internal",
             command: "sysctl",
             args: ["-w", `${record.target}=${record.originalValue}`],
             timeout: 10000,
@@ -300,6 +301,7 @@ export class RollbackManager {
           // originalValue is the previous state (e.g., "active", "inactive")
           const action = record.originalValue === "active" ? "start" : "stop";
           await executeCommand({
+            toolName: "_internal",
             command: "systemctl",
             args: [action, record.target],
             timeout: 30000,
@@ -324,6 +326,7 @@ export class RollbackManager {
               validateRollbackArg(args[i], i, "Firewall rollback");
             }
             await executeCommand({
+              toolName: "_internal",
               command,
               args,
               timeout: 10000,
@@ -349,6 +352,7 @@ export class RollbackManager {
               validateRollbackArg(args[i], i, "Firewall rollback (legacy)");
             }
             await executeCommand({
+              toolName: "_internal",
               command,
               args,
               timeout: 10000,

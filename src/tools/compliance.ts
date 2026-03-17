@@ -49,6 +49,7 @@ async function runCisCheck(
 ): Promise<CisCheckResult> {
   try {
     const result = await executeCommand({
+      toolName: "compliance",
       command,
       args,
       timeout: 30_000,
@@ -93,9 +94,11 @@ async function cisFilesystemChecks(level: string): Promise<CisCheckResult[]> {
   // CIS 1.1.4 - /tmp has noexec (check mount output AND fstab)
   {
     const mountCheck = await executeCommand({
+      toolName: "compliance",
       command: "findmnt", args: ["-n", "-o", "OPTIONS", "/tmp"], timeout: 10_000,
     });
     const fstabCheck = await executeCommand({
+      toolName: "compliance",
       command: "sudo", args: ["grep", "-E", "^[^#].*\\s/tmp\\s.*noexec", "/etc/fstab"], timeout: 10_000,
     });
     const mountHasNoexec = /noexec/.test(mountCheck.stdout.trim());
@@ -129,6 +132,7 @@ async function cisFilesystemChecks(level: string): Promise<CisCheckResult[]> {
   // CIS 1.1.22 - Automounting disabled (autofs should NOT be active)
   {
     const autofs = await executeCommand({
+      toolName: "compliance",
       command: "systemctl",
       args: ["is-active", "autofs"],
       timeout: 10_000,
@@ -147,6 +151,7 @@ async function cisFilesystemChecks(level: string): Promise<CisCheckResult[]> {
   // CIS 1.5.1 - Core dump limits (hard core 0 in limits.conf or limits.d/)
   {
     const limitsCheck = await executeCommand({
+      toolName: "compliance",
       command: "sudo",
       args: ["grep", "-rE", "\\*\\s+hard\\s+core\\s+0", "/etc/security/limits.conf", "/etc/security/limits.d/"],
       timeout: 10_000,
@@ -173,6 +178,7 @@ async function cisServicesChecks(level: string): Promise<CisCheckResult[]> {
 
   for (const svc of unnecessaryServices) {
     const result = await executeCommand({
+      toolName: "compliance",
       command: "systemctl",
       args: ["is-active", svc],
       timeout: 10_000,
@@ -190,11 +196,13 @@ async function cisServicesChecks(level: string): Promise<CisCheckResult[]> {
   // CIS 2.2.1 - NTP/Chrony time synchronization is active
   {
     const chronyd = await executeCommand({
+      toolName: "compliance",
       command: "systemctl",
       args: ["is-active", "chronyd"],
       timeout: 10_000,
     });
     const ntpSvc = await executeCommand({
+      toolName: "compliance",
       command: "systemctl",
       args: ["is-active", "ntp"],
       timeout: 10_000,
@@ -299,6 +307,7 @@ async function cisAccessChecks(level: string): Promise<CisCheckResult[]> {
     let sshDetail = "Protocol 2 is enforced by default in OpenSSH 7.6+; directive deprecated";
     try {
       const sshVersionResult = await executeCommand({
+        toolName: "compliance",
         command: "ssh",
         args: ["-V"],
         timeout: 10_000,
@@ -315,6 +324,7 @@ async function cisAccessChecks(level: string): Promise<CisCheckResult[]> {
         } else {
           // Old OpenSSH — need the explicit directive
           const protoCheck = await executeCommand({
+            toolName: "compliance",
             command: "grep",
             args: ["-i", "^Protocol", "/etc/ssh/sshd_config"],
             timeout: 10_000,
@@ -374,6 +384,7 @@ async function cisAccessChecks(level: string): Promise<CisCheckResult[]> {
   // Check login.defs, /etc/profile, and /etc/bash.bashrc for umask 027 or 077
   {
     const umaskCheck = await executeCommand({
+      toolName: "compliance",
       command: "sudo",
       args: ["grep", "-rEh", "(^UMASK\\s+0[2-7]7|^umask\\s+0[2-7]7)", "/etc/login.defs", "/etc/profile", "/etc/bash.bashrc"],
       timeout: 10_000,
@@ -393,6 +404,7 @@ async function cisAccessChecks(level: string): Promise<CisCheckResult[]> {
   // CIS 5.1.8 - /etc/cron.allow exists
   {
     const cronCheck = await executeCommand({
+      toolName: "compliance",
       command: "sudo", args: ["test", "-f", "/etc/cron.allow"], timeout: 10_000,
     });
     results.push({
@@ -407,6 +419,7 @@ async function cisAccessChecks(level: string): Promise<CisCheckResult[]> {
   // CIS 5.1.9 - /etc/at.allow exists
   {
     const atCheck = await executeCommand({
+      toolName: "compliance",
       command: "sudo", args: ["test", "-f", "/etc/at.allow"], timeout: 10_000,
     });
     results.push({
@@ -439,6 +452,7 @@ async function cisSystemChecks(level: string): Promise<CisCheckResult[]> {
 
   // Check for login banner
   const bannerResult = await executeCommand({
+    toolName: "compliance",
     command: "cat",
     args: ["/etc/issue"],
     timeout: 10_000,
@@ -667,6 +681,7 @@ export function registerComplianceTools(server: McpServer): void {
 
               for (const candidate of candidates) {
                 const checkResult = await executeCommand({
+                  toolName: "compliance",
                   command: "test",
                   args: ["-f", candidate],
                   timeout: 5_000,
@@ -815,13 +830,13 @@ export function registerComplianceTools(server: McpServer): void {
             }
 
             async function runSysctlCheckLocal(key: string, expected: string): Promise<{ passed: boolean; detail: string }> {
-              const r = await executeCommand({ command: "sysctl", args: ["-n", key], timeout: 5000 });
+              const r = await executeCommand({ toolName: "compliance", command: "sysctl", args: ["-n", key], timeout: 5000 });
               const actual = r.stdout.trim();
               return { passed: actual === expected, detail: `${key} = ${actual} (expected: ${expected})` };
             }
 
             async function serviceInactiveLocal(svc: string): Promise<{ passed: boolean; detail: string }> {
-              const r = await executeCommand({ command: "systemctl", args: ["is-active", svc], timeout: 5000 });
+              const r = await executeCommand({ toolName: "compliance", command: "systemctl", args: ["is-active", svc], timeout: 5000 });
               const active = r.stdout.trim() === "active";
               return { passed: !active, detail: `${svc}: ${r.stdout.trim()}` };
             }
@@ -839,7 +854,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             function getFrameworkChecks(fw: Framework): ComplianceCheckItem[] {
               const commonChecks: ComplianceCheckItem[] = [
-                { id: "AUTH-001", description: "Ensure no empty passwords in /etc/shadow", check: async () => { const r = await executeCommand({ command: "awk", args: ["-F:", '($2 == "" ) { print $1 }', "/etc/shadow"], timeout: 5000 }); return { passed: r.stdout.trim().length === 0, detail: r.stdout.trim() || "No empty passwords" }; } },
+                { id: "AUTH-001", description: "Ensure no empty passwords in /etc/shadow", check: async () => { const r = await executeCommand({ toolName: "compliance", command: "awk", args: ["-F:", '($2 == "" ) { print $1 }', "/etc/shadow"], timeout: 5000 }); return { passed: r.stdout.trim().length === 0, detail: r.stdout.trim() || "No empty passwords" }; } },
                 { id: "NET-001", description: "IP forwarding disabled", check: async () => runSysctlCheckLocal("net.ipv4.ip_forward", "0") },
                 { id: "NET-002", description: "SYN cookies enabled", check: async () => runSysctlCheckLocal("net.ipv4.tcp_syncookies", "1") },
                 { id: "KERN-001", description: "ASLR fully enabled", check: async () => runSysctlCheckLocal("kernel.randomize_va_space", "2") },
@@ -852,20 +867,20 @@ export function registerComplianceTools(server: McpServer): void {
 
               const frameworkSpecific: Record<Framework, ComplianceCheckItem[]> = {
                 "pci-dss-v4": [
-                  { id: "PCI-1.1", description: "Firewall rules present", check: async () => { const r = await executeCommand({ command: "iptables", args: ["-L", "-n"], timeout: 10000 }); const hasRules = r.stdout.split("\n").length > 8; return { passed: hasRules, detail: `${r.stdout.split("\n").length} iptables lines` }; } },
+                  { id: "PCI-1.1", description: "Firewall rules present", check: async () => { const r = await executeCommand({ toolName: "compliance", command: "iptables", args: ["-L", "-n"], timeout: 10000 }); const hasRules = r.stdout.split("\n").length > 8; return { passed: hasRules, detail: `${r.stdout.split("\n").length} iptables lines` }; } },
                   { id: "PCI-8.2", description: "Password minimum length configured", check: async () => { try { const content = readFileSync("/etc/security/pwquality.conf", "utf-8"); const match = content.match(/minlen\s*=\s*(\d+)/); const len = match ? parseInt(match[1]) : 0; return { passed: len >= 12, detail: `minlen = ${len} (required: ≥12)` }; } catch { return { passed: false, detail: "pwquality.conf not found" }; } } },
                 ],
                 hipaa: [
-                  { id: "HIPAA-164.312a", description: "Audit logging enabled (auditd)", check: async () => { const r = await executeCommand({ command: "systemctl", args: ["is-active", "auditd"], timeout: 5000 }); return { passed: r.stdout.trim() === "active", detail: `auditd: ${r.stdout.trim()}` }; } },
+                  { id: "HIPAA-164.312a", description: "Audit logging enabled (auditd)", check: async () => { const r = await executeCommand({ toolName: "compliance", command: "systemctl", args: ["is-active", "auditd"], timeout: 5000 }); return { passed: r.stdout.trim() === "active", detail: `auditd: ${r.stdout.trim()}` }; } },
                 ],
                 soc2: [
-                  { id: "SOC2-CC6.1", description: "System monitoring enabled", check: async () => { const r = await executeCommand({ command: "systemctl", args: ["is-active", "auditd"], timeout: 5000 }); return { passed: r.stdout.trim() === "active", detail: `auditd: ${r.stdout.trim()}` }; } },
+                  { id: "SOC2-CC6.1", description: "System monitoring enabled", check: async () => { const r = await executeCommand({ toolName: "compliance", command: "systemctl", args: ["is-active", "auditd"], timeout: 5000 }); return { passed: r.stdout.trim() === "active", detail: `auditd: ${r.stdout.trim()}` }; } },
                 ],
                 iso27001: [
-                  { id: "ISO-A.12.4.1", description: "Event logging active", check: async () => { const rsyslog = await executeCommand({ command: "systemctl", args: ["is-active", "rsyslog"], timeout: 5000 }); const journald = await executeCommand({ command: "systemctl", args: ["is-active", "systemd-journald"], timeout: 5000 }); const active = rsyslog.stdout.trim() === "active" || journald.stdout.trim() === "active"; return { passed: active, detail: `rsyslog: ${rsyslog.stdout.trim()}, journald: ${journald.stdout.trim()}` }; } },
+                  { id: "ISO-A.12.4.1", description: "Event logging active", check: async () => { const rsyslog = await executeCommand({ toolName: "compliance", command: "systemctl", args: ["is-active", "rsyslog"], timeout: 5000 }); const journald = await executeCommand({ toolName: "compliance", command: "systemctl", args: ["is-active", "systemd-journald"], timeout: 5000 }); const active = rsyslog.stdout.trim() === "active" || journald.stdout.trim() === "active"; return { passed: active, detail: `rsyslog: ${rsyslog.stdout.trim()}, journald: ${journald.stdout.trim()}` }; } },
                 ],
                 gdpr: [
-                  { id: "GDPR-Art32", description: "Encryption capabilities available", check: async () => { const r = await executeCommand({ command: "which", args: ["openssl"], timeout: 5000 }); return { passed: r.exitCode === 0, detail: r.exitCode === 0 ? "openssl available" : "openssl not found" }; } },
+                  { id: "GDPR-Art32", description: "Encryption capabilities available", check: async () => { const r = await executeCommand({ toolName: "compliance", command: "which", args: ["openssl"], timeout: 5000 }); return { passed: r.exitCode === 0, detail: r.exitCode === 0 ? "openssl available" : "openssl not found" }; } },
                 ],
               };
 
@@ -1183,6 +1198,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Create /etc/cron.allow
             await executeCommand({
+              toolName: "compliance",
               command: "sudo",
               args: ["tee", "/etc/cron.allow"],
               stdin: allowed_users.join("\n") + "\n",
@@ -1192,6 +1208,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Create /etc/at.allow
             await executeCommand({
+              toolName: "compliance",
               command: "sudo",
               args: ["tee", "/etc/at.allow"],
               stdin: allowed_users.join("\n") + "\n",
@@ -1201,6 +1218,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Set permissions
             await executeCommand({
+              toolName: "compliance",
               command: "sudo",
               args: ["chmod", "600", "/etc/cron.allow", "/etc/at.allow"],
               timeout: 10_000,
@@ -1209,6 +1227,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Set ownership
             await executeCommand({
+              toolName: "compliance",
               command: "sudo",
               args: ["chown", "root:root", "/etc/cron.allow", "/etc/at.allow"],
               timeout: 10_000,
@@ -1217,12 +1236,14 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Remove deny files if they exist
             const cronDenyExists = await executeCommand({
+              toolName: "compliance",
               command: "test",
               args: ["-f", "/etc/cron.deny"],
               timeout: 5_000,
             });
             if (cronDenyExists.exitCode === 0) {
               await executeCommand({
+                toolName: "compliance",
                 command: "sudo",
                 args: ["rm", "-f", "/etc/cron.deny"],
                 timeout: 10_000,
@@ -1231,12 +1252,14 @@ export function registerComplianceTools(server: McpServer): void {
             }
 
             const atDenyExists = await executeCommand({
+              toolName: "compliance",
               command: "test",
               args: ["-f", "/etc/at.deny"],
               timeout: 5_000,
             });
             if (atDenyExists.exitCode === 0) {
               await executeCommand({
+                toolName: "compliance",
                 command: "sudo",
                 args: ["rm", "-f", "/etc/at.deny"],
                 timeout: 10_000,
@@ -1278,6 +1301,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             for (const f of files) {
               const existCheck = await executeCommand({
+                toolName: "compliance",
                 command: "test",
                 args: ["-f", f],
                 timeout: 5_000,
@@ -1285,6 +1309,7 @@ export function registerComplianceTools(server: McpServer): void {
               let contents = "";
               if (existCheck.exitCode === 0) {
                 const catResult = await executeCommand({
+                  toolName: "compliance",
                   command: "sudo",
                   args: ["cat", f],
                   timeout: 5_000,
@@ -1316,6 +1341,7 @@ export function registerComplianceTools(server: McpServer): void {
           try {
             // Check current mount options for /tmp
             const mountResult = await executeCommand({
+              toolName: "compliance",
               command: "findmnt",
               args: ["-n", "-o", "SOURCE,TARGET,FSTYPE,OPTIONS", "/tmp"],
               timeout: 10_000,
@@ -1323,6 +1349,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Check /etc/fstab for /tmp entry
             const fstabResult = await executeCommand({
+              toolName: "compliance",
               command: "grep",
               args: ["/tmp", "/etc/fstab"],
               timeout: 10_000,
@@ -1375,6 +1402,7 @@ export function registerComplianceTools(server: McpServer): void {
             if (dry_run) {
               // Check if /tmp line exists in fstab
               const fstabCheck = await executeCommand({
+                toolName: "compliance",
                 command: "grep",
                 args: ["-c", "/tmp", "/etc/fstab"],
                 timeout: 5_000,
@@ -1398,6 +1426,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Backup /etc/fstab
             await executeCommand({
+              toolName: "compliance",
               command: "sudo",
               args: ["cp", "-p", "/etc/fstab", "/etc/fstab.bak.compliance"],
               timeout: 10_000,
@@ -1406,6 +1435,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Check if /tmp line exists in fstab
             const fstabCheck = await executeCommand({
+              toolName: "compliance",
               command: "grep",
               args: ["-c", "/tmp", "/etc/fstab"],
               timeout: 5_000,
@@ -1415,6 +1445,7 @@ export function registerComplianceTools(server: McpServer): void {
             if (hasFstabEntry) {
               // Update existing /tmp entry — replace its options
               await executeCommand({
+                toolName: "compliance",
                 command: "sudo",
                 args: [
                   "sed", "-i",
@@ -1428,6 +1459,7 @@ export function registerComplianceTools(server: McpServer): void {
               // Add new /tmp line
               const fstabLine = `tmpfs /tmp tmpfs defaults,${mount_options} 0 0`;
               await executeCommand({
+                toolName: "compliance",
                 command: "sudo",
                 args: ["tee", "-a", "/etc/fstab"],
                 stdin: fstabLine + "\n",
@@ -1438,6 +1470,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Remount /tmp
             const remountResult = await executeCommand({
+              toolName: "compliance",
               command: "sudo",
               args: ["mount", "-o", "remount", "/tmp"],
               timeout: 15_000,
@@ -1451,6 +1484,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             // Verify
             const verifyResult = await executeCommand({
+              toolName: "compliance",
               command: "findmnt",
               args: ["-n", "-o", "OPTIONS", "/tmp"],
               timeout: 10_000,

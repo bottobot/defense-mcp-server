@@ -1063,6 +1063,7 @@ export async function checkTool(
   // Try to get version
   let version: string | undefined;
   const versionResult = await executeCommand({
+    toolName: "_internal",
     command: binary,
     args: ["--version"],
     timeout: 5000,
@@ -1074,6 +1075,7 @@ export async function checkTool(
   } else {
     // Some tools use -v or -V instead
     const altResult = await executeCommand({
+      toolName: "_internal",
       command: binary,
       args: ["-V"],
       timeout: 5000,
@@ -1152,6 +1154,7 @@ export async function installTool(
   // Run package manager update first
   const updateCmd = getUpdateCommand(pkgManager);
   await executeCommand({
+    toolName: "_internal",
     command: updateCmd[0],
     args: updateCmd.slice(1),
     timeout: 120_000,
@@ -1160,6 +1163,7 @@ export async function installTool(
   // Install the package
   const installCmd = getInstallCommand(pkgManager, pkgName);
   const result = await executeCommand({
+    toolName: "_internal",
     command: installCmd[0],
     args: installCmd.slice(1),
     timeout: 300_000,

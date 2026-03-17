@@ -87,6 +87,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
             // List BPF filesystem
             if (existsSync("/sys/fs/bpf")) {
               const ls = await executeCommand({
+                toolName: "ebpf_security",
                 command: "ls",
                 args: ["-la", "/sys/fs/bpf"],
                 timeout: 5000,
@@ -98,6 +99,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
 
             // Try bpftool
             const bpftool = await executeCommand({
+              toolName: "ebpf_security",
               command: "bpftool",
               args: ["prog", "list", "--json"],
               timeout: 10000,
@@ -112,6 +114,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
             } else {
               // Fallback to non-JSON
               const fallback = await executeCommand({
+                toolName: "ebpf_security",
                 command: "bpftool",
                 args: ["prog", "list"],
                 timeout: 10000,
@@ -123,6 +126,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
 
             // List maps
             const maps = await executeCommand({
+              toolName: "ebpf_security",
               command: "bpftool",
               args: ["map", "list", "--json"],
               timeout: 10000,
@@ -147,7 +151,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
             const info: Record<string, unknown> = {};
 
             // Check if falco is installed
-            const which = await executeCommand({ command: "which", args: ["falco"], timeout: 5000 });
+            const which = await executeCommand({ toolName: "ebpf_security", command: "which", args: ["falco"], timeout: 5000 });
             info.installed = which.exitCode === 0;
 
             if (!info.installed) {
@@ -160,11 +164,12 @@ export function registerEbpfSecurityTools(server: McpServer): void {
             }
 
             // Version
-            const version = await executeCommand({ command: "falco", args: ["--version"], timeout: 5000 });
+            const version = await executeCommand({ toolName: "ebpf_security", command: "falco", args: ["--version"], timeout: 5000 });
             info.version = version.stdout.trim();
 
             // Service status
             const status = await executeCommand({
+              toolName: "ebpf_security",
               command: "systemctl",
               args: ["status", "falco", "--no-pager"],
               timeout: 10000,
@@ -179,7 +184,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
 
             // Check custom rules
             if (existsSync("/etc/falco/rules.d")) {
-              const ls = await executeCommand({ command: "ls", args: ["/etc/falco/rules.d"], timeout: 5000 });
+              const ls = await executeCommand({ toolName: "ebpf_security", command: "ls", args: ["/etc/falco/rules.d"], timeout: 5000 });
               info.customRules = ls.stdout.trim().split("\n").filter(Boolean);
             }
 
@@ -226,6 +231,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
 
             // Validate rules
             const validate = await executeCommand({
+              toolName: "ebpf_security",
               command: "falco",
               args: ["--validate", rulePath],
               timeout: 15000,
@@ -276,6 +282,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
             if (!logPath) {
               // Try journalctl
               const journalResult = await executeCommand({
+                toolName: "ebpf_security",
                 command: "journalctl",
                 args: ["-u", "falco", "--no-pager", "-n", String(lines), "-o", "json"],
                 timeout: 10000,
@@ -292,6 +299,7 @@ export function registerEbpfSecurityTools(server: McpServer): void {
             }
 
             const result = await executeCommand({
+              toolName: "ebpf_security",
               command: "tail",
               args: ["-n", String(lines), logPath],
               timeout: 10000,

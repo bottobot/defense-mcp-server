@@ -15,7 +15,7 @@
 3. [Component Specifications](#3-component-specifications)
 4. [MCP Tool API](#4-mcp-tool-api)
 5. [Sudoers Hardening Plan](#5-sudoers-hardening-plan)
-6. [Docker Changes](#6-docker-changes)
+6. [Docker Deployment (Removed)](#6-docker-deployment-removed)
 7. [Security Analysis and Threat Model](#7-security-analysis-and-threat-model)
 8. [Implementation Checklist](#8-implementation-checklist)
 
@@ -25,7 +25,7 @@
 
 ### 1.1 The Critical Finding
 
-The Dockerfile currently configures a blanket passwordless sudo grant:
+The project previously configured (via Dockerfile, now removed) a blanket passwordless sudo grant:
 
 ```dockerfile
 # Dockerfile line 50 — CRITICAL SECURITY FINDING
@@ -53,13 +53,13 @@ Reading the codebase reveals that the **in-process credential management infrast
 2. No rate limiting is wired into `sudo_elevate` for failed authentication attempts.
 3. No audit trail is emitted to the structured logger for elevation events.
 4. The `mcpuser` account has no real password — there is nothing to authenticate against.
-5. No Docker entrypoint mechanism exists to set a real password at container startup.
+5. ~~No Docker entrypoint mechanism exists to set a real password at container startup.~~ (Docker deployment removed in v0.7.3)
 
 ### 1.3 Scope of This Design
 
 This document designs:
 - **Sudoers replacement**: Remove `NOPASSWD: ALL`; install a scoped allowlist of specific commands that mcpuser may run with sudo (password required)
-- **Docker entrypoint**: Mechanism to set the mcpuser password at container startup from a Docker secret or env var, so `sudo -S -k -v` actually validates credentials
+- ~~**Docker entrypoint**: Mechanism to set the mcpuser password at container startup from a Docker secret or env var~~ (removed in v0.7.3 — native-only deployment)
 - **Rate limiting**: Wire the existing `RateLimiter` into `sudo_elevate` to cap failed auth attempts
 - **Audit trail**: Emit structured log events for all elevation/drop/expiry events
 - **MCP tool enhancements**: Minor additions to existing tools
@@ -705,258 +705,16 @@ The following commands are commonly misused and must **not** appear in the allow
 
 ---
 
-## 6. Docker Changes
+## 6. Docker Deployment (Removed)
 
-### 6.1 Problem: mcpuser Has No Password
-
-In the current Dockerfile, `useradd` creates `mcpuser` without a password:
-```dockerfile
-useradd --uid 1001 --gid mcpuser --shell /bin/bash --create-home mcpuser
-```
-
-The account has a locked password (`!` in `/etc/shadow`). `sudo -S -k -v` with any password will fail (exit 1) because the PAM stack rejects locked accounts by default.
-
-Once NOPASSWD is removed, we need `mcpuser` to have a real password that `sudo` can validate via PAM.
-
-### 6.2 Solution: Runtime Password Injection via Entrypoint
-
-The password must **not** be baked into the Docker image (it would be visible in `docker inspect`, image layers, and any registry push). Instead, inject it at container startup via:
-
-**Option A (Recommended): Docker Secret**
-```bash
-docker run --secret mcpuser-password defense-mcp-server
-```
-The secret is mounted at `/run/secrets/mcpuser-password` (mode `0400`, owner `root`).
-
-**Option B (Acceptable): Environment Variable**
-```bash
-docker run -e MCPUSER_PASSWORD='...' defense-mcp-server
-```
-Less secure (visible in `docker inspect`, `/proc/<pid>/environ`) but acceptable for development/CI.
-
-### 6.3 New: `docker-entrypoint.sh`
-
-Create `docker-entrypoint.sh` in the repository root:
-
-```bash
-#!/bin/bash
-# docker-entrypoint.sh
-# Runs as root at container startup.
-# Sets mcpuser password from Docker secret or env var, then drops to mcpuser.
-#
-# Security properties:
-# - Password is read from /run/secrets/mcpuser-password (preferred) or MCPUSER_PASSWORD env
-# - Password is passed to chpasswd via stdin (not command-line arguments)
-# - MCPUSER_PASSWORD env var is unset after use to prevent exposure in /proc
-# - If no password source is available, falls back to a random password and warns
-#   (tools requiring sudo will fail until sudo_elevate is called with the correct credentials)
-
-set -euo pipefail
-
-# ── 1. Determine password source ─────────────────────────────────────────────
-MCPUSER_PW=""
-
-if [ -f /run/secrets/mcpuser-password ]; then
-    # Docker secret — preferred, most secure
-    MCPUSER_PW=$(cat /run/secrets/mcpuser-password)
-    echo "[entrypoint] Using Docker secret for mcpuser password" >&2
-
-elif [ -n "${MCPUSER_PASSWORD:-}" ]; then
-    # Environment variable — acceptable for dev/CI
-    MCPUSER_PW="$MCPUSER_PASSWORD"
-    echo "[entrypoint] Using MCPUSER_PASSWORD environment variable" >&2
-    echo "[entrypoint] WARNING: env-var password is visible in 'docker inspect'" >&2
-    echo "[entrypoint] WARNING: Use Docker secrets in production" >&2
-
-else
-    # No password source — generate random password (sudo will always fail)
-    # The server still starts; tools without sudo work fine
-    MCPUSER_PW=$(tr -dc 'A-Za-z0-9!@#$%^&*' < /dev/urandom | head -c 32)
-    echo "[entrypoint] WARNING: No password source found (no secret, no MCPUSER_PASSWORD)" >&2
-    echo "[entrypoint] WARNING: mcpuser has a random password. sudo_elevate will always fail." >&2
-    echo "[entrypoint] WARNING: Pass password via: docker run --secret mcpuser-password" >&2
-fi
-
-# ── 2. Set the mcpuser password ───────────────────────────────────────────────
-if [ -n "$MCPUSER_PW" ]; then
-    echo "mcpuser:${MCPUSER_PW}" | chpasswd
-    echo "[entrypoint] mcpuser password set successfully" >&2
-fi
-
-# ── 3. Zero the password from this process's memory (best-effort) ─────────────
-unset MCPUSER_PASSWORD
-unset MCPUSER_PW
-
-# ── 4. Drop to mcpuser and exec the MCP server ───────────────────────────────
-# Use exec to replace this root shell with the Node.js process
-# su-exec is preferred (single binary, no shell escape surface)
-# Fall back to gosu if su-exec is not available
-if command -v su-exec >/dev/null 2>&1; then
-    exec su-exec mcpuser node /app/build/index.js "$@"
-elif command -v gosu >/dev/null 2>&1; then
-    exec gosu mcpuser node /app/build/index.js "$@"
-else
-    # Fallback: setpriv (part of util-linux, available in Debian)
-    exec setpriv --reuid=1001 --regid=1001 --init-groups node /app/build/index.js "$@"
-fi
-```
-
-### 6.4 Dockerfile Changes
-
-```dockerfile
-# Defense MCP Server — Docker Image
-FROM node:22-slim
-
-LABEL org.opencontainers.image.title="defense-mcp-server"
-LABEL org.opencontainers.image.description="Defensive security MCP server — 94 tools for system hardening"
-LABEL org.opencontainers.image.version="0.7.0"
-LABEL org.opencontainers.image.licenses="MIT"
-
-# Install Linux security tools + su-exec for safe privilege drop
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core utilities
-    sudo \
-    procps \
-    iproute2 \
-    net-tools \
-    iputils-ping \
-    # Privilege drop helper
-    # NOTE: su-exec is preferred. If unavailable, gosu is a fallback.
-    # Install via: curl + verify signature, or build from source
-    # For now, use setpriv (already in util-linux which is standard):
-    util-linux \
-    # Firewall
-    iptables \
-    nftables \
-    ufw \
-    # Intrusion detection
-    rkhunter \
-    chkrootkit \
-    aide \
-    # Malware scanning
-    clamav \
-    clamav-daemon \
-    # Audit
-    auditd \
-    audispd-plugins \
-    lynis \
-    # System hardening
-    fail2ban \
-    # SSH
-    openssh-client \
-    # Network tools
-    nmap \
-    tcpdump \
-    # File tools
-    debsums \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user for the server process
-# NOTE: No NOPASSWD sudo — real password set at runtime via entrypoint
-RUN groupadd --gid 1001 mcpuser && \
-    useradd --uid 1001 --gid mcpuser --shell /bin/bash --create-home mcpuser
-
-# Install scoped sudoers allowlist (password required for all commands)
-COPY etc/sudoers.d/mcpuser /etc/sudoers.d/mcpuser
-RUN chmod 0440 /etc/sudoers.d/mcpuser && \
-    chown root:root /etc/sudoers.d/mcpuser && \
-    visudo -c -f /etc/sudoers.d/mcpuser
-
-# Disable OS-level sudo credential caching
-# (SudoSession manages its own in-memory TTL)
-RUN echo 'Defaults timestamp_timeout=0' > /etc/sudoers.d/99-timestamp-zero && \
-    echo 'Defaults log_output'         >> /etc/sudoers.d/99-timestamp-zero && \
-    chmod 0440 /etc/sudoers.d/99-timestamp-zero
-
-WORKDIR /app
-
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
-
-COPY build/ ./build/
-COPY README.md CHANGELOG.md LICENSE ./
-COPY docs/TOOLS-REFERENCE.md docs/SAFEGUARDS.md ./docs/
-
-RUN chown -R mcpuser:mcpuser /app
-
-# Copy and configure entrypoint (runs as root to set password, then drops)
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh && \
-    chown root:root /usr/local/bin/docker-entrypoint.sh
-
-# NOTE: Do NOT set USER mcpuser here — entrypoint runs as root to set password
-# The entrypoint uses su-exec/setpriv to drop to mcpuser
-
-ENV NODE_ENV=production
-ENV DEFENSE_MCP_DRY_RUN=false
-ENV DEFENSE_MCP_AUTO_INSTALL=false
-ENV DEFENSE_MCP_PREFLIGHT=true
-
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD node -e "require('./build/index.js')" 2>/dev/null || exit 1
-
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-```
-
-### 6.5 Running the Container
-
-**With Docker Secrets (Recommended for Production):**
-```bash
-# Create the secret
-echo "MySecurePassword123!" | docker secret create mcpuser-password -
-
-# Docker Swarm deployment
-docker service create \
-  --name defense-mcp \
-  --secret mcpuser-password \
-  defense-mcp-server
-
-# docker-compose with secrets
-# docker-compose.yml:
-services:
-  defense-mcp:
-    image: defense-mcp-server
-    secrets:
-      - mcpuser-password
-secrets:
-  mcpuser-password:
-    external: true
-```
-
-**With Environment Variable (Development/CI):**
-```bash
-docker run \
-  -e MCPUSER_PASSWORD='MySecurePassword123!' \
-  defense-mcp-server
-```
-
-**MCP client config (Claude Desktop / Roo) — no password in config:**
-```json
-{
-  "mcpServers": {
-    "defense-mcp": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i",
-               "--secret", "mcpuser-password",
-               "defense-mcp-server"]
-    }
-  }
-}
-```
-
-### 6.6 Directory Structure for New Files
-
-```
-defense-mcp-server/
-├── docker-entrypoint.sh          ← NEW: runtime password injection
-├── etc/
-│   └── sudoers.d/
-│       └── mcpuser               ← NEW: scoped allowlist (replaces NOPASSWD)
-├── Dockerfile                    ← MODIFIED: entrypoint, no NOPASSWD, USER dropped
-```
+> **Status**: Removed as of v0.7.3
+>
+> Docker deployment is no longer supported. The defense-mcp-server runs
+> exclusively as a native Node.js process installed via npm. The sudo
+> session architecture, sudoers hardening, and privilege management
+> described in Sections 1–5 apply to native Linux installations.
 
 ---
-
 ## 7. Security Analysis and Threat Model
 
 ### 7.1 Attack Surface Comparison

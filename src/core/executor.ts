@@ -98,8 +98,8 @@ export interface ExecuteOptions {
   stdin?: string | Buffer;
   /** Maximum output buffer size in bytes */
   maxBuffer?: number;
-  /** Tool name for timeout lookup */
-  toolName?: string;
+  /** Tool name for rate-limiting and timeout lookup (REQUIRED) */
+  toolName: string;
   /** Skip automatic sudo credential injection (used internally) */
   skipSudoInjection?: boolean;
 }
