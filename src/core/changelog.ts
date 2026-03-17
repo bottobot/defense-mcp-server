@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { dirname, join, basename } from "node:path";
+import { dirname } from "node:path";
 import { userInfo } from "node:os";
 import { secureWriteFileSync, secureMkdirSync, secureCopyFileSync } from "./secure-fs.js";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { getConfig } from "./config.js";
 import { BackupManager } from "./backup-manager.js";
 
@@ -38,6 +38,17 @@ export interface ChangeEntry {
   user?: string;
   /** MCP session identifier (if available) */
   sessionId?: string;
+  /**
+   * SHA-256 hash-chain value.
+   *
+   * For the first entry: SHA-256 of the entry's core fields with previousHash="genesis".
+   * For subsequent entries: SHA-256 of the entry's core fields concatenated with
+   * the previous entry's hash. This creates a tamper-evident chain — modifying or
+   * deleting any entry breaks the chain, which is detectable via `verifyChangelog()`.
+   *
+   * Auto-populated by `logChange()`. Not present in legacy entries.
+   */
+  hash?: string;
 }
 
 /**
@@ -47,6 +58,90 @@ export interface ChangeEntry {
 export interface ChangelogState {
   version: 1;
   entries: ChangeEntry[];
+}
+
+// ── Hash-Chain Integrity ─────────────────────────────────────────────────────
+
+/**
+ * Compute the SHA-256 hash-chain value for a changelog entry.
+ *
+ * The hash is computed over the entry's immutable fields (id, timestamp, tool,
+ * action, target, dryRun, success) concatenated with the previous entry's hash.
+ * This creates a tamper-evident chain.
+ *
+ * @param entry - The entry to hash (hash field is excluded from the computation)
+ * @param previousHash - Hash of the previous entry, or "genesis" for the first entry
+ * @returns SHA-256 hex digest
+ */
+export function computeEntryHash(entry: ChangeEntry, previousHash: string): string {
+  const payload = [
+    entry.id,
+    entry.timestamp,
+    entry.tool,
+    entry.action,
+    entry.target,
+    String(entry.dryRun),
+    String(entry.success),
+    entry.error ?? "",
+    previousHash,
+  ].join("|");
+
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+/**
+ * Verify the integrity of the changelog hash chain.
+ *
+ * Walks all entries with `hash` fields and checks that each hash matches
+ * the recomputed value from the previous entry's hash. Legacy entries
+ * without `hash` fields are skipped.
+ *
+ * @returns Object with `valid` boolean and details of any broken links
+ */
+export function verifyChangelog(): {
+  valid: boolean;
+  totalEntries: number;
+  hashedEntries: number;
+  brokenLinks: Array<{ index: number; entryId: string; expected: string; actual: string }>;
+} {
+  const config = getConfig();
+  const state = loadChangelogState(config.changelogPath);
+  const entries = state.entries;
+
+  let previousHash = "genesis";
+  const brokenLinks: Array<{ index: number; entryId: string; expected: string; actual: string }> = [];
+  let hashedEntries = 0;
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+
+    if (!entry.hash) {
+      // Legacy entry without hash — skip but DON'T reset the chain.
+      // The next hashed entry will chain from the last known hash.
+      continue;
+    }
+
+    hashedEntries++;
+    const expected = computeEntryHash(entry, previousHash);
+
+    if (entry.hash !== expected) {
+      brokenLinks.push({
+        index: i,
+        entryId: entry.id,
+        expected,
+        actual: entry.hash,
+      });
+    }
+
+    previousHash = entry.hash;
+  }
+
+  return {
+    valid: brokenLinks.length === 0,
+    totalEntries: entries.length,
+    hashedEntries,
+    brokenLinks,
+  };
 }
 
 /**
@@ -92,6 +187,7 @@ function loadChangelogState(changelogPath: string): ChangelogState {
  * Appends a change entry to the changelog JSON file.
  * Creates the file and parent directories if they don't exist.
  * Rotates old entries when the file exceeds MAX_CHANGELOG_ENTRIES.
+ * Computes and attaches a hash-chain value for tamper evidence.
  * Fails silently (logs to stderr) to avoid disrupting tool execution.
  */
 export function logChange(entry: ChangeEntry): void {
@@ -105,6 +201,13 @@ export function logChange(entry: ChangeEntry): void {
 
     // Read existing entries (with migration)
     const state = loadChangelogState(changelogPath);
+
+    // Compute hash-chain value
+    const lastEntry = state.entries.length > 0
+      ? state.entries[state.entries.length - 1]
+      : null;
+    const previousHash = lastEntry?.hash ?? "genesis";
+    entry.hash = computeEntryHash(entry, previousHash);
 
     // Append new entry
     state.entries.push(entry);

@@ -54,7 +54,7 @@ interface DomainScore {
 }
 
 async function checkSysctl(key: string, expected: string): Promise<{ passed: boolean; assessable: boolean; actual: string }> {
-  const r = await executeCommand({ command: "sysctl", args: ["-n", key], timeout: 5000 });
+  const r = await executeCommand({ toolName: "defense_mgmt", command: "sysctl", args: ["-n", key], timeout: 5000 });
   if (r.exitCode !== 0) {
     return { passed: false, assessable: false, actual: r.stderr.trim() || "command failed" };
   }
@@ -1279,20 +1279,20 @@ export function registerMetaTools(server: McpServer): void {
             const fwChecks: { name: string; passed: boolean; detail: string }[] = [];
 
             // Check iptables/nftables rules (with sudo for accurate results)
-            const iptResult = await executeCommand({ command: "sudo", args: ["iptables", "-L", "-n"], timeout: 10000 });
+            const iptResult = await executeCommand({ toolName: "defense_mgmt", command: "sudo", args: ["iptables", "-L", "-n"], timeout: 10000 });
             const hasIptRules = iptResult.exitCode === 0 && iptResult.stdout.split("\n").length > 8;
             fwChecks.push({ name: "iptables rules present", passed: hasIptRules, detail: `${iptResult.exitCode === 0 ? iptResult.stdout.split("\n").length : 0} lines` });
 
             // Multi-layer firewall detection: UFW → nftables fallback
             let fwDetected = false;
-            const ufwResult = await executeCommand({ command: "sudo", args: ["ufw", "status"], timeout: 5000 });
+            const ufwResult = await executeCommand({ toolName: "defense_mgmt", command: "sudo", args: ["ufw", "status"], timeout: 5000 });
             if (ufwResult.exitCode === 0) {
               const ufwActive = ufwResult.stdout.includes("active");
               fwChecks.push({ name: "UFW active", passed: ufwActive, detail: ufwResult.stdout.slice(0, 100) });
               fwDetected = ufwActive;
             } else {
               // UFW command failed — check if nftables has active rules (UFW chains or native)
-              const nftResult = await executeCommand({ command: "sudo", args: ["nft", "list", "ruleset"], timeout: 10000 });
+              const nftResult = await executeCommand({ toolName: "defense_mgmt", command: "sudo", args: ["nft", "list", "ruleset"], timeout: 10000 });
               if (nftResult.exitCode === 0) {
                 const hasUfwChains = nftResult.stdout.includes("ufw-");
                 const hasNftRules = nftResult.stdout.trim().length > 50;
@@ -1307,8 +1307,8 @@ export function registerMetaTools(server: McpServer): void {
                 }
               } else {
                 // Check if binary exists to distinguish "not installed" from "error"
-                const whichUfw = await executeCommand({ command: "which", args: ["ufw"], timeout: 3000 });
-                const whichNft = await executeCommand({ command: "which", args: ["nft"], timeout: 3000 });
+                const whichUfw = await executeCommand({ toolName: "defense_mgmt", command: "which", args: ["ufw"], timeout: 3000 });
+                const whichNft = await executeCommand({ toolName: "defense_mgmt", command: "which", args: ["nft"], timeout: 3000 });
                 const detail = whichUfw.exitCode === 0 ? "UFW installed but status check failed"
                   : whichNft.exitCode === 0 ? "nftables installed but ruleset check failed"
                   : "No firewall installed";
@@ -1322,7 +1322,7 @@ export function registerMetaTools(server: McpServer): void {
             const dangerousServices = ["telnet.socket", "rsh.socket", "rlogin.socket", "tftp.socket", "xinetd.service"];
             const svcChecks: { name: string; passed: boolean; detail: string }[] = [];
             for (const svc of dangerousServices) {
-              const r = await executeCommand({ command: "systemctl", args: ["is-active", svc], timeout: 5000 });
+              const r = await executeCommand({ toolName: "defense_mgmt", command: "systemctl", args: ["is-active", svc], timeout: 5000 });
               const inactive = r.exitCode !== 0 || r.stdout.trim() !== "active";
               svcChecks.push({ name: `${svc} disabled`, passed: inactive, detail: r.stdout.trim() });
             }
@@ -1336,7 +1336,7 @@ export function registerMetaTools(server: McpServer): void {
             const noPasswd = await executeCommand({ command: "sudo", args: ["awk", "-F:", '($2 == "" ) { print $1 }', "/etc/shadow"], timeout: 5000, toolName: "defense_mgmt" });
             const noEmptyPasswd = noPasswd.stdout.trim().length === 0;
             userChecks.push({ name: "No empty passwords", passed: noEmptyPasswd, detail: noPasswd.stdout.trim() || "none" });
-            const uidZero = await executeCommand({ command: "awk", args: ["-F:", '($3 == 0) { print $1 }', "/etc/passwd"], timeout: 5000 });
+            const uidZero = await executeCommand({ toolName: "defense_mgmt", command: "awk", args: ["-F:", '($3 == 0) { print $1 }', "/etc/passwd"], timeout: 5000 });
             const onlyRoot = uidZero.stdout.trim() === "root";
             userChecks.push({ name: "Only root has UID 0", passed: onlyRoot, detail: uidZero.stdout.trim() });
             const userPassed = userChecks.filter((c) => c.passed).length;
@@ -1345,7 +1345,7 @@ export function registerMetaTools(server: McpServer): void {
             const fsChecks: { name: string; passed: boolean; detail: string }[] = [];
             const criticalFiles: [string, string][] = [["/etc/passwd", "644"], ["/etc/shadow", "640"], ["/etc/ssh/sshd_config", "600"]];
             for (const [fp, expected] of criticalFiles) {
-              const r = await executeCommand({ command: "stat", args: ["-c", "%a", fp], timeout: 5000 });
+              const r = await executeCommand({ toolName: "defense_mgmt", command: "stat", args: ["-c", "%a", fp], timeout: 5000 });
               const actual = r.stdout.trim();
               const ok = r.exitCode === 0 && parseInt(actual, 8) <= parseInt(expected, 8);
               fsChecks.push({ name: `${fp} permissions`, passed: ok, detail: `${actual} (expected \u2264${expected})` });
@@ -1484,8 +1484,8 @@ export function registerMetaTools(server: McpServer): void {
 
               writeFileSync(servicePath, serviceContent, "utf-8");
               writeFileSync(timerPath, timerContent, "utf-8");
-              await executeCommand({ command: "systemctl", args: ["daemon-reload"], timeout: 10000 });
-              const enable = await executeCommand({ command: "systemctl", args: ["enable", "--now", `defense-audit-${name}.timer`], timeout: 10000 });
+              await executeCommand({ toolName: "defense_mgmt", command: "systemctl", args: ["daemon-reload"], timeout: 10000 });
+              const enable = await executeCommand({ toolName: "defense_mgmt", command: "systemctl", args: ["enable", "--now", `defense-audit-${name}.timer`], timeout: 10000 });
               logChange(createChangeEntry({ tool: "defense_mgmt", action: `Create systemd timer for ${name}`, target: timerPath, dryRun: false, success: enable.exitCode === 0, rollbackCommand: `systemctl disable --now defense-audit-${name}.timer && rm ${servicePath} ${timerPath}` }));
               return { content: [formatToolOutput({ success: enable.exitCode === 0, type: "systemd", name, servicePath, timerPath, enabled: enable.exitCode === 0 })] };
             }
@@ -1493,12 +1493,12 @@ export function registerMetaTools(server: McpServer): void {
             const cronLine = `${validatedSchedule} ${resolvedCommandLine} >> ${logFile} 2>&1 # defense-audit-${name}`;
             if (dry_run) return { content: [formatToolOutput({ dryRun: true, type: "cron", cronLine, warnings: safety.warnings })] };
 
-            const currentCron = await executeCommand({ command: "crontab", args: ["-l"], timeout: 5000 });
+            const currentCron = await executeCommand({ toolName: "defense_mgmt", command: "crontab", args: ["-l"], timeout: 5000 });
             const existing = currentCron.exitCode === 0 ? currentCron.stdout : "";
             if (existing.includes(`defense-audit-${name}`)) return { content: [createErrorContent(`Cron job 'defense-audit-${name}' already exists. Remove it first.`)], isError: true };
 
             const newCron = existing.trimEnd() + "\n" + cronLine + "\n";
-            const install = await executeCommand({ command: "crontab", args: ["-"], stdin: newCron, timeout: 5000 });
+            const install = await executeCommand({ toolName: "defense_mgmt", command: "crontab", args: ["-"], stdin: newCron, timeout: 5000 });
             logChange(createChangeEntry({ tool: "defense_mgmt", action: `Create cron job for ${name}`, target: "crontab", dryRun: false, success: install.exitCode === 0 }));
             return { content: [formatToolOutput({ success: install.exitCode === 0, type: "cron", name, cronLine })] };
           } catch (err: unknown) {
@@ -1512,7 +1512,7 @@ export function registerMetaTools(server: McpServer): void {
           try {
             const audits: { name: string; type: string; schedule: string; status: string }[] = [];
 
-            const timers = await executeCommand({ command: "systemctl", args: ["list-timers", "--no-pager", "--plain"], timeout: 10000 });
+            const timers = await executeCommand({ toolName: "defense_mgmt", command: "systemctl", args: ["list-timers", "--no-pager", "--plain"], timeout: 10000 });
             if (timers.exitCode === 0) {
               for (const line of timers.stdout.split("\n")) {
                 if (line.includes("defense-audit-")) {
@@ -1522,7 +1522,7 @@ export function registerMetaTools(server: McpServer): void {
               }
             }
 
-            const cron = await executeCommand({ command: "crontab", args: ["-l"], timeout: 5000 });
+            const cron = await executeCommand({ toolName: "defense_mgmt", command: "crontab", args: ["-l"], timeout: 5000 });
             if (cron.exitCode === 0) {
               for (const line of cron.stdout.split("\n")) {
                 if (line.includes("defense-audit-")) {
@@ -1550,7 +1550,7 @@ export function registerMetaTools(server: McpServer): void {
             const servicePath = `/etc/systemd/system/defense-audit-${name}.service`;
             const hasTimer = existsSync(timerPath);
 
-            const cron = await executeCommand({ command: "crontab", args: ["-l"], timeout: 5000 });
+            const cron = await executeCommand({ toolName: "defense_mgmt", command: "crontab", args: ["-l"], timeout: 5000 });
             const hasCron = cron.exitCode === 0 && cron.stdout.includes(`defense-audit-${name}`);
 
             if (!hasTimer && !hasCron) return { content: [createErrorContent(`No scheduled audit found with name: ${name}`)], isError: true };
@@ -1558,15 +1558,15 @@ export function registerMetaTools(server: McpServer): void {
             if (dry_run) return { content: [formatToolOutput({ dryRun: true, name, hasSystemdTimer: hasTimer, hasCronJob: hasCron, actions: [hasTimer ? `systemctl disable --now defense-audit-${name}.timer && rm ${timerPath} ${servicePath}` : null, hasCron ? `Remove cron line containing defense-audit-${name}` : null].filter(Boolean) })] };
 
             if (hasTimer) {
-              await executeCommand({ command: "systemctl", args: ["disable", "--now", `defense-audit-${name}.timer`], timeout: 10000 });
-              await executeCommand({ command: "rm", args: ["-f", timerPath, servicePath], timeout: 5000 });
-              await executeCommand({ command: "systemctl", args: ["daemon-reload"], timeout: 10000 });
+              await executeCommand({ toolName: "defense_mgmt", command: "systemctl", args: ["disable", "--now", `defense-audit-${name}.timer`], timeout: 10000 });
+              await executeCommand({ toolName: "defense_mgmt", command: "rm", args: ["-f", timerPath, servicePath], timeout: 5000 });
+              await executeCommand({ toolName: "defense_mgmt", command: "systemctl", args: ["daemon-reload"], timeout: 10000 });
               actions.push({ action: "Removed systemd timer", success: true });
             }
 
             if (hasCron) {
               const cronLines = cron.stdout.split("\n").filter((l) => !l.includes(`defense-audit-${name}`));
-              await executeCommand({ command: "crontab", args: ["-"], stdin: cronLines.join("\n") + "\n", timeout: 5000 });
+              await executeCommand({ toolName: "defense_mgmt", command: "crontab", args: ["-"], stdin: cronLines.join("\n") + "\n", timeout: 5000 });
               actions.push({ action: "Removed cron job", success: true });
             }
 
@@ -1587,7 +1587,7 @@ export function registerMetaTools(server: McpServer): void {
             const logFile = join(AUDIT_LOG_DIR, `${name}.log`);
             if (!existsSync(logFile)) return { content: [formatToolOutput({ name, message: `No audit log found at ${logFile}` })] };
 
-            const result = await executeCommand({ command: "tail", args: ["-n", String(lines), logFile], timeout: 10000 });
+            const result = await executeCommand({ toolName: "defense_mgmt", command: "tail", args: ["-n", String(lines), logFile], timeout: 10000 });
             return { content: [formatToolOutput({ name, logFile, lines: result.stdout.trim().split("\n"), totalLines: result.stdout.trim().split("\n").length })] };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);

@@ -93,7 +93,7 @@ function probePort(port: number, host: string = "127.0.0.1"): Promise<boolean> {
 /** Run pgrep and return true if at least one process matched. */
 async function pgrepExists(pattern: string): Promise<boolean> {
   try {
-    const r = await executeCommand({ command: "pgrep", args: ["-f", pattern], timeout: 5000 });
+    const r = await executeCommand({ toolName: "_internal", command: "pgrep", args: ["-f", pattern], timeout: 5000 });
     return r.exitCode === 0 && r.stdout.trim().length > 0;
   } catch {
     return false;
@@ -221,6 +221,7 @@ export class SafeguardRegistry {
 
         // Try to list running containers
         const r = await executeCommand({
+          toolName: "_internal",
           command: "docker",
           args: ["ps", "--format", "{{.Names}}"],
           timeout: 5000,
@@ -264,6 +265,7 @@ export class SafeguardRegistry {
 
       // Check for node processes
       const r = await executeCommand({
+        toolName: "_internal",
         command: "pgrep",
         args: ["-a", "node"],
         timeout: 5000,

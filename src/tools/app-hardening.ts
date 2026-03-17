@@ -413,6 +413,7 @@ async function detectRunningApps(): Promise<DetectedApp[]> {
   const detected: DetectedApp[] = [];
 
   const psResult = await executeCommand({
+    toolName: "app_hardening",
     command: "ps",
     args: ["axo", "pid,user,comm"],
     timeout: 10000,
@@ -429,10 +430,11 @@ async function detectRunningApps(): Promise<DetectedApp[]> {
     }
   }
 
-  const ssResult = await executeCommand({ command: "ss", args: ["-tulnp"], timeout: 10000 });
+  const ssResult = await executeCommand({ toolName: "app_hardening", command: "ss", args: ["-tulnp"], timeout: 10000 });
   const ssLines = ssResult.exitCode === 0 ? ssResult.stdout.split("\n") : [];
 
   const svcResult = await executeCommand({
+    toolName: "app_hardening",
     command: "systemctl",
     args: ["list-units", "--type=service", "--state=running", "--no-pager", "--no-legend"],
     timeout: 10000,
@@ -704,6 +706,7 @@ export function registerAppHardeningTools(server: McpServer): void {
               for (const rule of rules) {
                 const parts = rule.split("#")[0].trim().split(/\s+/);
                 const result = await executeCommand({
+                  toolName: "app_hardening",
                   command: "sudo",
                   args: parts,
                   timeout: 10000,
@@ -757,6 +760,7 @@ export function registerAppHardeningTools(server: McpServer): void {
             let svcName = service_name;
             if (!svcName) {
               const svcResult = await executeCommand({
+                toolName: "app_hardening",
                 command: "systemctl",
                 args: ["list-units", "--type=service", "--state=running", "--no-pager", "--no-legend"],
                 timeout: 10000,
@@ -805,9 +809,10 @@ export function registerAppHardeningTools(server: McpServer): void {
               const overridePath = `${overrideDir}/hardening.conf`;
               const overrideContent = overrideLines.join("\n") + "\n";
 
-              await executeCommand({ command: "sudo", args: ["mkdir", "-p", overrideDir], timeout: 5000 });
+              await executeCommand({ toolName: "app_hardening", command: "sudo", args: ["mkdir", "-p", overrideDir], timeout: 5000 });
 
               const writeResult = await executeCommand({
+                toolName: "app_hardening",
                 command: "sudo",
                 args: ["tee", overridePath],
                 stdin: overrideContent,
@@ -815,7 +820,7 @@ export function registerAppHardeningTools(server: McpServer): void {
               });
 
               if (writeResult.exitCode === 0) {
-                await executeCommand({ command: "sudo", args: ["systemctl", "daemon-reload"], timeout: 10000 });
+                await executeCommand({ toolName: "app_hardening", command: "sudo", args: ["systemctl", "daemon-reload"], timeout: 10000 });
                 sections.push(`\n✅ Override written to ${overridePath}`);
                 sections.push("✅ systemd daemon reloaded");
                 sections.push(`\n⚠️ Restart the service to apply: sudo systemctl restart ${svcName}`);

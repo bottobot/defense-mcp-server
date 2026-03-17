@@ -655,14 +655,14 @@ export function registerPatchManagementTools(server: McpServer): void {
             }
 
             if (distro.family === "debian") {
-              const debsecan = await executeCommand({ command: "which", args: ["debsecan"], timeout: 5000 });
+              const debsecan = await executeCommand({ toolName: "patch", command: "which", args: ["debsecan"], timeout: 5000 });
               if (debsecan.exitCode === 0) {
-                const result = await executeCommand({ command: "debsecan", args: ["--format", "detail"], timeout: 60000 });
+                const result = await executeCommand({ toolName: "patch", command: "debsecan", args: ["--format", "detail"], timeout: 60000 });
                 const lines = result.stdout.trim().split("\n").filter(Boolean);
                 return { content: [formatToolOutput({ tool: "debsecan", totalFindings: lines.length, findings: lines.slice(0, maxPackages) })] };
               }
 
-              const result = await executeCommand({ command: "apt-get", args: ["upgrade", "-s"], timeout: 30000 });
+              const result = await executeCommand({ toolName: "patch", command: "apt-get", args: ["upgrade", "-s"], timeout: 30000 });
               const upgradable = result.stdout.split("\n")
                 .filter((l) => l.startsWith("Inst "))
                 .slice(0, maxPackages)
@@ -673,7 +673,7 @@ export function registerPatchManagementTools(server: McpServer): void {
             }
 
             if (distro.family === "rhel") {
-              const result = await executeCommand({ command: "dnf", args: ["updateinfo", "list", "--security"], timeout: 30000 });
+              const result = await executeCommand({ toolName: "patch", command: "dnf", args: ["updateinfo", "list", "--security"], timeout: 30000 });
               const lines = result.stdout.trim().split("\n").filter(Boolean).slice(0, maxPackages);
               return { content: [formatToolOutput({ tool: "dnf updateinfo", findings: lines.length, details: lines })] };
             }
@@ -702,25 +702,25 @@ export function registerPatchManagementTools(server: McpServer): void {
             const info: Record<string, unknown> = { package: packageName, distro: distro.id };
 
             if (distro.family === "debian") {
-              const dpkg = await executeCommand({ command: "dpkg-query", args: ["-W", "-f", "${Version}", packageName], timeout: 10000 });
+              const dpkg = await executeCommand({ toolName: "patch", command: "dpkg-query", args: ["-W", "-f", "${Version}", packageName], timeout: 10000 });
               info.installedVersion = dpkg.exitCode === 0 ? dpkg.stdout.trim() : "not installed";
 
-              const apt = await executeCommand({ command: "apt-cache", args: ["policy", packageName], timeout: 10000 });
+              const apt = await executeCommand({ toolName: "patch", command: "apt-cache", args: ["policy", packageName], timeout: 10000 });
               if (apt.exitCode === 0) {
                 const candidate = apt.stdout.match(/Candidate:\s*(\S+)/)?.[1];
                 info.candidateVersion = candidate ?? "unknown";
                 info.updateAvailable = candidate && candidate !== info.installedVersion;
               }
 
-              const changelog = await executeCommand({ command: "apt-get", args: ["changelog", packageName], timeout: 15000 });
+              const changelog = await executeCommand({ toolName: "patch", command: "apt-get", args: ["changelog", packageName], timeout: 15000 });
               if (changelog.exitCode === 0) {
                 info.securityEntries = changelog.stdout.split("\n").filter((l) => /CVE-\d{4}-\d{4,}|security/i.test(l)).slice(0, 10);
               }
             } else if (distro.family === "rhel") {
-              const rpm = await executeCommand({ command: "rpm", args: ["-q", packageName], timeout: 10000 });
+              const rpm = await executeCommand({ toolName: "patch", command: "rpm", args: ["-q", packageName], timeout: 10000 });
               info.installedVersion = rpm.exitCode === 0 ? rpm.stdout.trim() : "not installed";
 
-              const updateinfo = await executeCommand({ command: "dnf", args: ["updateinfo", "info", packageName], timeout: 15000 });
+              const updateinfo = await executeCommand({ toolName: "patch", command: "dnf", args: ["updateinfo", "info", packageName], timeout: 15000 });
               if (updateinfo.exitCode === 0) {
                 info.advisories = updateinfo.stdout.slice(0, 5000);
               }

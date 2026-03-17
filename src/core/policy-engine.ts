@@ -299,6 +299,7 @@ export async function evaluateRule(rule: PolicyRule): Promise<PolicyResult> {
 
     const [command, ...args] = rule.check;
     const result = await executeCommand({
+      toolName: "_internal",
       command,
       args,
       timeout: 30_000,

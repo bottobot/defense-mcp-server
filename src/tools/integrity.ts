@@ -962,6 +962,7 @@ export function registerIntegrityTools(server: McpServer): void {
               if (!existsSync(dir)) continue;
 
               const findResult = await executeCommand({
+                toolName: "integrity",
                 command: "find",
                 args: [
                   dir,
@@ -1004,6 +1005,7 @@ export function registerIntegrityTools(server: McpServer): void {
             // Capture sysctl state
             const sysctlState: Record<string, string> = {};
             const sysctlResult = await executeCommand({
+              toolName: "integrity",
               command: "sysctl",
               args: ["-a"],
               timeout: 10000,
@@ -1102,6 +1104,7 @@ export function registerIntegrityTools(server: McpServer): void {
             // Capture service states
             const services: Record<string, string> = {};
             const svcResult = await executeCommand({
+              toolName: "integrity",
               command: "systemctl",
               args: [
                 "list-units",
@@ -1219,6 +1222,7 @@ export function registerIntegrityTools(server: McpServer): void {
 
             // Compare sysctl
             const sysctlResult = await executeCommand({
+              toolName: "integrity",
               command: "sysctl",
               args: ["-a"],
               timeout: 10000,
@@ -1242,6 +1246,7 @@ export function registerIntegrityTools(server: McpServer): void {
 
             // Compare services
             const svcResult = await executeCommand({
+              toolName: "integrity",
               command: "systemctl",
               args: [
                 "list-units",

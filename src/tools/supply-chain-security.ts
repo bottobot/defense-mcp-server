@@ -102,6 +102,7 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
           try {
             // Try syft first
             const syftResult = await executeCommand({
+              toolName: "supply_chain",
               command: "which",
               args: ["syft"],
               timeout: 5000,
@@ -109,6 +110,7 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
 
             if (syftResult.exitCode === 0) {
               const result = await executeCommand({
+                toolName: "supply_chain",
                 command: "syft",
                 args: [scanPath, "-o", format],
                 timeout: getToolTimeout("generate_sbom"),
@@ -120,6 +122,7 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
 
             // Try cdxgen
             const cdxgenResult = await executeCommand({
+              toolName: "supply_chain",
               command: "which",
               args: ["cdxgen"],
               timeout: 5000,
@@ -127,6 +130,7 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
 
             if (cdxgenResult.exitCode === 0) {
               const result = await executeCommand({
+                toolName: "supply_chain",
                 command: "cdxgen",
                 args: ["-o", "-", scanPath],
                 timeout: getToolTimeout("generate_sbom"),
@@ -151,7 +155,7 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
               return { content: [createErrorContent("No SBOM tool (syft/cdxgen) found and unsupported package manager for fallback")], isError: true };
             }
 
-            const result = await executeCommand({ command: cmd, args, timeout: 30000 });
+            const result = await executeCommand({ toolName: "supply_chain", command: cmd, args, timeout: 30000 });
             if (result.exitCode !== 0) {
               return { content: [createErrorContent(`Package listing failed: ${result.stderr}`)], isError: true };
             }
@@ -207,6 +211,7 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
               : ["sign", "--yes", artifact];
 
             const result = await executeCommand({
+              toolName: "supply_chain",
               command: "cosign",
               args,
               timeout: 60000,
@@ -249,17 +254,17 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
             }
 
             // Check for slsa-verifier
-            const which = await executeCommand({ command: "which", args: ["slsa-verifier"], timeout: 5000 });
+            const which = await executeCommand({ toolName: "supply_chain", command: "which", args: ["slsa-verifier"], timeout: 5000 });
 
             if (which.exitCode !== 0) {
               // Try cosign verify-attestation as fallback
-              const cosignWhich = await executeCommand({ command: "which", args: ["cosign"], timeout: 5000 });
+              const cosignWhich = await executeCommand({ toolName: "supply_chain", command: "which", args: ["cosign"], timeout: 5000 });
               if (cosignWhich.exitCode !== 0) {
                 return { content: [createErrorContent("Neither slsa-verifier nor cosign found. Install one to verify attestations.")], isError: true };
               }
 
               const args = ["verify-attestation", "--type", "slsaprovenance", artifact];
-              const result = await executeCommand({ command: "cosign", args, timeout: 30000 });
+              const result = await executeCommand({ toolName: "supply_chain", command: "cosign", args, timeout: 30000 });
 
               return {
                 content: [formatToolOutput({
@@ -278,6 +283,7 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
             }
 
             const result = await executeCommand({
+              toolName: "supply_chain",
               command: "slsa-verifier",
               args,
               timeout: 30000,

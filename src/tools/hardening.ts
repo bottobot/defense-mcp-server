@@ -1267,6 +1267,7 @@ export function registerHardeningTools(server: McpServer): void {
               }
 
               const result = await executeCommand({
+                toolName: "harden_host",
                 command: "readelf",
                 args: ["-h", "-Wl", "-Wd", binary],
                 timeout: 10000,
@@ -1285,6 +1286,7 @@ export function registerHardeningTools(server: McpServer): void {
                 pie = typeMatch[1] === "DYN" ? "enabled" : "disabled";
               } else {
                 const fileResult = await executeCommand({
+                  toolName: "harden_host",
                   command: "file",
                   args: [binary],
                   timeout: 5000,
@@ -1305,6 +1307,7 @@ export function registerHardeningTools(server: McpServer): void {
               const nx = output.includes("GNU_STACK") && !output.includes("RWE") ? "enabled" : "disabled";
 
               const symResult = await executeCommand({
+                toolName: "harden_host",
                 command: "readelf",
                 args: ["-Ws", binary],
                 timeout: 10000,
@@ -1359,6 +1362,7 @@ export function registerHardeningTools(server: McpServer): void {
             }
 
             const result = await executeCommand({
+              toolName: "harden_host",
               command: "sysctl",
               args: ["-w", "kernel.randomize_va_space=2"],
               timeout: 10000,
@@ -1436,6 +1440,7 @@ export function registerHardeningTools(server: McpServer): void {
 
             for (const [key, label] of sysctlChecks) {
               const r = await executeCommand({
+                toolName: "harden_host",
                 command: "sysctl",
                 args: ["-n", key],
                 timeout: 5000,
