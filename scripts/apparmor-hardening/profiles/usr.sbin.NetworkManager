@@ -1,0 +1,131 @@
+# AppArmor profile for NetworkManager on Debian
+# Deployed by harden-apparmor.sh — initially in complain mode
+# vim:syntax=apparmor
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile NetworkManager /usr/sbin/NetworkManager flags=(complain) {
+  include <abstractions/base>
+  include <abstractions/nameservice>
+  include <abstractions/dbus-strict>
+  include <abstractions/ssl_certs>
+
+  # ---- Capabilities ----
+  capability net_admin,       # Configure network interfaces
+  capability net_raw,         # Raw sockets (ARP, DHCP)
+  capability net_bind_service, # Bind privileged ports (DHCP client)
+  capability sys_module,      # Load network driver modules
+  capability dac_override,    # Access config files owned by others
+  capability kill,            # Signal child processes (dhclient, etc.)
+  capability sys_chroot,      # Used by some VPN plugins
+  capability audit_write,     # Write to audit log
+
+  # ---- Signals ----
+  signal (send) peer=unconfined,
+  signal (send, receive) peer=NetworkManager,
+
+  # ---- Network ----
+  network netlink raw,        # rtnetlink for interface management
+  network netlink dgram,      # Generic netlink
+  network inet stream,        # TCP connections (captive portal detection)
+  network inet dgram,         # UDP (DHCP, DNS)
+  network inet6 stream,       # TCP IPv6
+  network inet6 dgram,        # UDP IPv6 (DHCPv6)
+  network packet raw,         # ARP, DHCP raw packets
+  network inet raw,           # ICMP (connectivity checks)
+
+  # ---- Binary ----
+  /usr/sbin/NetworkManager r,
+
+  # ---- Configuration ----
+  /etc/NetworkManager/ r,
+  /etc/NetworkManager/** rw,
+  /etc/resolv.conf rw,
+  /etc/resolv.conf.* rw,
+  /run/NetworkManager/resolv.conf rw,
+  /etc/hostname r,
+  /etc/hosts r,
+  /etc/nsswitch.conf r,
+  /etc/gai.conf r,
+  /etc/iproute2/ r,
+  /etc/iproute2/** r,
+
+  # ---- State & runtime ----
+  /var/lib/NetworkManager/ rw,
+  /var/lib/NetworkManager/** rwk,
+  /run/NetworkManager/ rw,
+  /run/NetworkManager/** rw,
+  /run/udev/data/** r,
+  /run/systemd/resolve/ r,
+  /run/systemd/resolve/** rw,
+
+  # ---- Sysfs (interface enumeration) ----
+  /sys/class/net/ r,
+  /sys/class/net/** r,
+  /sys/devices/pci**/ r,
+  /sys/devices/pci**/net/** r,
+  /sys/devices/virtual/net/** r,
+  /sys/class/rfkill/ r,
+  /sys/class/rfkill/** r,
+  /sys/devices/platform/**/rfkill/** r,
+  /sys/bus/usb/devices/ r,
+  /sys/bus/usb/devices/** r,
+
+  # ---- Proc ----
+  @{PROC}/sys/net/** rw,
+  @{PROC}/sys/kernel/hostname r,
+  owner @{PROC}/@{pid}/fd/ r,
+  owner @{PROC}/@{pid}/fd/** r,
+  owner @{PROC}/@{pid}/cmdline r,
+  owner @{PROC}/@{pid}/status r,
+
+  # ---- D-Bus system bus ----
+  /run/dbus/system_bus_socket rw,
+
+  # ---- Dispatcher scripts ----
+  /etc/NetworkManager/dispatcher.d/ r,
+  /etc/NetworkManager/dispatcher.d/** ix,
+  /usr/lib/NetworkManager/ r,
+  /usr/lib/NetworkManager/** rmix,
+
+  # ---- Child processes (DHCP clients, VPN helpers) ----
+  /usr/sbin/dhclient ix,
+  /usr/lib/NetworkManager/nm-dhcp-helper ix,
+  /usr/lib/NetworkManager/nm-dispatcher ix,
+  /usr/lib/NetworkManager/nm-iface-helper ix,
+  /usr/lib/NetworkManager/nm-initrd-generator ix,
+  /sbin/ip ix,
+  /usr/bin/ip ix,
+  /sbin/resolvconf ix,
+  /usr/sbin/resolvconf ix,
+  /usr/bin/resolvectl ix,
+  /usr/bin/systemd-resolve ix,
+
+  # ---- VPN plugins (common ones) ----
+  /usr/lib/NetworkManager/VPN/ r,
+  /usr/lib/NetworkManager/VPN/** r,
+  /usr/sbin/openvpn ix,
+  /usr/lib/NetworkManager/nm-openvpn-service ix,
+  /usr/libexec/nm-openvpn-service ix,
+  /usr/sbin/wireguard ix,
+
+  # ---- Logging ----
+  /var/log/syslog rw,
+
+  # ---- Temporary ----
+  /tmp/ r,
+  owner /tmp/nm-* rw,
+  owner /tmp/nm-** rwk,
+
+  # ---- Deny dangerous operations ----
+  deny /boot/** rwx,
+  deny /etc/shadow r,
+  deny /etc/gshadow r,
+  deny @{HOME}/** rwx,
+  deny /etc/apparmor.d/** w,
+
+  # ---- Local customizations ----
+  include if exists <local/usr.sbin.NetworkManager>
+}

@@ -1,0 +1,182 @@
+# AppArmor profile for Mozilla Firefox on Debian
+# Deployed by harden-apparmor.sh — initially in complain mode
+# vim:syntax=apparmor
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile firefox /usr/bin/firefox* flags=(complain) {
+  include <abstractions/base>
+  include <abstractions/fonts>
+  include <abstractions/audio>
+  include <abstractions/nameservice>
+  include <abstractions/ssl_certs>
+  include <abstractions/dbus-session-strict>
+  include <abstractions/X>
+  include if exists <abstractions/mesa>
+  include if exists <abstractions/vulkan>
+  include if exists <abstractions/wayland>
+
+  # ---- User namespaces (for content process sandboxing) ----
+  userns,
+
+  # ---- Pivot root (for sandbox chroot) ----
+  pivot_root,
+
+  # ---- Capabilities ----
+  capability sys_admin,     # content sandbox (user namespaces)
+  capability sys_chroot,    # content sandbox
+  capability sys_ptrace,    # crash reporter
+
+  # ---- Signals ----
+  signal (send, receive) peer=firefox,
+
+  # ---- Network ----
+  network inet stream,
+  network inet dgram,
+  network inet6 stream,
+  network inet6 dgram,
+  network netlink raw,
+
+  # ---- Firefox installation ----
+  /usr/bin/firefox* r,
+  /usr/lib/firefox/ r,
+  /usr/lib/firefox/** rmix,
+  /usr/lib/firefox-esr/ r,
+  /usr/lib/firefox-esr/** rmix,
+  /usr/share/firefox/ r,
+  /usr/share/firefox/** r,
+  /usr/share/firefox-esr/ r,
+  /usr/share/firefox-esr/** r,
+
+  # ---- User profile & cache ----
+  owner @{HOME}/.mozilla/ rw,
+  owner @{HOME}/.mozilla/** rwkl,
+  owner @{HOME}/.cache/mozilla/ rw,
+  owner @{HOME}/.cache/mozilla/** rwk,
+
+  # ---- Downloads ----
+  owner @{HOME}/Downloads/ rw,
+  owner @{HOME}/Downloads/** rw,
+
+  # ---- Desktop file picking (read-only browse for file dialogs) ----
+  owner @{HOME}/ r,
+  owner @{HOME}/Documents/ r,
+  owner @{HOME}/Documents/** r,
+  owner @{HOME}/Pictures/ r,
+  owner @{HOME}/Pictures/** r,
+
+  # ---- Temporary files ----
+  /tmp/ r,
+  owner /tmp/** rwk,
+  owner /tmp/firefox*/ rw,
+  owner /tmp/firefox*/** rwk,
+  owner /tmp/mozilla*/ rw,
+  owner /tmp/mozilla*/** rwk,
+  owner /tmp/rust_mozprofile*/ rw,
+  owner /tmp/rust_mozprofile*/** rwk,
+
+  # ---- Shared memory (multi-process IPC) ----
+  /dev/shm/ r,
+  owner /dev/shm/** rwk,
+  owner /dev/shm/org.chromium.* rwk,
+  owner /dev/shm/org.mozilla.* rwk,
+
+  # ---- GPU / DRI ----
+  /dev/dri/ r,
+  /dev/dri/** rw,
+  /sys/devices/pci**/ r,
+  /sys/devices/pci**/** r,
+  /sys/bus/pci/devices/ r,
+  /sys/class/drm/ r,
+
+  # ---- Proc filesystem ----
+  owner @{PROC}/@{pid}/fd/ r,
+  owner @{PROC}/@{pid}/fd/** r,
+  owner @{PROC}/@{pid}/maps r,
+  owner @{PROC}/@{pid}/smaps r,
+  owner @{PROC}/@{pid}/mountinfo r,
+  owner @{PROC}/@{pid}/mounts r,
+  owner @{PROC}/@{pid}/stat r,
+  owner @{PROC}/@{pid}/statm r,
+  owner @{PROC}/@{pid}/status r,
+  owner @{PROC}/@{pid}/task/ r,
+  owner @{PROC}/@{pid}/task/** r,
+  owner @{PROC}/@{pid}/oom_score_adj rw,
+  owner @{PROC}/@{pid}/cmdline r,
+  owner @{PROC}/@{pid}/comm r,
+  owner @{PROC}/@{pid}/cgroup r,
+  @{PROC}/sys/net/** r,
+  @{PROC}/sys/kernel/random/uuid r,
+  @{PROC}/sys/fs/inotify/max_user_watches r,
+  @{PROC}/meminfo r,
+  @{PROC}/cpuinfo r,
+
+  # ---- Sys filesystem ----
+  /sys/devices/system/cpu/ r,
+  /sys/devices/system/cpu/** r,
+  /sys/devices/virtual/block/**/uevent r,
+
+  # ---- System shared resources ----
+  /etc/mime.types r,
+  /etc/mailcap r,
+  /etc/timezone r,
+  /etc/localtime r,
+  /etc/machine-id r,
+  /etc/firefox*/ r,
+  /etc/firefox*/** r,
+  /usr/share/applications/ r,
+  /usr/share/applications/** r,
+  /usr/share/icons/** r,
+  /usr/share/mime/** r,
+  /usr/share/pixmaps/** r,
+  /usr/share/themes/** r,
+  /usr/share/glib-2.0/** r,
+  /usr/share/gtk-3.0/** r,
+  /usr/share/gtk-4.0/** r,
+  /usr/share/X11/** r,
+  /usr/share/drirc.d/** r,
+  /usr/share/glvnd/** r,
+  /usr/share/libdrm/** r,
+  /usr/share/hwdata/** r,
+
+  # ---- PulseAudio / PipeWire ----
+  /run/user/*/pulse/ r,
+  /run/user/*/pulse/** rw,
+  /run/user/*/pipewire-0 rw,
+  owner @{HOME}/.config/pulse/ r,
+  owner @{HOME}/.config/pulse/** rw,
+
+  # ---- Wayland ----
+  /run/user/*/wayland-* rw,
+
+  # ---- D-Bus ----
+  /run/user/*/bus rw,
+  /run/dbus/system_bus_socket rw,
+
+  # ---- Desktop portals (Flatpak file chooser, etc.) ----
+  /run/user/*/doc/ r,
+  /run/user/*/doc/** rw,
+  owner @{HOME}/.config/dconf/user r,
+  owner @{HOME}/.config/gtk-3.0/ r,
+  owner @{HOME}/.config/gtk-3.0/** r,
+
+  # ---- Self-exec for child processes (content, GPU, RDD, utility) ----
+  /usr/lib/firefox/firefox ix,
+  /usr/lib/firefox/firefox-bin ix,
+  /usr/lib/firefox-esr/firefox-esr ix,
+  /usr/lib/firefox-esr/firefox-esr-bin ix,
+
+  # ---- Helper programs ----
+  /usr/bin/xdg-open Ux,
+
+  # ---- Deny dangerous operations ----
+  deny /boot/** rwx,
+  deny /etc/shadow r,
+  deny /etc/gshadow r,
+  deny /etc/passwd w,
+
+  # ---- Local customizations (add rules here without editing the profile) ----
+  include if exists <local/usr.bin.firefox>
+}
