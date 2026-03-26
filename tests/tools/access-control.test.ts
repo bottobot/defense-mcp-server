@@ -361,5 +361,313 @@ describe("access-control tools", () => {
       expect(writtenContent).toContain("unlock_time=600");
       expect(writtenContent).toContain("fail_interval=600");
     });
+
+    // ── PAM Sanity Check Integration Tests ──────────────────────────────
+
+    describe("pam_configure sanity checks", () => {
+      it("should block faillock with deny=1 (critical finding)", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "faillock",
+          pam_settings: { deny: 1, unlock_time: 0 },
+          dry_run: false,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("sanity check FAILED");
+        expect(result.content[0].text).toContain("force=true");
+        // Should NOT have called any I/O functions (blocked before backup)
+        expect(backupPamFile).not.toHaveBeenCalled();
+        expect(readPamFile).not.toHaveBeenCalled();
+        expect(writePamFile).not.toHaveBeenCalled();
+      });
+
+      it("should block faillock with deny=2 (critical finding)", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "faillock",
+          pam_settings: { deny: 2 },
+          dry_run: false,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("sanity check FAILED");
+      });
+
+      it("should block faillock with unlock_time=0 (permanent lock)", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "faillock",
+          pam_settings: { unlock_time: 0 },
+          dry_run: false,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("sanity check FAILED");
+        expect(result.content[0].text).toContain("Permanent lock");
+      });
+
+      it("should allow faillock with deny=1 when force=true", async () => {
+        const { getConfig } = await import("../../src/core/config.js");
+        vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "faillock",
+          pam_settings: { deny: 1, unlock_time: 900 },
+          force: true,
+          dry_run: false,
+        });
+        // Should proceed (not blocked by sanity check)
+        expect(result.isError).toBeUndefined();
+        // Should have called I/O functions (force overrides sanity block)
+        expect(backupPamFile).toHaveBeenCalled();
+        expect(writePamFile).toHaveBeenCalled();
+        // Response should include sanity warnings
+        expect(result.content[0].text).toContain("Sanity warnings");
+      });
+
+      it("should include sanity warnings in dry-run output for faillock", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "faillock",
+          pam_settings: { deny: 5, unlock_time: 3600 },
+          dry_run: true,
+        });
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).toContain("DRY-RUN");
+        expect(result.content[0].text).toContain("Sanity warnings");
+        expect(result.content[0].text).toContain("unlock_time");
+      });
+
+      it("should succeed without warnings for sane faillock defaults", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "faillock",
+          pam_settings: { deny: 5, unlock_time: 900, fail_interval: 900 },
+          dry_run: true,
+        });
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).not.toContain("Sanity warnings");
+      });
+
+      it("should block faillock in dry-run mode too when critical", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "faillock",
+          pam_settings: { deny: 1 },
+          dry_run: true,
+        });
+        // Critical findings should block even in dry-run
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("sanity check FAILED");
+      });
+
+      it("should block pwquality with minlen=100 (critical finding)", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "pwquality",
+          pam_settings: { minlen: 100 },
+          dry_run: true,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("sanity check FAILED");
+        expect(result.content[0].text).toContain("minlen");
+      });
+
+      it("should include sanity warnings in dry-run output for pwquality", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "pwquality",
+          pam_settings: { minlen: 25 },
+          dry_run: true,
+        });
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).toContain("DRY-RUN");
+        expect(result.content[0].text).toContain("Sanity warnings");
+      });
+
+      it("should succeed without warnings for sane pwquality defaults", async () => {
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "pwquality",
+          dry_run: true,
+        });
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).not.toContain("Sanity warnings");
+      });
+
+      it("should include warnings in success response for faillock", async () => {
+        const { getConfig } = await import("../../src/core/config.js");
+        vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+
+        const handler = tools.get("access_control")!.handler;
+        const result = await handler({
+          action: "pam_configure",
+          module: "faillock",
+          pam_settings: { deny: 5, unlock_time: 3600 },
+          dry_run: false,
+        });
+        expect(result.isError).toBeUndefined();
+        // unlock_time=3600 is a warning (> 1800) but not critical
+        expect(result.content[0].text).toContain("Sanity warnings");
+        expect(result.content[0].text).toContain("unlock_time");
+      });
+    });
   });
+  // ── ssh_audit service state detection ─────────────────────────────────
+
+  describe("ssh_audit service state detection", () => {
+    const MOCK_SSHD_CONFIG = `# SSH config
+PermitRootLogin yes
+PasswordAuthentication yes
+X11Forwarding yes
+MaxAuthTries 6
+Protocol 2
+PermitEmptyPasswords no
+`;
+
+    async function mockExecuteForSshState(opts: {
+      sshdBinaryExists: boolean;
+      serviceActive: boolean;
+      configReadable: boolean;
+      configContent?: string;
+    }) {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+
+        // which sshd
+        if (command === "which" && args?.[0] === "sshd") {
+          return {
+            exitCode: opts.sshdBinaryExists ? 0 : 1,
+            stdout: opts.sshdBinaryExists ? "/usr/sbin/sshd" : "",
+            stderr: opts.sshdBinaryExists ? "" : "which: no sshd in PATH",
+          };
+        }
+
+        // systemctl is-active ssh sshd
+        if (command === "systemctl" && args?.[0] === "is-active") {
+          return {
+            exitCode: opts.serviceActive ? 0 : 3,
+            stdout: opts.serviceActive ? "active" : "inactive",
+            stderr: "",
+          };
+        }
+
+        // sudo cat /etc/ssh/sshd_config
+        if (command === "sudo" && args?.[0] === "cat" && (args?.[1] ?? "").includes("sshd_config")) {
+          return {
+            exitCode: opts.configReadable ? 0 : 1,
+            stdout: opts.configReadable ? (opts.configContent ?? MOCK_SSHD_CONFIG) : "",
+            stderr: opts.configReadable ? "" : "No such file or directory",
+          };
+        }
+
+        // Default fallback
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+    }
+
+    it("should audit normally when sshd is active (original severities)", async () => {
+      await mockExecuteForSshState({
+        sshdBinaryExists: true,
+        serviceActive: true,
+        configReadable: true,
+      });
+
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "ssh_audit" });
+
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.serviceState).toBe("active");
+      expect(output.serviceStatus).toContain("ACTIVE");
+
+      // Findings should have original severities (not downgraded)
+      const permitRoot = output.findings.find((f: Record<string, unknown>) => f.setting === "PermitRootLogin");
+      expect(permitRoot).toBeDefined();
+      expect(permitRoot.severity).toBe("critical");
+      expect(permitRoot.description).not.toContain("[RESIDUAL CONFIG]");
+      expect(permitRoot.description).not.toContain("[SERVICE STOPPED]");
+    });
+
+    it("should downgrade severities when sshd is installed but inactive", async () => {
+      await mockExecuteForSshState({
+        sshdBinaryExists: true,
+        serviceActive: false,
+        configReadable: true,
+      });
+
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "ssh_audit" });
+
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.serviceState).toBe("installed_inactive");
+      expect(output.serviceStatus).toContain("INACTIVE");
+      expect(output.note).toContain("not currently running");
+
+      // critical → high, high → medium
+      const permitRoot = output.findings.find((f: Record<string, unknown>) => f.setting === "PermitRootLogin");
+      expect(permitRoot.severity).toBe("high"); // downgraded from critical
+      expect(permitRoot.description).toContain("[SERVICE STOPPED]");
+
+      const passwordAuth = output.findings.find((f: Record<string, unknown>) => f.setting === "PasswordAuthentication");
+      expect(passwordAuth.severity).toBe("medium"); // downgraded from high
+      expect(passwordAuth.description).toContain("[SERVICE STOPPED]");
+    });
+
+    it("should set all findings to INFO when sshd removed but config remains (residual)", async () => {
+      await mockExecuteForSshState({
+        sshdBinaryExists: false,
+        serviceActive: false,
+        configReadable: true,
+      });
+
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "ssh_audit" });
+
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.serviceState).toBe("removed_residual");
+      expect(output.serviceStatus).toContain("NOT INSTALLED");
+      expect(output.serviceStatus).toContain("residual");
+      expect(output.note).toContain("dpkg --purge");
+
+      // ALL findings should be info severity with [RESIDUAL CONFIG] prefix
+      for (const finding of output.findings) {
+        expect(finding.severity).toBe("info");
+        expect(finding.description).toContain("[RESIDUAL CONFIG]");
+      }
+    });
+
+    it("should skip audit entirely when SSH is not installed", async () => {
+      await mockExecuteForSshState({
+        sshdBinaryExists: false,
+        serviceActive: false,
+        configReadable: false,
+      });
+
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "ssh_audit" });
+
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.serviceState).toBe("not_installed");
+      expect(output.serviceStatus).toBe("NOT INSTALLED");
+      expect(output.note).toContain("not installed");
+      expect(output.findings).toHaveLength(0);
+      expect(output.summary.total).toBe(0);
+    });
+  });
+
 });

@@ -814,3 +814,403 @@ export async function restorePamFile(
     `[pam-utils] Restored ${backupEntry.backupPath} → ${backupEntry.originalPath}`,
   );
 }
+
+// ── PAM Sanity Validation Types ─────────────────────────────────────────────
+
+/** A single finding from PAM policy sanity validation. */
+export interface PamSanityFinding {
+  /** warning = proceed with caution; critical = blocks operation unless forced */
+  severity: "warning" | "critical";
+  /** Which module the finding relates to */
+  module: "pam_faillock.so" | "pam_pwquality.so" | "general";
+  /** The specific parameter that triggered the finding, if applicable */
+  parameter?: string;
+  /** The problematic value */
+  value?: string | number;
+  /** Human-readable description of the problem */
+  message: string;
+  /** What the user should do instead */
+  recommendation: string;
+}
+
+/** Result of PAM policy sanity validation. */
+export interface PamSanityResult {
+  /** true if no critical findings exist */
+  safe: boolean;
+  /** All findings, ordered by severity then module */
+  findings: PamSanityFinding[];
+  /** Count of critical-severity findings */
+  criticalCount: number;
+  /** Count of warning-severity findings */
+  warningCount: number;
+}
+
+// ── PAM Sanity Thresholds ───────────────────────────────────────────────────
+
+/**
+ * Thresholds for PAM policy sanity checks.
+ * These define what constitutes "sane" vs "dangerous" PAM policy values.
+ * Tuned to prevent lockouts while allowing reasonable security hardening.
+ */
+export const PAM_SANITY_THRESHOLDS = {
+  faillock: {
+    /** deny below this triggers critical — too few attempts before lockout */
+    minDeny: 3,
+    /** unlock_time above this triggers warning — extended lockout */
+    maxUnlockTimeWarn: 1800,      // 30 minutes
+    /** unlock_time above this triggers critical — extreme lockout */
+    maxUnlockTimeCritical: 86400, // 24 hours
+    /** fail_interval below this triggers warning — unusually short window */
+    minFailInterval: 60,          // 1 minute
+  },
+  pwquality: {
+    /** minlen above this triggers warning — unusually long */
+    maxMinlenWarn: 24,
+    /** minlen above this triggers critical — unreasonably long */
+    maxMinlenCritical: 64,
+    /** retry below this triggers critical — no second chance */
+    minRetry: 2,
+    /** Combined credit threshold: all credits at this or below with high minlen */
+    restrictiveCreditThreshold: -2,
+  },
+} as const;
+
+// ── Faillock Parameter Validation ───────────────────────────────────────────
+
+/**
+ * Validate faillock parameters for policy sanity.
+ *
+ * Checks for overly restrictive settings that could cause lockouts:
+ * - deny too low (typos cause lockout)
+ * - unlock_time too high or zero (extended/permanent lockout)
+ * - deny + unlock_time=0 combination (permanent lock on typos)
+ * - fail_interval too short
+ *
+ * @param params - Faillock parameters to validate
+ * @returns Array of sanity findings (empty = all sane)
+ */
+export function validateFaillockParams(params: {
+  deny?: number;
+  unlock_time?: number;
+  fail_interval?: number;
+}): PamSanityFinding[] {
+  const findings: PamSanityFinding[] = [];
+  const T = PAM_SANITY_THRESHOLDS.faillock;
+
+  // Check deny
+  if (params.deny !== undefined && params.deny < T.minDeny) {
+    findings.push({
+      severity: "critical",
+      module: "pam_faillock.so",
+      parameter: "deny",
+      value: params.deny,
+      message:
+        params.deny === 1
+          ? `deny=${params.deny}: A single failed attempt locks the account — typos cause immediate lockout`
+          : `deny=${params.deny}: Only ${params.deny} attempts before lockout — insufficient margin for typos`,
+      recommendation: `Set deny >= ${T.minDeny} (CIS Benchmark recommends 3-5)`,
+    });
+  }
+
+  // Check unlock_time
+  if (params.unlock_time !== undefined) {
+    if (params.unlock_time === 0) {
+      findings.push({
+        severity: "critical",
+        module: "pam_faillock.so",
+        parameter: "unlock_time",
+        value: 0,
+        message: "unlock_time=0: Permanent lock until admin runs 'faillock --reset' — no automatic recovery",
+        recommendation: "Set unlock_time to a positive value (e.g., 900 for 15 minutes)",
+      });
+    } else if (params.unlock_time > T.maxUnlockTimeCritical) {
+      findings.push({
+        severity: "critical",
+        module: "pam_faillock.so",
+        parameter: "unlock_time",
+        value: params.unlock_time,
+        message: `unlock_time=${params.unlock_time}: Lockout exceeds 24 hours — effectively permanent for most users`,
+        recommendation: `Set unlock_time <= ${T.maxUnlockTimeWarn} (30 minutes, per CIS Benchmark)`,
+      });
+    } else if (params.unlock_time > T.maxUnlockTimeWarn) {
+      findings.push({
+        severity: "warning",
+        module: "pam_faillock.so",
+        parameter: "unlock_time",
+        value: params.unlock_time,
+        message: `unlock_time=${params.unlock_time}: Lockout exceeds 30 minutes — consider a shorter unlock time`,
+        recommendation: `Set unlock_time <= ${T.maxUnlockTimeWarn} (30 minutes, per CIS Benchmark)`,
+      });
+    }
+  }
+
+  // Check fail_interval
+  if (params.fail_interval !== undefined && params.fail_interval < T.minFailInterval) {
+    findings.push({
+      severity: "warning",
+      module: "pam_faillock.so",
+      parameter: "fail_interval",
+      value: params.fail_interval,
+      message: `fail_interval=${params.fail_interval}: Very short failure tracking window (< 60s)`,
+      recommendation: `Set fail_interval >= ${T.minFailInterval} (60 seconds or more)`,
+    });
+  }
+
+  return findings;
+}
+
+// ── Pwquality Parameter Validation ──────────────────────────────────────────
+
+/**
+ * Validate pwquality parameters for policy sanity.
+ *
+ * Checks for overly restrictive settings that prevent password creation:
+ * - minlen too high
+ * - retry too low (no second chance)
+ * - All character class requirements simultaneously very strict
+ *
+ * @param params - Pwquality parameters to validate
+ * @returns Array of sanity findings (empty = all sane)
+ */
+export function validatePwqualityParams(params: {
+  minlen?: number;
+  dcredit?: number;
+  ucredit?: number;
+  lcredit?: number;
+  ocredit?: number;
+  minclass?: number;
+  maxrepeat?: number;
+  retry?: number;
+}): PamSanityFinding[] {
+  const findings: PamSanityFinding[] = [];
+  const T = PAM_SANITY_THRESHOLDS.pwquality;
+
+  // Check minlen
+  if (params.minlen !== undefined) {
+    if (params.minlen > T.maxMinlenCritical) {
+      findings.push({
+        severity: "critical",
+        module: "pam_pwquality.so",
+        parameter: "minlen",
+        value: params.minlen,
+        message: `minlen=${params.minlen}: Minimum password length exceeds ${T.maxMinlenCritical} — users cannot create compliant passwords`,
+        recommendation: `Set minlen <= ${T.maxMinlenWarn} (NIST SP 800-63B recommends 8-64 characters)`,
+      });
+    } else if (params.minlen > T.maxMinlenWarn) {
+      findings.push({
+        severity: "warning",
+        module: "pam_pwquality.so",
+        parameter: "minlen",
+        value: params.minlen,
+        message: `minlen=${params.minlen}: Minimum password length exceeds ${T.maxMinlenWarn} — may be difficult for users`,
+        recommendation: `Set minlen <= ${T.maxMinlenWarn} for usability (14-16 is a good balance)`,
+      });
+    }
+  }
+
+  // Check retry
+  if (params.retry !== undefined && params.retry < T.minRetry) {
+    findings.push({
+      severity: "critical",
+      module: "pam_pwquality.so",
+      parameter: "retry",
+      value: params.retry,
+      message:
+        params.retry === 0
+          ? "retry=0: Zero retries — password rejected on first attempt with no recovery"
+          : `retry=${params.retry}: Only ${params.retry} retry — insufficient for correcting typos`,
+      recommendation: `Set retry >= ${T.minRetry}`,
+    });
+  }
+
+  // Check combined restrictive credit requirements with high minlen
+  const minlen = params.minlen ?? 0;
+  const credits = [params.dcredit, params.ucredit, params.lcredit, params.ocredit];
+  const definedCredits = credits.filter((c): c is number => c !== undefined);
+
+  if (definedCredits.length === 4 && minlen > 16) {
+    const allVeryRestrictive = definedCredits.every(
+      (c) => c <= T.restrictiveCreditThreshold,
+    );
+    if (allVeryRestrictive) {
+      findings.push({
+        severity: "warning",
+        module: "pam_pwquality.so",
+        parameter: "dcredit+ucredit+lcredit+ocredit",
+        message: `All character classes require ${Math.abs(T.restrictiveCreditThreshold)}+ characters with minlen=${minlen} — very restrictive combined requirements`,
+        recommendation: "Relax either the character class requirements or the minimum length",
+      });
+    }
+  }
+
+  // Check minclass=4 with high minlen
+  if (params.minclass !== undefined && params.minclass >= 4 && minlen > 16) {
+    findings.push({
+      severity: "warning",
+      module: "pam_pwquality.so",
+      parameter: "minclass",
+      value: params.minclass,
+      message: `minclass=${params.minclass} with minlen=${minlen}: All ${params.minclass} character classes required with long minimum — very restrictive`,
+      recommendation: "Consider minclass=3 or reducing minlen when requiring all character classes",
+    });
+  }
+
+  return findings;
+}
+
+// ── PAM Config Structure Validation ─────────────────────────────────────────
+
+/**
+ * Validate a PAM config structure for dangerous patterns.
+ *
+ * Checks the resulting PamLine[] after manipulation for patterns
+ * that would break authentication:
+ * - pam_deny.so as first auth rule (blocks all auth)
+ * - Missing pam_unix.so in auth stack
+ * - Incomplete faillock setup (preauth without authfail or vice versa)
+ * - Missing pam_permit.so in session stack
+ *
+ * @param lines - Parsed PAM config lines (after manipulation)
+ * @returns Array of sanity findings
+ */
+export function validatePamConfigSanity(lines: PamLine[]): PamSanityFinding[] {
+  const findings: PamSanityFinding[] = [];
+
+  const authRules = lines.filter(
+    (l): l is PamRule => l.kind === "rule" && (l.pamType === "auth" || l.pamType === "-auth"),
+  );
+  const sessionRules = lines.filter(
+    (l): l is PamRule => l.kind === "rule" && (l.pamType === "session" || l.pamType === "-session"),
+  );
+
+  // Check: pam_deny.so as first auth rule
+  if (authRules.length > 0 && authRules[0].module === "pam_deny.so") {
+    findings.push({
+      severity: "critical",
+      module: "general",
+      message: "pam_deny.so is the first auth rule — this blocks ALL authentication",
+      recommendation: "Ensure pam_deny.so is not the first rule in the auth stack",
+    });
+  }
+
+  // Check: no pam_unix.so in auth stack
+  const hasUnixAuth = authRules.some((r) => r.module === "pam_unix.so");
+  if (authRules.length > 0 && !hasUnixAuth) {
+    findings.push({
+      severity: "critical",
+      module: "general",
+      message: "No pam_unix.so in auth stack — basic password authentication is broken",
+      recommendation: "Ensure pam_unix.so is present in the auth stack",
+    });
+  }
+
+  // Check: incomplete faillock setup
+  const faillockRules = authRules.filter((r) => r.module === "pam_faillock.so");
+  if (faillockRules.length > 0) {
+    const hasPreauth = faillockRules.some((r) => r.args.includes("preauth"));
+    const hasAuthfail = faillockRules.some((r) => r.args.includes("authfail"));
+
+    if (hasPreauth && !hasAuthfail) {
+      findings.push({
+        severity: "warning",
+        module: "pam_faillock.so",
+        message: "Incomplete faillock setup: preauth rule present but authfail rule missing — failed attempts may not be tracked",
+        recommendation: "Add a pam_faillock.so authfail rule after pam_unix.so",
+      });
+    }
+
+    if (hasAuthfail && !hasPreauth) {
+      findings.push({
+        severity: "warning",
+        module: "pam_faillock.so",
+        message: "Incomplete faillock setup: authfail rule present but preauth rule missing — locked accounts may not be checked before authentication",
+        recommendation: "Add a pam_faillock.so preauth rule before pam_unix.so",
+      });
+    }
+  }
+
+  // Check: missing pam_permit.so in session stack
+  const hasPermitSession = sessionRules.some((r) => r.module === "pam_permit.so");
+  if (sessionRules.length > 0 && !hasPermitSession) {
+    findings.push({
+      severity: "warning",
+      module: "general",
+      message: "No pam_permit.so in session stack — sessions may fail to initialize",
+      recommendation: "Add 'session required pam_permit.so' to the session stack",
+    });
+  }
+
+  return findings;
+}
+
+// ── Combined Entry Point ────────────────────────────────────────────────────
+
+/**
+ * Validate PAM policy sanity — combined parameter + config check.
+ *
+ * This is the main entry point for sanity validation. It runs:
+ * 1. Module-specific parameter checks (if module + params provided)
+ * 2. Config structure checks (if lines provided)
+ *
+ * @param options - What to validate
+ * @returns Combined sanity result with safe flag and all findings
+ */
+export function validatePamPolicySanity(options: {
+  /** Which PAM module is being configured */
+  module?: "faillock" | "pwquality";
+  /** Module parameters being applied */
+  params?: Record<string, unknown>;
+  /** Resulting PAM config lines (after manipulation) */
+  lines?: PamLine[];
+}): PamSanityResult {
+  const findings: PamSanityFinding[] = [];
+
+  // 1. Module-specific parameter checks
+  if (options.module && options.params) {
+    if (options.module === "faillock") {
+      findings.push(
+        ...validateFaillockParams({
+          deny: typeof options.params.deny === "number" ? options.params.deny : undefined,
+          unlock_time: typeof options.params.unlock_time === "number" ? options.params.unlock_time : undefined,
+          fail_interval: typeof options.params.fail_interval === "number" ? options.params.fail_interval : undefined,
+        }),
+      );
+    } else if (options.module === "pwquality") {
+      findings.push(
+        ...validatePwqualityParams({
+          minlen: typeof options.params.minlen === "number" ? options.params.minlen : undefined,
+          dcredit: typeof options.params.dcredit === "number" ? options.params.dcredit : undefined,
+          ucredit: typeof options.params.ucredit === "number" ? options.params.ucredit : undefined,
+          lcredit: typeof options.params.lcredit === "number" ? options.params.lcredit : undefined,
+          ocredit: typeof options.params.ocredit === "number" ? options.params.ocredit : undefined,
+          minclass: typeof options.params.minclass === "number" ? options.params.minclass : undefined,
+          maxrepeat: typeof options.params.maxrepeat === "number" ? options.params.maxrepeat : undefined,
+          retry: typeof options.params.retry === "number" ? options.params.retry : undefined,
+        }),
+      );
+    }
+  }
+
+  // 2. Config structure checks
+  if (options.lines) {
+    findings.push(...validatePamConfigSanity(options.lines));
+  }
+
+  // Sort: critical first, then warning; within same severity, by module
+  findings.sort((a, b) => {
+    if (a.severity !== b.severity) {
+      return a.severity === "critical" ? -1 : 1;
+    }
+    return a.module.localeCompare(b.module);
+  });
+
+  const criticalCount = findings.filter((f) => f.severity === "critical").length;
+  const warningCount = findings.filter((f) => f.severity === "warning").length;
+
+  return {
+    safe: criticalCount === 0,
+    findings,
+    criticalCount,
+    warningCount,
+  };
+}

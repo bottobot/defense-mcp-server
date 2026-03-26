@@ -24,11 +24,18 @@ import {
   adjustJumpCounts,
   PamValidationError,
   PamWriteError,
+  validateFaillockParams,
+  validatePwqualityParams,
+  validatePamConfigSanity,
+  validatePamPolicySanity,
+  PAM_SANITY_THRESHOLDS,
   type PamRule,
   type PamComment,
   type PamBlank,
   type PamInclude,
   type PamLine,
+  type PamSanityFinding,
+  type PamSanityResult,
 } from "../../src/core/pam-utils.js";
 
 // ── Test Fixtures ───────────────────────────────────────────────────────────
@@ -1078,5 +1085,471 @@ describe("PamWriteError", () => {
     expect(error.filePath).toBe("/etc/pam.d/common-auth");
     expect(error.backupId).toBe("backup-123");
     expect(error.message).toBe("Write failed");
+  });
+});
+
+// ── PAM Sanity Validation Tests ─────────────────────────────────────────────
+
+describe("validateFaillockParams", () => {
+  it("returns no findings for sane defaults (deny=5, unlock_time=900)", () => {
+    const findings = validateFaillockParams({ deny: 5, unlock_time: 900, fail_interval: 900 });
+    expect(findings).toHaveLength(0);
+  });
+
+  it("returns critical for deny=1 (single attempt lockout)", () => {
+    const findings = validateFaillockParams({ deny: 1 });
+    expect(findings.some(f => f.severity === "critical" && f.parameter === "deny")).toBe(true);
+    expect(findings.some(f => f.message.includes("single failed attempt"))).toBe(true);
+  });
+
+  it("returns critical for deny=2 (too few attempts)", () => {
+    const findings = validateFaillockParams({ deny: 2 });
+    expect(findings.some(f => f.severity === "critical" && f.parameter === "deny")).toBe(true);
+  });
+
+  it("returns no finding for deny=3 (boundary - acceptable)", () => {
+    const findings = validateFaillockParams({ deny: 3 });
+    expect(findings.filter(f => f.parameter === "deny")).toHaveLength(0);
+  });
+
+  it("returns no finding for deny=5 (standard recommendation)", () => {
+    const findings = validateFaillockParams({ deny: 5 });
+    expect(findings.filter(f => f.parameter === "deny")).toHaveLength(0);
+  });
+
+  it("returns critical for unlock_time=0 (permanent lock)", () => {
+    const findings = validateFaillockParams({ unlock_time: 0 });
+    expect(findings.some(f => f.severity === "critical" && f.parameter === "unlock_time")).toBe(true);
+    expect(findings.some(f => f.message.includes("Permanent lock"))).toBe(true);
+  });
+
+  it("returns no finding for unlock_time=1800 (boundary)", () => {
+    const findings = validateFaillockParams({ unlock_time: 1800 });
+    expect(findings.filter(f => f.parameter === "unlock_time")).toHaveLength(0);
+  });
+
+  it("returns warning for unlock_time=1801 (just over threshold)", () => {
+    const findings = validateFaillockParams({ unlock_time: 1801 });
+    expect(findings.some(f => f.severity === "warning" && f.parameter === "unlock_time")).toBe(true);
+  });
+
+  it("returns warning for unlock_time=3600 (1 hour)", () => {
+    const findings = validateFaillockParams({ unlock_time: 3600 });
+    expect(findings.some(f => f.severity === "warning" && f.parameter === "unlock_time")).toBe(true);
+  });
+
+  it("returns critical for unlock_time=86401 (over 24 hours)", () => {
+    const findings = validateFaillockParams({ unlock_time: 86401 });
+    expect(findings.some(f => f.severity === "critical" && f.parameter === "unlock_time")).toBe(true);
+    expect(findings.some(f => f.message.includes("24 hours"))).toBe(true);
+  });
+
+  it("returns critical for unlock_time=999999 (the original lockout scenario)", () => {
+    const findings = validateFaillockParams({ unlock_time: 999999 });
+    expect(findings.some(f => f.severity === "critical" && f.parameter === "unlock_time")).toBe(true);
+  });
+
+  it("returns multiple criticals for deny=1 + unlock_time=0 (worst case)", () => {
+    const findings = validateFaillockParams({ deny: 1, unlock_time: 0 });
+    const criticals = findings.filter(f => f.severity === "critical");
+    expect(criticals.length).toBeGreaterThanOrEqual(2);
+    // Should have both deny and unlock_time criticals
+    expect(criticals.some(f => f.parameter === "deny")).toBe(true);
+    expect(criticals.some(f => f.parameter === "unlock_time")).toBe(true);
+  });
+
+  it("returns warning for fail_interval < 60", () => {
+    const findings = validateFaillockParams({ fail_interval: 30 });
+    expect(findings.some(f => f.severity === "warning" && f.parameter === "fail_interval")).toBe(true);
+  });
+
+  it("returns no finding for fail_interval=60 (boundary)", () => {
+    const findings = validateFaillockParams({ fail_interval: 60 });
+    expect(findings.filter(f => f.parameter === "fail_interval")).toHaveLength(0);
+  });
+
+  it("returns no findings when no params provided", () => {
+    const findings = validateFaillockParams({});
+    expect(findings).toHaveLength(0);
+  });
+
+  it("all findings have module=pam_faillock.so", () => {
+    const findings = validateFaillockParams({ deny: 1, unlock_time: 0, fail_interval: 10 });
+    expect(findings.every(f => f.module === "pam_faillock.so")).toBe(true);
+  });
+
+  it("all findings have recommendations", () => {
+    const findings = validateFaillockParams({ deny: 1, unlock_time: 0 });
+    expect(findings.every(f => f.recommendation.length > 0)).toBe(true);
+  });
+});
+
+describe("validatePwqualityParams", () => {
+  it("returns no findings for sane defaults (minlen=14)", () => {
+    const findings = validatePwqualityParams({ minlen: 14 });
+    expect(findings).toHaveLength(0);
+  });
+
+  it("returns no finding for minlen=24 (boundary)", () => {
+    const findings = validatePwqualityParams({ minlen: 24 });
+    expect(findings.filter(f => f.parameter === "minlen")).toHaveLength(0);
+  });
+
+  it("returns warning for minlen=25 (over 24)", () => {
+    const findings = validatePwqualityParams({ minlen: 25 });
+    expect(findings.some(f => f.severity === "warning" && f.parameter === "minlen")).toBe(true);
+  });
+
+  it("returns critical for minlen=65 (over 64)", () => {
+    const findings = validatePwqualityParams({ minlen: 65 });
+    expect(findings.some(f => f.severity === "critical" && f.parameter === "minlen")).toBe(true);
+  });
+
+  it("returns critical (not warning) for minlen=100 — critical supersedes warning", () => {
+    const findings = validatePwqualityParams({ minlen: 100 });
+    // Should only have the critical finding, not both critical and warning
+    const minlenFindings = findings.filter(f => f.parameter === "minlen");
+    expect(minlenFindings).toHaveLength(1);
+    expect(minlenFindings[0].severity).toBe("critical");
+  });
+
+  it("returns critical for retry=0", () => {
+    const findings = validatePwqualityParams({ retry: 0 });
+    expect(findings.some(f => f.severity === "critical" && f.parameter === "retry")).toBe(true);
+    expect(findings.some(f => f.message.includes("Zero retries"))).toBe(true);
+  });
+
+  it("returns critical for retry=1", () => {
+    const findings = validatePwqualityParams({ retry: 1 });
+    expect(findings.some(f => f.severity === "critical" && f.parameter === "retry")).toBe(true);
+  });
+
+  it("returns no finding for retry=2 (boundary)", () => {
+    const findings = validatePwqualityParams({ retry: 2 });
+    expect(findings.filter(f => f.parameter === "retry")).toHaveLength(0);
+  });
+
+  it("returns no finding for retry=3", () => {
+    const findings = validatePwqualityParams({ retry: 3 });
+    expect(findings.filter(f => f.parameter === "retry")).toHaveLength(0);
+  });
+
+  it("returns warning for all credits <= -2 with high minlen", () => {
+    const findings = validatePwqualityParams({
+      minlen: 18,
+      dcredit: -2,
+      ucredit: -2,
+      lcredit: -2,
+      ocredit: -2,
+    });
+    expect(findings.some(f => f.severity === "warning")).toBe(true);
+    expect(findings.some(f => f.message.includes("character class"))).toBe(true);
+  });
+
+  it("returns no warning for credits <= -2 with low minlen", () => {
+    const findings = validatePwqualityParams({
+      minlen: 12,
+      dcredit: -2,
+      ucredit: -2,
+      lcredit: -2,
+      ocredit: -2,
+    });
+    // minlen <= 16, so the combined credit check shouldn't trigger
+    expect(findings.filter(f => f.parameter?.includes("credit"))).toHaveLength(0);
+  });
+
+  it("returns no warning when only some credits are defined", () => {
+    const findings = validatePwqualityParams({
+      minlen: 18,
+      dcredit: -2,
+      ucredit: -2,
+      // lcredit and ocredit not defined
+    });
+    // Only triggers when all 4 credits are defined
+    expect(findings.filter(f => f.parameter?.includes("credit"))).toHaveLength(0);
+  });
+
+  it("returns warning for minclass=4 with high minlen", () => {
+    const findings = validatePwqualityParams({ minclass: 4, minlen: 18 });
+    expect(findings.some(f => f.severity === "warning" && f.parameter === "minclass")).toBe(true);
+  });
+
+  it("returns no warning for minclass=4 with low minlen", () => {
+    const findings = validatePwqualityParams({ minclass: 4, minlen: 12 });
+    expect(findings.filter(f => f.parameter === "minclass")).toHaveLength(0);
+  });
+
+  it("returns no warning for minclass=3 with high minlen", () => {
+    const findings = validatePwqualityParams({ minclass: 3, minlen: 18 });
+    expect(findings.filter(f => f.parameter === "minclass")).toHaveLength(0);
+  });
+
+  it("returns no findings when no params provided", () => {
+    const findings = validatePwqualityParams({});
+    expect(findings).toHaveLength(0);
+  });
+
+  it("all findings have module=pam_pwquality.so", () => {
+    const findings = validatePwqualityParams({ minlen: 65, retry: 0 });
+    expect(findings.every(f => f.module === "pam_pwquality.so")).toBe(true);
+  });
+});
+
+describe("validatePamConfigSanity", () => {
+  it("returns no critical findings for standard Debian common-auth", () => {
+    const lines = parsePamConfig(DEBIAN_COMMON_AUTH);
+    const findings = validatePamConfigSanity(lines);
+    expect(findings.filter(f => f.severity === "critical")).toHaveLength(0);
+  });
+
+  it("returns critical when pam_deny.so is first auth rule", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_deny.so", []),
+      createPamRule("auth", "required", "pam_unix.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    expect(findings.some(f =>
+      f.severity === "critical" && f.message.includes("pam_deny.so"),
+    )).toBe(true);
+  });
+
+  it("does NOT flag pam_deny.so when it is not the first auth rule", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_unix.so", []),
+      createPamRule("auth", "requisite", "pam_deny.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    expect(findings.filter(f => f.message.includes("first auth rule"))).toHaveLength(0);
+  });
+
+  it("returns critical when no pam_unix.so in auth stack", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_faillock.so", ["preauth"]),
+      createPamRule("auth", "required", "pam_permit.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    expect(findings.some(f =>
+      f.severity === "critical" && f.message.includes("pam_unix.so"),
+    )).toBe(true);
+  });
+
+  it("does NOT flag missing pam_unix.so when there are no auth rules at all", () => {
+    const lines: PamLine[] = [
+      createPamRule("session", "required", "pam_permit.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    // No auth rules means the check for pam_unix.so in auth stack shouldn't trigger
+    expect(findings.filter(f => f.message.includes("pam_unix.so"))).toHaveLength(0);
+  });
+
+  it("returns warning for faillock preauth without authfail", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_faillock.so", ["preauth", "silent"]),
+      createPamRule("auth", "required", "pam_unix.so", []),
+      createPamRule("auth", "requisite", "pam_deny.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    expect(findings.some(f =>
+      f.severity === "warning" && f.message.includes("authfail"),
+    )).toBe(true);
+  });
+
+  it("returns warning for faillock authfail without preauth", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_unix.so", []),
+      createPamRule("auth", "[default=die]", "pam_faillock.so", ["authfail"]),
+      createPamRule("auth", "requisite", "pam_deny.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    expect(findings.some(f =>
+      f.severity === "warning" && f.message.includes("preauth"),
+    )).toBe(true);
+  });
+
+  it("returns no faillock warnings for complete faillock setup", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_faillock.so", ["preauth", "silent", "deny=5"]),
+      createPamRule("auth", "[success=2 default=ignore]", "pam_unix.so", ["nullok"]),
+      createPamRule("auth", "[default=die]", "pam_faillock.so", ["authfail", "deny=5"]),
+      createPamRule("auth", "requisite", "pam_deny.so", []),
+      createPamRule("auth", "required", "pam_permit.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    const faillockFindings = findings.filter(f => f.module === "pam_faillock.so");
+    expect(faillockFindings).toHaveLength(0);
+  });
+
+  it("returns warning when session stack has no pam_permit.so", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_unix.so", []),
+      createPamRule("session", "required", "pam_limits.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    expect(findings.some(f =>
+      f.severity === "warning" && f.message.includes("pam_permit.so") && f.message.includes("session"),
+    )).toBe(true);
+  });
+
+  it("does NOT flag missing pam_permit.so when there are no session rules", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_unix.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    expect(findings.filter(f => f.message.includes("session"))).toHaveLength(0);
+  });
+
+  it("handles -auth prefix correctly", () => {
+    const lines: PamLine[] = [
+      createPamRule("-auth", "required", "pam_deny.so", []),
+      createPamRule("auth", "required", "pam_unix.so", []),
+    ];
+    const findings = validatePamConfigSanity(lines);
+    // -auth pam_deny.so as first auth rule should still be flagged
+    expect(findings.some(f =>
+      f.severity === "critical" && f.message.includes("pam_deny.so"),
+    )).toBe(true);
+  });
+});
+
+describe("validatePamPolicySanity", () => {
+  it("returns safe=true for sane faillock params", () => {
+    const result = validatePamPolicySanity({
+      module: "faillock",
+      params: { deny: 5, unlock_time: 900, fail_interval: 900 },
+    });
+    expect(result.safe).toBe(true);
+    expect(result.criticalCount).toBe(0);
+    expect(result.warningCount).toBe(0);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it("returns safe=false for dangerous faillock params", () => {
+    const result = validatePamPolicySanity({
+      module: "faillock",
+      params: { deny: 1, unlock_time: 0 },
+    });
+    expect(result.safe).toBe(false);
+    expect(result.criticalCount).toBeGreaterThan(0);
+  });
+
+  it("returns safe=true for sane pwquality params", () => {
+    const result = validatePamPolicySanity({
+      module: "pwquality",
+      params: { minlen: 14, retry: 3 },
+    });
+    expect(result.safe).toBe(true);
+    expect(result.criticalCount).toBe(0);
+  });
+
+  it("returns safe=false for dangerous pwquality params", () => {
+    const result = validatePamPolicySanity({
+      module: "pwquality",
+      params: { minlen: 100, retry: 0 },
+    });
+    expect(result.safe).toBe(false);
+    expect(result.criticalCount).toBeGreaterThan(0);
+  });
+
+  it("combines param and config findings", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_deny.so", []),
+      createPamRule("auth", "required", "pam_unix.so", []),
+    ];
+    const result = validatePamPolicySanity({
+      module: "faillock",
+      params: { deny: 1 },
+      lines,
+    });
+    // Should have findings from both param check AND config check
+    expect(result.findings.length).toBeGreaterThan(1);
+    // Should have param finding (deny=1) and config finding (pam_deny.so first)
+    expect(result.findings.some(f => f.module === "pam_faillock.so")).toBe(true);
+    expect(result.findings.some(f => f.module === "general")).toBe(true);
+  });
+
+  it("returns safe=true when no options provided", () => {
+    const result = validatePamPolicySanity({});
+    expect(result.safe).toBe(true);
+    expect(result.findings).toHaveLength(0);
+    expect(result.criticalCount).toBe(0);
+    expect(result.warningCount).toBe(0);
+  });
+
+  it("sorts findings: critical first, then warning", () => {
+    const result = validatePamPolicySanity({
+      module: "faillock",
+      params: { deny: 1, unlock_time: 3600 },
+    });
+    // deny=1 is critical, unlock_time=3600 is warning
+    expect(result.findings.length).toBeGreaterThanOrEqual(2);
+    const firstCriticalIdx = result.findings.findIndex(f => f.severity === "critical");
+    const firstWarningIdx = result.findings.findIndex(f => f.severity === "warning");
+    if (firstCriticalIdx !== -1 && firstWarningIdx !== -1) {
+      expect(firstCriticalIdx).toBeLessThan(firstWarningIdx);
+    }
+  });
+
+  it("correctly counts criticals and warnings", () => {
+    const result = validatePamPolicySanity({
+      module: "faillock",
+      params: { deny: 1, unlock_time: 3600 },
+    });
+    // deny=1 → 1 critical, unlock_time=3600 → 1 warning
+    expect(result.criticalCount).toBe(1);
+    expect(result.warningCount).toBe(1);
+    expect(result.findings).toHaveLength(2);
+  });
+
+  it("handles config-only validation (no module/params)", () => {
+    const lines: PamLine[] = [
+      createPamRule("auth", "required", "pam_unix.so", []),
+      createPamRule("auth", "requisite", "pam_deny.so", []),
+      createPamRule("auth", "required", "pam_permit.so", []),
+    ];
+    const result = validatePamPolicySanity({ lines });
+    expect(result.safe).toBe(true);
+  });
+
+  it("handles params-only validation (no lines)", () => {
+    const result = validatePamPolicySanity({
+      module: "faillock",
+      params: { deny: 5, unlock_time: 900 },
+    });
+    expect(result.safe).toBe(true);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it("ignores params when module is not specified", () => {
+    const result = validatePamPolicySanity({
+      params: { deny: 1, unlock_time: 0 },
+    });
+    // Without module, params are not checked
+    expect(result.safe).toBe(true);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it("safely handles non-number param values", () => {
+    const result = validatePamPolicySanity({
+      module: "faillock",
+      params: { deny: "not-a-number" as unknown as number, unlock_time: true as unknown as number },
+    });
+    // Non-number values should be ignored (treated as undefined)
+    expect(result.safe).toBe(true);
+  });
+});
+
+describe("PAM_SANITY_THRESHOLDS", () => {
+  it("has expected faillock thresholds", () => {
+    expect(PAM_SANITY_THRESHOLDS.faillock.minDeny).toBe(3);
+    expect(PAM_SANITY_THRESHOLDS.faillock.maxUnlockTimeWarn).toBe(1800);
+    expect(PAM_SANITY_THRESHOLDS.faillock.maxUnlockTimeCritical).toBe(86400);
+    expect(PAM_SANITY_THRESHOLDS.faillock.minFailInterval).toBe(60);
+  });
+
+  it("has expected pwquality thresholds", () => {
+    expect(PAM_SANITY_THRESHOLDS.pwquality.maxMinlenWarn).toBe(24);
+    expect(PAM_SANITY_THRESHOLDS.pwquality.maxMinlenCritical).toBe(64);
+    expect(PAM_SANITY_THRESHOLDS.pwquality.minRetry).toBe(2);
+    expect(PAM_SANITY_THRESHOLDS.pwquality.restrictiveCreditThreshold).toBe(-2);
   });
 });

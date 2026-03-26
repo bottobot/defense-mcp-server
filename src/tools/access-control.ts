@@ -37,7 +37,58 @@ import {
   backupPamFile,
   restorePamFile,
   PamWriteError,
+  validatePamPolicySanity,
 } from "../core/pam-utils.js";
+
+// ── SSH service state detection ──────────────────────────────────────────
+
+type SshServiceState = "active" | "installed_inactive" | "removed_residual" | "not_installed";
+
+interface SshServiceStatus {
+  state: SshServiceState;
+  label: string;
+  sshdBinaryExists: boolean;
+  serviceRunning: boolean;
+  configExists: boolean;
+}
+
+/**
+ * Downgrade a severity level by one step.
+ * critical → high, high → medium, medium → low, low → low
+ */
+function downgradeSeverity(severity: string): string {
+  switch (severity) {
+    case "critical": return "high";
+    case "high": return "medium";
+    case "medium": return "low";
+    default: return severity;
+  }
+}
+
+/**
+ * Adjust finding severity and description based on SSH service state.
+ */
+function adjustFindingForServiceState(
+  finding: { severity: string; description: string },
+  serviceState: SshServiceState,
+): { severity: string; description: string } {
+  switch (serviceState) {
+    case "active":
+      return finding;
+    case "installed_inactive":
+      return {
+        severity: downgradeSeverity(finding.severity),
+        description: `[SERVICE STOPPED] ${finding.description}`,
+      };
+    case "removed_residual":
+      return {
+        severity: "info",
+        description: `[RESIDUAL CONFIG] ${finding.description}`,
+      };
+    case "not_installed":
+      return finding; // Should not reach here — not_installed short-circuits
+  }
+}
 
 // ── SSH hardening recommendations ────────────────────────────────────────
 
@@ -334,6 +385,14 @@ export function registerAccessControlTools(server: McpServer): void {
         .default("/usr/sbin/nologin")
         .describe("Shell to set (restrict_shell, default: /usr/sbin/nologin)"),
       // ── shared ──
+      force: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Force operation even if sanity checks report critical findings (pam_configure). " +
+          "Use with extreme caution — may cause lockouts."
+        ),
       dry_run: z
         .boolean()
         .optional()
@@ -347,14 +406,96 @@ export function registerAccessControlTools(server: McpServer): void {
         case "ssh_audit": {
           try {
             const config_path = params.config_path ?? "/etc/ssh/sshd_config";
+
+            // ── Step 1: Detect SSH service state ──────────────────────
+            const whichResult = await executeCommand({
+              command: "which",
+              args: ["sshd"],
+              toolName: "access_control",
+              timeout: 5000,
+            });
+            const sshdBinaryExists = whichResult.exitCode === 0;
+
+            const serviceResult = await executeCommand({
+              command: "systemctl",
+              args: ["is-active", "ssh", "sshd"],
+              toolName: "access_control",
+              timeout: 5000,
+            });
+            const serviceRunning = serviceResult.exitCode === 0;
+
+            // ── Step 2: Try to read the config file ──────────────────
             const result = await executeCommand({
               command: "sudo",
               args: ["cat", config_path],
               toolName: "access_control",
               timeout: getToolTimeout("access_control"),
             });
+            const configExists = result.exitCode === 0;
 
-            if (result.exitCode !== 0) {
+            // ── Step 3: Classify service state ───────────────────────
+            let serviceStatus: SshServiceStatus;
+
+            if (sshdBinaryExists && serviceRunning) {
+              serviceStatus = {
+                state: "active",
+                label: "ACTIVE (sshd running, accepting connections)",
+                sshdBinaryExists: true,
+                serviceRunning: true,
+                configExists,
+              };
+            } else if (sshdBinaryExists && !serviceRunning) {
+              serviceStatus = {
+                state: "installed_inactive",
+                label: "INSTALLED BUT INACTIVE (sshd binary found, service not running)",
+                sshdBinaryExists: true,
+                serviceRunning: false,
+                configExists,
+              };
+            } else if (!sshdBinaryExists && configExists) {
+              serviceStatus = {
+                state: "removed_residual",
+                label: "NOT INSTALLED (residual config file detected)",
+                sshdBinaryExists: false,
+                serviceRunning: false,
+                configExists: true,
+              };
+            } else {
+              serviceStatus = {
+                state: "not_installed",
+                label: "NOT INSTALLED",
+                sshdBinaryExists: false,
+                serviceRunning: false,
+                configExists: false,
+              };
+            }
+
+            // ── Step 4: Short-circuit for not_installed ──────────────
+            if (serviceStatus.state === "not_installed") {
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: "SSH configuration audit",
+                target: config_path,
+                after: "SSH server not installed — audit skipped",
+                dryRun: false,
+                success: true,
+              });
+              logChange(entry);
+
+              const output = {
+                configPath: config_path,
+                serviceStatus: serviceStatus.label,
+                serviceState: serviceStatus.state,
+                summary: { passed: 0, failed: 0, warned: 0, total: 0 },
+                findings: [],
+                note: "SSH server is not installed on this system. No audit required.",
+              };
+
+              return { content: [formatToolOutput(output)] };
+            }
+
+            // ── Step 5: Config read failed but binary exists → error ─
+            if (!configExists) {
               return {
                 content: [
                   createErrorContent(
@@ -421,13 +562,19 @@ export function registerAccessControlTools(server: McpServer): void {
                 status = currentValue.toLowerCase() === check.recommended.toLowerCase() ? "pass" : "fail";
               }
 
+              // ── Step 6: Adjust severity based on service state ─────
+              const adjusted = adjustFindingForServiceState(
+                { severity: check.severity, description: check.description },
+                serviceStatus.state,
+              );
+
               findings.push({
                 setting: check.key,
                 currentValue,
                 recommendedValue: check.recommended,
                 status,
-                severity: check.severity,
-                description: check.description,
+                severity: adjusted.severity,
+                description: adjusted.description,
               });
             }
 
@@ -439,17 +586,32 @@ export function registerAccessControlTools(server: McpServer): void {
               tool: "access_control",
               action: "SSH configuration audit",
               target: config_path,
-              after: `Pass: ${passed}, Fail: ${failed}, Warn: ${warned}`,
+              after: `Pass: ${passed}, Fail: ${failed}, Warn: ${warned}, Service: ${serviceStatus.state}`,
               dryRun: false,
               success: true,
             });
             logChange(entry);
 
-            const output = {
+            // ── Step 7: Build output with service status context ─────
+            const output: Record<string, unknown> = {
               configPath: config_path,
+              serviceStatus: serviceStatus.label,
+              serviceState: serviceStatus.state,
               summary: { passed, failed, warned, total: findings.length },
               findings,
             };
+
+            // Add contextual notes for non-active states
+            if (serviceStatus.state === "removed_residual") {
+              output.note =
+                "openssh-server has been removed but " + config_path + " remains. " +
+                "All findings below are INFORMATIONAL — no SSH server is running. " +
+                "Recommendation: sudo dpkg --purge openssh-server";
+            } else if (serviceStatus.state === "installed_inactive") {
+              output.note =
+                "sshd is installed but the service is not currently running. " +
+                "Findings have been downgraded by one severity level.";
+            }
 
             return { content: [formatToolOutput(output)] };
           } catch (err: unknown) {
@@ -1095,6 +1257,33 @@ export function registerAccessControlTools(server: McpServer): void {
                 reject_username: params.pam_settings?.reject_username ?? defaults.reject_username,
               };
 
+              // ── Sanity check: detect dangerous pwquality parameters ──
+              const pwqSanityResult = validatePamPolicySanity({
+                module: "pwquality",
+                params: merged,
+              });
+
+              if (pwqSanityResult.criticalCount > 0 && !(params.force)) {
+                const findingsText = pwqSanityResult.findings
+                  .map(f => `  [${f.severity.toUpperCase()}] ${f.message}\n    → ${f.recommendation}`)
+                  .join("\n");
+
+                return {
+                  content: [
+                    createErrorContent(
+                      `PAM policy sanity check FAILED — ${pwqSanityResult.criticalCount} critical finding(s):\n\n` +
+                      findingsText +
+                      `\n\nTo override, set force=true. This may cause lockouts.`
+                    ),
+                  ],
+                  isError: true,
+                };
+              }
+
+              const pwqSanityWarnings = pwqSanityResult.findings
+                .map(f => `[${f.severity.toUpperCase()}] ${f.message}`)
+                .join("\n");
+
               const targetFile = "/etc/security/pwquality.conf";
               const configLines = [
                 `minlen = ${merged.minlen}`,
@@ -1122,7 +1311,8 @@ export function registerAccessControlTools(server: McpServer): void {
                   content: [
                     createTextContent(
                       `[DRY-RUN] Would write the following to ${targetFile}:\n\n` +
-                        configLines.map((l) => `  ${l}`).join("\n")
+                        configLines.map((l) => `  ${l}`).join("\n") +
+                        (pwqSanityWarnings ? `\n\n⚠️ Sanity warnings:\n${pwqSanityWarnings}` : "")
                     ),
                   ],
                 };
@@ -1178,7 +1368,8 @@ export function registerAccessControlTools(server: McpServer): void {
                   content: [
                     createTextContent(
                       `pam_pwquality configured in ${targetFile}:\n\n` +
-                        configLines.map((l) => `  ${l}`).join("\n")
+                        configLines.map((l) => `  ${l}`).join("\n") +
+                        (pwqSanityWarnings ? `\n\n⚠️ Sanity warnings:\n${pwqSanityWarnings}` : "")
                     ),
                   ],
                 };
@@ -1211,6 +1402,33 @@ export function registerAccessControlTools(server: McpServer): void {
               fail_interval: params.pam_settings?.fail_interval ?? defaults.fail_interval,
             };
 
+            // ── Sanity check: detect dangerous faillock parameters ──
+            const flSanityResult = validatePamPolicySanity({
+              module: "faillock",
+              params: merged,
+            });
+
+            if (flSanityResult.criticalCount > 0 && !(params.force)) {
+              const findingsText = flSanityResult.findings
+                .map(f => `  [${f.severity.toUpperCase()}] ${f.message}\n    → ${f.recommendation}`)
+                .join("\n");
+
+              return {
+                content: [
+                  createErrorContent(
+                    `PAM policy sanity check FAILED — ${flSanityResult.criticalCount} critical finding(s):\n\n` +
+                    findingsText +
+                    `\n\nTo override, set force=true. This may cause lockouts.`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
+            const flSanityWarnings = flSanityResult.findings
+              .map(f => `[${f.severity.toUpperCase()}] ${f.message}`)
+              .join("\n");
+
             const targetFile = (await getDistroAdapter()).paths.pamAuth;
             const failArgsList = [
               `deny=${merged.deny}`,
@@ -1237,7 +1455,8 @@ export function registerAccessControlTools(server: McpServer): void {
                   createTextContent(
                     `[DRY-RUN] Would add/update pam_faillock.so in ${targetFile}:\n\n` +
                       `  ${preLine}\n  ${authLine}\n\n` +
-                      `Settings: ${JSON.stringify(merged)}`
+                      `Settings: ${JSON.stringify(merged)}` +
+                      (flSanityWarnings ? `\n\n⚠️ Sanity warnings:\n${flSanityWarnings}` : "")
                   ),
                 ],
               };
@@ -1284,6 +1503,16 @@ export function registerAccessControlTools(server: McpServer): void {
                 );
               }
 
+              // 7b. Config-level sanity check on the resulting PAM structure
+              const configSanity = validatePamPolicySanity({ lines: recheckLines });
+              if (configSanity.criticalCount > 0 && !(params.force)) {
+                throw new PamWriteError(
+                  `PAM config sanity check failed: ${configSanity.findings.map(f => f.message).join("; ")}`,
+                  targetFile,
+                  backupEntry.id,
+                );
+              }
+
               // 8. Write (validates pre and post-write internally)
               await writePamFile(targetFile, newContent);
 
@@ -1304,7 +1533,8 @@ export function registerAccessControlTools(server: McpServer): void {
                     `pam_faillock configured in ${targetFile}:\n\n` +
                       `  ${preLine}\n  ${authLine}\n\n` +
                       `Settings: ${JSON.stringify(merged)}\n` +
-                      `Backup: ${backupEntry.backupPath}`
+                      `Backup: ${backupEntry.backupPath}` +
+                      (flSanityWarnings ? `\n\n⚠️ Sanity warnings:\n${flSanityWarnings}` : "")
                   ),
                 ],
               };
