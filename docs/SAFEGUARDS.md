@@ -32,6 +32,7 @@ This document describes the `SafeguardRegistry` system, application detection lo
    - [Restore from BackupManager](#restore-from-backupmanager)
    - [Manual Rollback Commands](#manual-rollback-commands)
 9. [Changelog and Audit Trail](#changelog-and-audit-trail)
+10. [PAM Sanity Validation](#pam-sanity-validation)
 
 ---
 
@@ -505,6 +506,60 @@ Each entry contains:
   "backupPath": null
 }
 ```
+
+---
+
+## PAM Sanity Validation
+
+> **Added in v0.8.1** — See also: [PAM Hardening Fix](adr/PAM-HARDENING-FIX.md), [PAM Sanity Validation Design](adr/pam-sanity-validation.md)
+
+The PAM safeguard system provides two-level validation for PAM configuration changes made through the `access_control` tool with `action=pam_configure`:
+
+### Level 1: Syntax Validation (`validatePamConfig`)
+
+Catches structurally invalid PAM configurations before they are written:
+
+- Missing or malformed fields (type, control, module path)
+- Concatenated tokens (e.g., `authrequiredpam_faillock.so` instead of `auth required pam_faillock.so`)
+- Incorrect `[success=N]` jump counts after rule insertion/removal
+- Missing critical modules (e.g., `pam_unix.so`)
+
+### Level 2: Policy Sanity Validation (`validatePamPolicySanity`)
+
+Catches syntactically valid but semantically dangerous policies:
+
+| Check | Threshold | Severity | Rationale |
+|-------|-----------|----------|-----------|
+| `faillock deny` | `< 3` | **critical** | Single-attempt lockout is too aggressive for production |
+| `unlock_time` | `= 0` | **critical** | Permanent lock requires manual admin intervention |
+| `minlen` | `> 64` | **critical** | Unusable password policy |
+| `retry` | `< 2` | **warning** | May frustrate users with single-attempt limit |
+| `unlock_time` | `> 86400` | **warning** | Lock duration exceeds 24 hours |
+
+### Behavior
+
+- **Critical findings**: Block the operation and return an error explaining why the policy is dangerous
+- **Warning findings**: Proceed with the operation but include advisory notices in the response
+- **`force=true` parameter**: Overrides critical blocks with explicit acknowledgment — the response includes a notice that safety checks were bypassed
+
+### Safety Pipeline
+
+All PAM modifications follow this pipeline:
+
+```
+1. Parse current PAM config (in-memory, lossless)
+2. Apply requested changes (in-memory)
+3. Validate syntax (validatePamConfig)
+4. Validate policy sanity (validatePamPolicySanity)
+5. Backup original file
+6. Write atomically (sudo install -m 644)
+7. Post-write re-read validation
+8. Auto-rollback on ANY failure at steps 3-7
+```
+
+### CIS Alignment
+
+Thresholds in `PAM_SANITY_THRESHOLDS` are aligned with CIS Benchmark recommendations for account lockout and password complexity. The validation prevents configurations that would technically pass CIS checks but create operational hazards (e.g., `deny=1` passes CIS's "lockout after N attempts" check but is impractical).
 
 Use the `defense_change_history` tool to view the audit trail in a formatted way:
 

@@ -263,7 +263,7 @@ function validateSshConfigValue(value: string): string {
 export function registerAccessControlTools(server: McpServer): void {
   server.tool(
     "access_control",
-    "Access control and authentication security. Actions: ssh_audit=check SSH config, ssh_harden=apply SSH hardening, ssh_cipher_audit=audit SSH cryptographic algorithms, pam_audit=check PAM config, pam_configure=set up PAM modules, sudo_audit=audit sudoers, user_audit=audit user accounts, password_policy_audit=audit password policy, password_policy_set=set password policy, restrict_shell=restrict user login shell",
+    "Access control and authentication security. Actions: ssh_audit=check SSH config, ssh_harden=apply SSH hardening, ssh_cipher_audit=audit SSH cryptographic algorithms, pam_audit=check PAM config, pam_configure=set up PAM modules, sudo_audit=audit sudoers, sudoers_manage=manage sudoers drop-in files, user_audit=audit user accounts, password_policy_audit=audit password policy, password_policy_set=set password policy (system-wide or per-user via chage), restrict_shell=restrict user login shell",
     {
       action: z
         .enum([
@@ -273,6 +273,7 @@ export function registerAccessControlTools(server: McpServer): void {
           "pam_audit",
           "pam_configure",
           "sudo_audit",
+          "sudoers_manage",
           "user_audit",
           "password_policy_audit",
           "password_policy_set",
@@ -343,6 +344,19 @@ export function registerAccessControlTools(server: McpServer): void {
         .optional()
         .default(true)
         .describe("Check for insecure sudoers configurations (sudo_audit, default: true)"),
+      // ── sudoers_manage params ──
+      sudoers_action: z
+        .enum(["write", "remove", "validate"])
+        .optional()
+        .describe("Sub-action for sudoers_manage"),
+      sudoers_filename: z
+        .string()
+        .optional()
+        .describe("Drop-in filename under /etc/sudoers.d/ (no path separators)"),
+      sudoers_content: z
+        .string()
+        .optional()
+        .describe("Content for the sudoers drop-in file (write sub-action)"),
       // ── user_audit params ──
       check_type: z
         .enum(["all", "privileged", "inactive", "no_password", "shell", "locked"])
@@ -370,6 +384,10 @@ export function registerAccessControlTools(server: McpServer): void {
         .number()
         .optional()
         .describe("Days after password expires before account is disabled (password_policy_set)"),
+      target_user: z
+        .string()
+        .optional()
+        .describe("Apply policy to specific user via chage instead of system-wide login.defs (password_policy_set)"),
       encrypt_method: z
         .enum(["SHA512", "YESCRYPT"])
         .optional()
@@ -396,7 +414,7 @@ export function registerAccessControlTools(server: McpServer): void {
       dry_run: z
         .boolean()
         .optional()
-        .describe("Preview changes without executing (ssh_harden, pam_configure, password_policy_set, restrict_shell)"),
+        .describe("Preview changes without executing (ssh_harden, pam_configure, password_policy_set, sudoers_manage, restrict_shell)"),
     },
     async (params) => {
       const { action } = params;
@@ -1706,6 +1724,346 @@ export function registerAccessControlTools(server: McpServer): void {
           }
         }
 
+        // ── sudoers_manage ───────────────────────────────────────────
+        case "sudoers_manage": {
+          const { sudoers_action: sudoAction, sudoers_filename: sudoFilename, sudoers_content: sudoContent, dry_run: sudoersDryRun } = params;
+          try {
+            if (!sudoAction) {
+              return {
+                content: [createErrorContent("'sudoers_action' is required for sudoers_manage action (write, remove, or validate)")],
+                isError: true,
+              };
+            }
+
+            const isDryRun = sudoersDryRun ?? getConfig().dryRun;
+
+            // ── validate sub-action ──
+            if (sudoAction === "validate") {
+              const result = await executeCommand({
+                command: "sudo",
+                args: ["visudo", "-c"],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: "Validate sudoers configuration",
+                target: "/etc/sudoers",
+                after: result.exitCode === 0 ? "Valid" : "Invalid",
+                dryRun: false,
+                success: result.exitCode === 0,
+              });
+              logChange(entry);
+
+              if (result.exitCode !== 0) {
+                return {
+                  content: [createErrorContent(`Sudoers validation failed:\n${result.stdout}\n${result.stderr}`)],
+                  isError: true,
+                };
+              }
+
+              return {
+                content: [createTextContent(`Sudoers validation passed:\n${result.stdout}${result.stderr}`)],
+              };
+            }
+
+            // ── remove sub-action ──
+            if (sudoAction === "remove") {
+              if (!sudoFilename) {
+                return {
+                  content: [createErrorContent("'sudoers_filename' is required for sudoers_manage remove sub-action")],
+                  isError: true,
+                };
+              }
+
+              if (!/^[a-zA-Z0-9_-]+$/.test(sudoFilename)) {
+                return {
+                  content: [createErrorContent(`Invalid sudoers filename '${sudoFilename}'. Must match /^[a-zA-Z0-9_-]+$/ (no path separators).`)],
+                  isError: true,
+                };
+              }
+
+              if (sudoFilename === "README") {
+                return {
+                  content: [createErrorContent("Refusing to remove 'README' from /etc/sudoers.d/.")],
+                  isError: true,
+                };
+              }
+
+              const filePath = `/etc/sudoers.d/${sudoFilename}`;
+
+              if (isDryRun) {
+                const entry = createChangeEntry({
+                  tool: "access_control",
+                  action: `[DRY-RUN] Remove sudoers drop-in ${sudoFilename}`,
+                  target: filePath,
+                  after: "Would remove file",
+                  dryRun: true,
+                  success: true,
+                });
+                logChange(entry);
+
+                return {
+                  content: [createTextContent(
+                    `[DRY-RUN] Would remove sudoers drop-in file:\n\n` +
+                    `  File: ${filePath}\n` +
+                    `  Command: sudo rm ${filePath}\n` +
+                    `  Post-validate: sudo visudo -c`
+                  )],
+                };
+              }
+
+              // Backup existing file before removal
+              let backupPath: string | undefined;
+              try {
+                backupPath = backupFile(filePath);
+              } catch {
+                await executeCommand({
+                  command: "sudo",
+                  args: ["cp", filePath, `${filePath}.bak.${Date.now()}`],
+                  toolName: "access_control",
+                });
+              }
+
+              // Remove the file
+              const rmResult = await executeCommand({
+                command: "sudo",
+                args: ["rm", filePath],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              if (rmResult.exitCode !== 0) {
+                const entry = createChangeEntry({
+                  tool: "access_control",
+                  action: `Remove sudoers drop-in ${sudoFilename}`,
+                  target: filePath,
+                  dryRun: false,
+                  success: false,
+                  error: rmResult.stderr,
+                });
+                logChange(entry);
+
+                return {
+                  content: [createErrorContent(`Failed to remove ${filePath}: ${rmResult.stderr}`)],
+                  isError: true,
+                };
+              }
+
+              // Validate remaining config
+              const validateResult = await executeCommand({
+                command: "sudo",
+                args: ["visudo", "-c"],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: `Remove sudoers drop-in ${sudoFilename}`,
+                target: filePath,
+                after: "File removed",
+                backupPath,
+                dryRun: false,
+                success: true,
+                rollbackCommand: backupPath ? `sudo cp ${backupPath} ${filePath}` : undefined,
+              });
+              logChange(entry);
+
+              return {
+                content: [createTextContent(
+                  `Sudoers drop-in file removed:\n\n` +
+                  `  File: ${filePath}\n` +
+                  (backupPath ? `  Backup: ${backupPath}\n` : "") +
+                  `  Post-validation: ${validateResult.exitCode === 0 ? "passed" : "FAILED — " + validateResult.stderr}\n\n` +
+                  (backupPath ? `  Rollback: sudo cp ${backupPath} ${filePath}` : "")
+                )],
+              };
+            }
+
+            // ── write sub-action ──
+            if (sudoAction === "write") {
+              if (!sudoFilename) {
+                return {
+                  content: [createErrorContent("'sudoers_filename' is required for sudoers_manage write sub-action")],
+                  isError: true,
+                };
+              }
+
+              if (!sudoContent) {
+                return {
+                  content: [createErrorContent("'sudoers_content' is required for sudoers_manage write sub-action")],
+                  isError: true,
+                };
+              }
+
+              if (!/^[a-zA-Z0-9_-]+$/.test(sudoFilename)) {
+                return {
+                  content: [createErrorContent(`Invalid sudoers filename '${sudoFilename}'. Must match /^[a-zA-Z0-9_-]+$/ (no path separators).`)],
+                  isError: true,
+                };
+              }
+
+              if (sudoFilename === "README") {
+                return {
+                  content: [createErrorContent("Refusing to overwrite 'README' in /etc/sudoers.d/.")],
+                  isError: true,
+                };
+              }
+
+              // SAFETY CHECK: reject NOPASSWD: ALL
+              if (/NOPASSWD\s*:\s*ALL/i.test(sudoContent)) {
+                return {
+                  content: [createErrorContent("Refusing to write NOPASSWD: ALL rule. Use scoped NOPASSWD entries for specific commands.")],
+                  isError: true,
+                };
+              }
+
+              const filePath = `/etc/sudoers.d/${sudoFilename}`;
+              const tempPath = "/tmp/.defense-mcp-sudoers-validate";
+
+              // Write content to temp file for validation
+              await executeCommand({
+                command: "sudo",
+                args: ["tee", tempPath],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+                stdin: sudoContent,
+              });
+
+              // Validate temp file with visudo
+              const validateTempResult = await executeCommand({
+                command: "sudo",
+                args: ["visudo", "-c", "-f", tempPath],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              if (validateTempResult.exitCode !== 0) {
+                // Clean up temp file on validation failure
+                await executeCommand({
+                  command: "sudo",
+                  args: ["rm", tempPath],
+                  toolName: "access_control",
+                });
+
+                return {
+                  content: [createErrorContent(
+                    `Sudoers content validation failed:\n${validateTempResult.stdout}\n${validateTempResult.stderr}`
+                  )],
+                  isError: true,
+                };
+              }
+
+              if (isDryRun) {
+                // Clean up temp file
+                await executeCommand({
+                  command: "sudo",
+                  args: ["rm", tempPath],
+                  toolName: "access_control",
+                });
+
+                const entry = createChangeEntry({
+                  tool: "access_control",
+                  action: `[DRY-RUN] Write sudoers drop-in ${sudoFilename}`,
+                  target: filePath,
+                  after: "Validated content (not written)",
+                  dryRun: true,
+                  success: true,
+                });
+                logChange(entry);
+
+                return {
+                  content: [createTextContent(
+                    `[DRY-RUN] Validated sudoers content for ${filePath}:\n\n` +
+                    `  Validation: passed\n` +
+                    `  Content:\n${sudoContent.split("\n").map(l => `    ${l}`).join("\n")}\n\n` +
+                    `  Would write to: ${filePath}\n` +
+                    `  Would set permissions: 440, owner: root:root`
+                  )],
+                };
+              }
+
+              // Backup existing file if present
+              let backupPath: string | undefined;
+              try {
+                backupPath = backupFile(filePath);
+              } catch {
+                // File may not exist yet, that's fine
+              }
+
+              // Copy validated temp file to destination
+              await executeCommand({
+                command: "sudo",
+                args: ["cp", tempPath, filePath],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              // Set proper permissions
+              await executeCommand({
+                command: "sudo",
+                args: ["chmod", "440", filePath],
+                toolName: "access_control",
+              });
+
+              await executeCommand({
+                command: "sudo",
+                args: ["chown", "root:root", filePath],
+                toolName: "access_control",
+              });
+
+              // Clean up temp file
+              await executeCommand({
+                command: "sudo",
+                args: ["rm", tempPath],
+                toolName: "access_control",
+              });
+
+              // Final validation of entire sudoers config
+              const finalValidateResult = await executeCommand({
+                command: "sudo",
+                args: ["visudo", "-c"],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: `Write sudoers drop-in ${sudoFilename}`,
+                target: filePath,
+                after: sudoContent,
+                backupPath,
+                dryRun: false,
+                success: true,
+                rollbackCommand: `sudo rm ${filePath}`,
+              });
+              logChange(entry);
+
+              return {
+                content: [createTextContent(
+                  `Sudoers drop-in file written:\n\n` +
+                  `  File: ${filePath}\n` +
+                  `  Permissions: 440, root:root\n` +
+                  (backupPath ? `  Backup: ${backupPath}\n` : "") +
+                  `  Final validation: ${finalValidateResult.exitCode === 0 ? "passed" : "FAILED — " + finalValidateResult.stderr}\n\n` +
+                  `  Content:\n${sudoContent.split("\n").map(l => `    ${l}`).join("\n")}\n\n` +
+                  `  Rollback: sudo rm ${filePath}`
+                )],
+              };
+            }
+
+            return {
+              content: [createErrorContent(`Unknown sudoers_action: ${sudoAction}`)],
+              isError: true,
+            };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(msg)], isError: true };
+          }
+        }
+
         // ── user_audit ───────────────────────────────────────────────
         case "user_audit": {
           const { check_type } = params;
@@ -2023,8 +2381,158 @@ export function registerAccessControlTools(server: McpServer): void {
 
         // ── password_policy_set ──────────────────────────────────────
         case "password_policy_set": {
-          const { min_days, max_days, warn_days, min_length, inactive_days, encrypt_method, dry_run } = params;
+          const { min_days, max_days, warn_days, min_length, inactive_days, encrypt_method, dry_run, target_user } = params;
           try {
+            // ── Per-user chage branch ──
+            if (target_user) {
+              // Validate username
+              if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(target_user)) {
+                return {
+                  content: [
+                    createErrorContent(
+                      `Invalid username '${target_user}'. Must match /^[a-z_][a-z0-9_-]{0,31}$/.`
+                    ),
+                  ],
+                  isError: true,
+                };
+              }
+
+              // Verify user exists
+              const idResult = await executeCommand({
+                command: "id",
+                args: [target_user],
+                toolName: "access_control",
+              });
+              if (idResult.exitCode !== 0) {
+                return {
+                  content: [createErrorContent(`User '${target_user}' does not exist.`)],
+                  isError: true,
+                };
+              }
+
+              // Get current settings
+              const currentChage = await executeCommand({
+                command: "sudo",
+                args: ["chage", "-l", target_user],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              // Build chage args from provided params
+              const chageArgs: string[] = [];
+              const appliedSettings: Record<string, string> = {};
+
+              if (min_days !== undefined) {
+                chageArgs.push("-m", String(min_days));
+                appliedSettings["min_days (-m)"] = String(min_days);
+              }
+              if (max_days !== undefined) {
+                chageArgs.push("-M", String(max_days));
+                appliedSettings["max_days (-M)"] = String(max_days);
+              }
+              if (warn_days !== undefined) {
+                chageArgs.push("-W", String(warn_days));
+                appliedSettings["warn_days (-W)"] = String(warn_days);
+              }
+              if (inactive_days !== undefined) {
+                chageArgs.push("-I", String(inactive_days));
+                appliedSettings["inactive_days (-I)"] = String(inactive_days);
+              }
+
+              if (chageArgs.length === 0) {
+                return {
+                  content: [
+                    createErrorContent(
+                      "No applicable chage parameters provided. Specify min_days, max_days, warn_days, or inactive_days for per-user policy."
+                    ),
+                  ],
+                  isError: true,
+                };
+              }
+
+              const isDryRun = dry_run ?? getConfig().dryRun;
+
+              if (isDryRun) {
+                const entry = createChangeEntry({
+                  tool: "access_control",
+                  action: `[DRY-RUN] Set per-user password policy for ${target_user}`,
+                  target: target_user,
+                  after: JSON.stringify(appliedSettings),
+                  dryRun: true,
+                  success: true,
+                });
+                logChange(entry);
+
+                return {
+                  content: [
+                    createTextContent(
+                      `[DRY-RUN] Would apply per-user password policy for '${target_user}':\n\n` +
+                      `  Command: sudo chage ${chageArgs.join(" ")} ${target_user}\n\n` +
+                      `  Settings:\n${Object.entries(appliedSettings).map(([k, v]) => `    ${k} = ${v}`).join("\n")}\n\n` +
+                      `  Current settings:\n${currentChage.stdout}`
+                    ),
+                  ],
+                };
+              }
+
+              // Apply chage
+              const chageResult = await executeCommand({
+                command: "sudo",
+                args: ["chage", ...chageArgs, target_user],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              if (chageResult.exitCode !== 0) {
+                const entry = createChangeEntry({
+                  tool: "access_control",
+                  action: `Set per-user password policy for ${target_user}`,
+                  target: target_user,
+                  after: JSON.stringify(appliedSettings),
+                  dryRun: false,
+                  success: false,
+                  error: chageResult.stderr,
+                });
+                logChange(entry);
+
+                return {
+                  content: [createErrorContent(`Failed to set password policy for '${target_user}': ${chageResult.stderr}`)],
+                  isError: true,
+                };
+              }
+
+              // Verify with chage -l
+              const verifyChage = await executeCommand({
+                command: "sudo",
+                args: ["chage", "-l", target_user],
+                toolName: "access_control",
+                timeout: getToolTimeout("access_control"),
+              });
+
+              const entry = createChangeEntry({
+                tool: "access_control",
+                action: `Set per-user password policy for ${target_user}`,
+                target: target_user,
+                before: currentChage.stdout.trim(),
+                after: JSON.stringify(appliedSettings),
+                dryRun: false,
+                success: true,
+              });
+              logChange(entry);
+
+              return {
+                content: [
+                  createTextContent(
+                    `Per-user password policy applied for '${target_user}':\n\n` +
+                    `  Command: sudo chage ${chageArgs.join(" ")} ${target_user}\n\n` +
+                    `  Settings applied:\n${Object.entries(appliedSettings).map(([k, v]) => `    ${k} = ${v}`).join("\n")}\n\n` +
+                    `  Current policy:\n${verifyChage.stdout}`
+                  ),
+                ],
+              };
+            }
+
+            // ── System-wide login.defs logic (existing) ──
             const settingsToApply: Record<string, string> = {};
             if (min_days !== undefined) settingsToApply["PASS_MIN_DAYS"] = String(min_days);
             if (max_days !== undefined) settingsToApply["PASS_MAX_DAYS"] = String(max_days);

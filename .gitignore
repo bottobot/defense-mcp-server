@@ -1,8 +1,28 @@
+# Build output
+dist/
 node_modules/
 build/
+
+# Coverage
 coverage/
+
+# Logs
 *.log
+
+# OS files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# IDE/tool config
 .claude/
+.vscode/
+.mcp.json
 *.code-workspace
 .roomodes
 .roo/
@@ -12,3 +32,4 @@ SECURITY-AUDIT-REPORT.md
 *-AUDIT-*.md
 *-FIX-*.md
 *-REMEDIATION-*.md
+REMEDIATION.md

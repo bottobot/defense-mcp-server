@@ -132,7 +132,7 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   { binary: "ausearch",       candidates: ["/usr/sbin/ausearch", "/sbin/ausearch"] },
   { binary: "aureport",       candidates: ["/usr/sbin/aureport", "/sbin/aureport"] },
   { binary: "fail2ban-client", candidates: ["/usr/bin/fail2ban-client", "/usr/local/bin/fail2ban-client"] },
-  { binary: "logrotate",      candidates: ["/usr/sbin/logrotate", "/sbin/logrotate"] },
+  { binary: "logrotate",      candidates: ["/usr/sbin/logrotate", "/usr/bin/logrotate", "/sbin/logrotate"] },
 
   // ── IDS / rootkit detection ────────────────────────────────────────────
   { binary: "aide",       candidates: ["/usr/bin/aide", "/usr/sbin/aide"] },
@@ -188,7 +188,7 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   { binary: "useradd",  candidates: ["/usr/sbin/useradd", "/sbin/useradd"] },
   { binary: "visudo",   candidates: ["/usr/sbin/visudo", "/sbin/visudo"] },
   { binary: "getent",   candidates: ["/usr/bin/getent", "/bin/getent"] },
-  { binary: "chage",    candidates: ["/usr/bin/chage", "/bin/chage"] },
+  { binary: "chage",    candidates: ["/usr/bin/chage", "/usr/sbin/chage", "/bin/chage"] },
   { binary: "lastlog",  candidates: ["/usr/bin/lastlog", "/bin/lastlog"] },
 
   // ── Package managers ───────────────────────────────────────────────────
@@ -250,7 +250,8 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
 
   // ── Boot / secure boot ─────────────────────────────────────────────────
   { binary: "mokutil",     candidates: ["/usr/bin/mokutil"] },
-  { binary: "update-grub", candidates: ["/usr/sbin/update-grub", "/sbin/update-grub"] },
+  { binary: "update-grub",           candidates: ["/usr/sbin/update-grub", "/sbin/update-grub"] },
+  { binary: "grub-mkpasswd-pbkdf2", candidates: ["/usr/bin/grub-mkpasswd-pbkdf2", "/usr/sbin/grub-mkpasswd-pbkdf2"] },
 
   // ── Python (for auto-installer verification) ───────────────────────────
   { binary: "python3", candidates: ["/usr/bin/python3", "/usr/local/bin/python3"] },

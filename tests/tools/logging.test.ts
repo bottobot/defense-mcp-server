@@ -156,4 +156,88 @@ describe("logging tools", () => {
     const result = await handler({ action: "rotation_audit" });
     expect(result.isError).toBeUndefined();
   });
+
+  // ── rotation_configure ───────────────────────────────────────────────
+
+  it("should require logrotate_path for rotation_configure", async () => {
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({ action: "rotation_configure" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("logrotate_path is required");
+  });
+
+  it("should require logrotate_name for rotation_configure", async () => {
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({ action: "rotation_configure", logrotate_path: "/var/log/myapp.log" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("logrotate_name is required");
+  });
+
+  it("should reject logrotate_name with path traversal", async () => {
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({
+      action: "rotation_configure",
+      logrotate_path: "/var/log/myapp.log",
+      logrotate_name: "../etc/evil",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid logrotate_name");
+  });
+
+  it("should reject unsafe extra_directives", async () => {
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({
+      action: "rotation_configure",
+      logrotate_path: "/var/log/myapp.log",
+      logrotate_name: "myapp",
+      extra_directives: ["rm -rf /"],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Unsafe logrotate directive");
+  });
+
+  it("should preview rotation_configure in dry_run mode", async () => {
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({
+      action: "rotation_configure",
+      logrotate_path: "/var/log/myapp.log",
+      logrotate_name: "myapp",
+      rotate_count: 5,
+      rotate_frequency: "daily",
+      compress_logs: true,
+      extra_directives: ["missingok", "notifempty"],
+      dry_run: true,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("DRY-RUN");
+    expect(result.content[0].text).toContain("/var/log/myapp.log");
+    expect(result.content[0].text).toContain("daily");
+    expect(result.content[0].text).toContain("rotate 5");
+    expect(result.content[0].text).toContain("compress");
+    expect(result.content[0].text).toContain("missingok");
+    expect(result.content[0].text).toContain("notifempty");
+  });
+
+  it("should write logrotate config when not dry_run", async () => {
+    const { executeCommand } = await import("../../src/core/executor.js");
+    vi.mocked(executeCommand).mockResolvedValue({ ...cmdOk });
+    const handler = tools.get("log_management")!.handler;
+    const result = await handler({
+      action: "rotation_configure",
+      logrotate_path: "/var/log/myapp.log",
+      logrotate_name: "myapp",
+      rotate_count: 7,
+      rotate_frequency: "weekly",
+      compress_logs: true,
+      dry_run: false,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("Logrotate configuration written to /etc/logrotate.d/myapp");
+    expect(vi.mocked(executeCommand)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "sudo",
+        args: ["tee", "/etc/logrotate.d/myapp"],
+      }),
+    );
+  });
 });

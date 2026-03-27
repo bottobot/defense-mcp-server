@@ -1,6 +1,6 @@
 {
   "name": "defense-mcp-server",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Defense MCP Server — 31 defensive security tools across 29 modules for system hardening and threat detection",
   "type": "module",
   "main": "build/index.js",
@@ -20,6 +20,8 @@
     "build:verify": "tsc --noEmit",
     "start": "node build/index.js",
     "dev": "tsx src/index.ts",
+    "verify:tools": "node scripts/verify-tool-imports.mjs",
+    "pretest": "node scripts/verify-tool-imports.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
