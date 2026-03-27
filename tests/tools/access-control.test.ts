@@ -670,4 +670,171 @@ PermitEmptyPasswords no
     });
   });
 
+  // ── sudoers_manage ──────────────────────────────────────────────────
+
+  describe("sudoers_manage", () => {
+    it("should require sudoers_action", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "sudoers_manage" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("sudoers_action");
+    });
+
+    it("should reject filename with path traversal (write)", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "write",
+        sudoers_filename: "../etc/evil",
+        sudoers_content: "user ALL=(ALL) ALL",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid sudoers filename");
+    });
+
+    it("should reject filename with path traversal (remove)", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "remove",
+        sudoers_filename: "../../shadow",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid sudoers filename");
+    });
+
+    it("should refuse to overwrite README (write)", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "write",
+        sudoers_filename: "README",
+        sudoers_content: "user ALL=(ALL) ALL",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("README");
+    });
+
+    it("should refuse to remove README", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "remove",
+        sudoers_filename: "README",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("README");
+    });
+
+    it("should reject NOPASSWD: ALL content", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "write",
+        sudoers_filename: "myuser",
+        sudoers_content: "myuser ALL=(ALL) NOPASSWD: ALL",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("NOPASSWD: ALL");
+    });
+
+    it("should require filename for write", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "write",
+        sudoers_content: "user ALL=(ALL) ALL",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("sudoers_filename");
+    });
+
+    it("should require content for write", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "write",
+        sudoers_filename: "myuser",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("sudoers_content");
+    });
+
+    it("should preview write in dry_run mode", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "parsed OK", stderr: "" });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "write",
+        sudoers_filename: "deploy",
+        sudoers_content: "deploy ALL=(ALL) /usr/bin/systemctl restart myapp",
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("DRY-RUN");
+      expect(result.content[0].text).toContain("deploy");
+    });
+
+    it("should run visudo -c for validate sub-action", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({
+        exitCode: 0,
+        stdout: "/etc/sudoers: parsed OK\n/etc/sudoers.d/myuser: parsed OK",
+        stderr: "",
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "sudoers_manage",
+        sudoers_action: "validate",
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("parsed OK");
+    });
+  });
+
+  // ── password_policy_set target_user ─────────────────────────────────
+
+  describe("password_policy_set target_user", () => {
+    it("should reject invalid username", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        target_user: "root; rm -rf /",
+        max_days: 90,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid username");
+    });
+
+    it("should require at least one chage parameter", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "uid=1000(testuser)", stderr: "" });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        target_user: "testuser",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("No applicable chage parameters");
+    });
+
+    it("should preview chage in dry_run mode", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "uid=1000(testuser)", stderr: "" });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        target_user: "testuser",
+        max_days: 90,
+        warn_days: 14,
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("DRY-RUN");
+      expect(result.content[0].text).toContain("testuser");
+      expect(result.content[0].text).toContain("chage");
+    });
+  });
+
 });

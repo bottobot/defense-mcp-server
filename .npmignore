@@ -3,18 +3,21 @@ src/
 tests/
 coverage/
 .github/
+.husky/
 vitest.config.ts
 tsconfig.json
 eslint.config.mjs
 
-# Documentation (keep README.md, LICENSE, CHANGELOG.md for npm)
+# Documentation (keep README.md and LICENSE)
 docs/
 etc/
 scripts/
 plans/
+AGENTS.md
+TODO.md
+CHANGELOG.md
 
 # Internal tracking
-TODO.md
 PROGRESS.md
 
 # Security audit and fix reports (system-specific, never publish)
@@ -28,3 +31,7 @@ SECURITY-AUDIT-REPORT.md
 .roo/
 .claude/
 *.code-workspace
+
+# Git files
+.gitignore
+.git/

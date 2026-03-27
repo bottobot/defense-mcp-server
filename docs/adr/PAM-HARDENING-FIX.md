@@ -1,6 +1,6 @@
 # PAM Hardening Fix — Architecture Plan
 
-> **Status**: Draft  
+> **Status**: Implemented (v0.7.1)
 > **Created**: 2026-03-14  
 > **Scope**: Fix critical PAM config corruption bug in `access_control` tool  
 > **Risk**: **Critical** — the current code can lock users out of their system

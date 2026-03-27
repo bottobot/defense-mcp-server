@@ -60,7 +60,7 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 - `kernel_modules` — List and audit loaded kernel modules
 - `kernel_coredump` — Audit or restrict core dump settings
 - `bootloader_audit` — Audit bootloader (GRUB) security configuration
-- `bootloader_configure` — Apply bootloader security hardening
+- `bootloader_configure` — Apply bootloader security hardening (`add_kernel_params`, `status`, `set_password`). The `set_password` sub-action sets a GRUB bootloader password with PBKDF2 hashing.
 - `memory_audit` — Audit memory and exploit mitigation settings
 - `memory_enforce_aslr` — Enforce Address Space Layout Randomization
 - `memory_report` — Generate memory hardening status report
@@ -80,7 +80,7 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 - `permissions_fix` — Fix insecure file/directory permissions
 - `permissions_audit` — Comprehensive filesystem permissions audit
 - `systemd_audit` — Audit systemd service unit security settings
-- `systemd_apply` — Apply systemd service hardening (sandboxing, capabilities)
+- `systemd_apply` — Apply systemd service hardening (sandboxing, capabilities). Supports `basic`, `strict`, and `custom` levels. Custom level accepts `custom_directives` array with allowlist validation.
 - `cron_audit` — Audit cron jobs for suspicious or risky entries
 - `umask_audit` — Audit system umask settings
 - `umask_set` — Set system umask value
@@ -97,7 +97,7 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 
 | Tool Name | Description | Actions | dryRun | Sudo |
 |-----------|-------------|---------|--------|------|
-| `access_control` | Authentication and authorization (SSH, PAM, sudo, users, passwords, shell) | `ssh_audit`, `ssh_harden`, `ssh_cipher_audit`, `pam_audit`, `pam_configure`, `sudo_audit`, `user_audit`, `password_policy_audit`, `password_policy_set`, `restrict_shell` | Y | conditional |
+| `access_control` | Authentication and authorization (SSH, PAM, sudo, users, passwords, shell) | `ssh_audit`, `ssh_harden`, `ssh_cipher_audit`, `pam_audit`, `pam_configure`, `sudo_audit`, `sudoers_manage`, `user_audit`, `password_policy_audit`, `password_policy_set`, `restrict_shell` | Y | conditional |
 
 **Actions:**
 - `ssh_audit` — Audit SSH server configuration for security issues
@@ -106,9 +106,10 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 - `pam_audit` — Audit PAM (Pluggable Authentication Modules) configuration
 - `pam_configure` — Apply PAM security configuration (password quality, lockout)
 - `sudo_audit` — Audit sudoers configuration for overly permissive rules
+- `sudoers_manage` — Manage sudoers drop-in files under `/etc/sudoers.d/` (write, remove, validate). Validates with `visudo -cf`, atomic write, backup, and rollback.
 - `user_audit` — Audit user accounts (empty passwords, UID 0, inactive users)
 - `password_policy_audit` — Audit system password policy settings
-- `password_policy_set` — Set system password policy parameters
+- `password_policy_set` — Set system password policy parameters. Supports `target_user` for per-user policy via `chage` (min_days, max_days, warn_days, inactive_days).
 - `restrict_shell` — Restrict a user's login shell
 
 ---
@@ -158,7 +159,7 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 
 | Tool Name | Description | Actions | dryRun | Sudo |
 |-----------|-------------|---------|--------|------|
-| `log_management` | Logging, monitoring, and SIEM integration (auditd, journalctl, fail2ban, syslog, SIEM) | `auditd_rules`, `auditd_search`, `auditd_report`, `auditd_cis_rules`, `journalctl_query`, `fail2ban_status`, `fail2ban_ban`, `fail2ban_unban`, `fail2ban_reload`, `fail2ban_audit`, `syslog_analyze`, `rotation_audit`, `siem_syslog_forward`, `siem_filebeat`, `siem_audit_forwarding`, `siem_test_connectivity` | Y | conditional |
+| `log_management` | Logging, monitoring, and SIEM integration (auditd, journalctl, fail2ban, syslog, SIEM) | `auditd_rules`, `auditd_search`, `auditd_report`, `auditd_cis_rules`, `journalctl_query`, `fail2ban_status`, `fail2ban_ban`, `fail2ban_unban`, `fail2ban_reload`, `fail2ban_audit`, `syslog_analyze`, `rotation_audit`, `rotation_configure`, `siem_syslog_forward`, `siem_filebeat`, `siem_audit_forwarding`, `siem_test_connectivity` | Y | conditional |
 
 **Actions:**
 - `auditd_rules` — Manage auditd rules (list, add, delete)
@@ -173,6 +174,7 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 - `fail2ban_audit` — Audit fail2ban configuration for best practices
 - `syslog_analyze` — Analyze syslog for security events and anomalies
 - `rotation_audit` — Audit log rotation configuration (logrotate)
+- `rotation_configure` — Create/update logrotate configs under `/etc/logrotate.d/` with frequency, retention, compression, and safe directive validation
 - `siem_syslog_forward` — Audit/configure rsyslog remote forwarding (TCP/UDP/TLS)
 - `siem_filebeat` — Audit Filebeat installation, modules, and output configuration
 - `siem_audit_forwarding` — Comprehensive log forwarding audit with CIS compliance check

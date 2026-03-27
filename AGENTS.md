@@ -69,3 +69,17 @@ MCP (Model Context Protocol) server providing 31 action-based Linux security too
 ## Runtime Dependencies
 
 Only 2: `@modelcontextprotocol/sdk` and `zod`. Everything else is devDependency.
+
+## PAM Safety (v0.8.1+)
+
+- **PAM policy sanity validation**: `validatePamPolicySanity()` in `pam-utils.ts` checks for overly restrictive policies before applying
+- Thresholds: `faillock deny < 3` = critical, `unlock_time = 0` = critical (permanent lock), `minlen > 64` = critical
+- `force=true` parameter overrides critical blocks with explicit acknowledgment
+- All PAM modifications: backup → parse → validate → write → post-write verify → auto-rollback on failure
+- No more `sed` commands on PAM files — replaced with in-memory parser/serializer
+
+## SSH Service-Awareness (v0.8.1+)
+
+- `ssh_audit` detects whether sshd is installed/running before flagging config issues
+- States: `active` (real findings), `installed_inactive` (downgraded), `removed_residual` (all INFO), `not_installed` (skip)
+- Prevents false positives from leftover `/etc/ssh/sshd_config` after package removal

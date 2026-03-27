@@ -355,13 +355,16 @@ export function registerHardeningTools(server: McpServer): void {
         .describe("Type of kernel security check (for kernel_audit)"),
       // bootloader params
       configure_action: z
-        .enum(["add_kernel_params", "status"])
+        .enum(["add_kernel_params", "status", "set_password"])
         .optional()
         .describe("Configure sub-action (required for bootloader_configure)"),
       kernel_params: z
         .string()
         .optional()
         .describe("Space-separated kernel parameters to add (for bootloader_configure action=add_kernel_params)"),
+      grub_password: z.string().optional().describe("GRUB bootloader password (bootloader_configure set_password)"),
+      grub_superuser: z.string().optional().default("grubadmin").describe("GRUB superuser name (default: grubadmin)"),
+      grub_unrestricted: z.boolean().optional().default(true).describe("Allow normal boot without password, require for editing"),
       // memory params
       binaries: z.array(z.string()).optional().describe("Binary paths to check (for memory_audit)"),
       // shared
@@ -1077,7 +1080,7 @@ export function registerHardeningTools(server: McpServer): void {
         case "bootloader_configure": {
           try {
             if (!params.configure_action) {
-              return { content: [createErrorContent("Error: 'configure_action' is required for bootloader_configure (add_kernel_params or status)")], isError: true };
+              return { content: [createErrorContent("Error: 'configure_action' is required for bootloader_configure (add_kernel_params, status, or set_password)")], isError: true };
             }
 
             const isDryRun = params.dry_run ?? getConfig().dryRun;
@@ -1116,6 +1119,151 @@ export function registerHardeningTools(server: McpServer): void {
                   currentParams,
                   safeParamStatus: paramStatus,
                   missingCount: paramStatus.filter((p) => !p.present).length,
+                })],
+              };
+            }
+
+            // set_password action
+            if (params.configure_action === "set_password") {
+              if (!params.grub_password || params.grub_password.length < 8) {
+                return { content: [createErrorContent("grub_password is required and must be at least 8 characters for set_password action")], isError: true };
+              }
+
+              const grubSuperuser = params.grub_superuser ?? "grubadmin";
+              if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(grubSuperuser)) {
+                return { content: [createErrorContent(`Invalid grub_superuser name: '${grubSuperuser}'. Must start with a letter and contain only letters, digits, underscores, or hyphens.`)], isError: true };
+              }
+
+              const grubUnrestricted = params.grub_unrestricted ?? true;
+
+              // Generate PBKDF2 hash — grub-mkpasswd-pbkdf2 prompts for password twice
+              const passwordInput = params.grub_password + "\n" + params.grub_password + "\n";
+              const hashResult = await executeCommand({
+                command: "grub-mkpasswd-pbkdf2",
+                args: [],
+                stdin: passwordInput,
+                toolName: "harden_kernel",
+                timeout: 30000,
+              });
+
+              // SECURITY: Zero the password string buffer as best we can
+              const passwordBuf = Buffer.from(params.grub_password);
+              passwordBuf.fill(0);
+
+              if (hashResult.exitCode !== 0) {
+                return { content: [createErrorContent(`grub-mkpasswd-pbkdf2 failed (exit ${hashResult.exitCode}): ${hashResult.stderr}`)], isError: true };
+              }
+
+              // Parse hash from output — look for PBKDF2 hash line
+              const hashMatch = (hashResult.stdout + hashResult.stderr).match(/PBKDF2 hash of your password is (.+)/);
+              const grubHash = hashMatch ? hashMatch[1].trim() : undefined;
+              if (!grubHash || !grubHash.startsWith("grub.pbkdf2.sha512.")) {
+                return { content: [createErrorContent("Failed to parse PBKDF2 hash from grub-mkpasswd-pbkdf2 output")], isError: true };
+              }
+
+              // Build GRUB password config content
+              const passwordConfigContent = `set superusers="${grubSuperuser}"\npassword_pbkdf2 ${grubSuperuser} ${grubHash}`;
+              const passwordConfigFile = "/etc/grub.d/40_custom_password";
+
+              if (isDryRun) {
+                const entry = createChangeEntry({
+                  tool: "harden_kernel",
+                  action: "[DRY-RUN] Set GRUB bootloader password",
+                  target: passwordConfigFile,
+                  after: passwordConfigContent,
+                  dryRun: true,
+                  success: true,
+                });
+                logChange(entry);
+
+                return {
+                  content: [formatToolOutput({
+                    action: "set_password",
+                    dryRun: true,
+                    superuser: grubSuperuser,
+                    unrestricted: grubUnrestricted,
+                    configFile: passwordConfigFile,
+                    preview: passwordConfigContent,
+                    note: "GRUB password hash generated successfully. Set dry_run=false to apply.",
+                  })],
+                };
+              }
+
+              // Backup existing password config if present
+              try { backupFile(passwordConfigFile); } catch { /* may not exist */ }
+
+              // Write GRUB password config
+              const writeResult = await executeCommand({
+                command: "sudo",
+                args: ["tee", passwordConfigFile],
+                stdin: passwordConfigContent + "\n",
+                toolName: "harden_kernel",
+              });
+
+              if (writeResult.exitCode !== 0) {
+                return { content: [createErrorContent(`Failed to write ${passwordConfigFile}: ${writeResult.stderr}`)], isError: true };
+              }
+
+              // Set restrictive permissions on the password config
+              await executeCommand({
+                command: "sudo",
+                args: ["chmod", "700", passwordConfigFile],
+                toolName: "harden_kernel",
+              });
+
+              // Handle --unrestricted flag in /etc/grub.d/10_linux
+              let unrestrictedApplied = false;
+              if (grubUnrestricted) {
+                const linuxGrubFile = "/etc/grub.d/10_linux";
+                const readLinux = await executeCommand({
+                  command: "grep",
+                  args: ["-c", "--unrestricted", linuxGrubFile],
+                  toolName: "harden_kernel",
+                });
+                const alreadyUnrestricted = readLinux.exitCode === 0 && parseInt(readLinux.stdout.trim(), 10) > 0;
+
+                if (!alreadyUnrestricted) {
+                  // Backup before patching
+                  try { backupFile(linuxGrubFile); } catch { /* may not exist */ }
+
+                  await executeCommand({
+                    command: "sudo",
+                    args: ["sed", "-i", 's/^CLASS="--class gnu-linux/CLASS="--class gnu-linux --unrestricted/', linuxGrubFile],
+                    toolName: "harden_kernel",
+                  });
+                  unrestrictedApplied = true;
+                }
+              }
+
+              // Run update-grub to apply changes
+              const updateResult = await executeCommand({
+                command: "sudo",
+                args: ["update-grub"],
+                toolName: "harden_kernel",
+                timeout: 30000,
+              });
+
+              const entry = createChangeEntry({
+                tool: "harden_kernel",
+                action: "Set GRUB bootloader password",
+                target: passwordConfigFile,
+                after: `superuser=${grubSuperuser}, unrestricted=${grubUnrestricted}`,
+                dryRun: false,
+                success: updateResult.exitCode === 0,
+                error: updateResult.exitCode !== 0 ? updateResult.stderr : undefined,
+                rollbackCommand: `sudo rm ${passwordConfigFile} && sudo update-grub`,
+              });
+              logChange(entry);
+
+              return {
+                content: [formatToolOutput({
+                  action: "set_password",
+                  dryRun: false,
+                  superuser: grubSuperuser,
+                  unrestricted: grubUnrestricted,
+                  unrestrictedApplied,
+                  configFile: passwordConfigFile,
+                  updateGrubSuccess: updateResult.exitCode === 0,
                 })],
               };
             }
@@ -1497,7 +1645,8 @@ export function registerHardeningTools(server: McpServer): void {
         .describe("Scope of files to audit (for permissions_audit)"),
       // systemd params
       threshold: z.number().optional().default(5).describe("Exposure score threshold 0-10 (for systemd_audit)"),
-      hardening_level: z.enum(["basic", "strict"]).optional().describe("Preset hardening level (required for systemd_apply)"),
+      hardening_level: z.enum(["basic", "strict", "custom"]).optional().describe("Preset hardening level (required for systemd_apply)"),
+      custom_directives: z.array(z.string()).optional().describe("Array of systemd service directives for custom level, e.g. ['ProtectSystem=strict', 'PrivateTmp=yes']"),
       // misc params
       umask_value: z.enum(["027", "077"]).optional().describe("Umask value (required for umask_set)"),
       targets: z
@@ -2135,7 +2284,41 @@ export function registerHardeningTools(server: McpServer): void {
               "MemoryDenyWriteExecute=yes",
             ];
 
-            const directives = hardening_level === "strict" ? strictDirectives : basicDirectives;
+            let directives: string[];
+            if (hardening_level === "custom") {
+              if (!params.custom_directives || params.custom_directives.length === 0) {
+                return { content: [createErrorContent("Error: 'custom_directives' array is required and must not be empty for custom hardening level")], isError: true };
+              }
+
+              const ALLOWED_DIRECTIVE_NAMES = [
+                "ProtectSystem", "ProtectHome", "PrivateTmp", "NoNewPrivileges",
+                "ProtectKernelTunables", "ProtectKernelModules", "ProtectControlGroups",
+                "RestrictSUIDSGID", "MemoryDenyWriteExecute", "RestrictNamespaces",
+                "RestrictAddressFamilies", "RestrictRealtime", "PrivateDevices",
+                "PrivateNetwork", "PrivateUsers", "SystemCallFilter",
+                "SystemCallArchitectures", "CapabilityBoundingSet", "AmbientCapabilities",
+                "ReadWritePaths", "ReadOnlyPaths", "InaccessiblePaths",
+                "TemporaryFileSystem", "BindPaths", "BindReadOnlyPaths",
+                "LockPersonality", "ProtectHostname", "ProtectClock",
+                "ProtectKernelLogs", "ProtectProc", "ProcSubset",
+                "IPAddressDeny", "IPAddressAllow", "DevicePolicy", "DeviceAllow",
+                "UMask", "KeyringMode", "ProtectHome",
+              ];
+
+              for (const directive of params.custom_directives) {
+                if (!/^[A-Z][a-zA-Z]+=[^\n]+$/.test(directive)) {
+                  return { content: [createErrorContent(`Invalid directive format: '${directive}'. Must be Key=value with no newlines.`)], isError: true };
+                }
+                const directiveName = directive.split("=")[0];
+                if (!ALLOWED_DIRECTIVE_NAMES.includes(directiveName)) {
+                  return { content: [createErrorContent(`Unknown or disallowed directive: '${directiveName}'. Allowed: ${ALLOWED_DIRECTIVE_NAMES.join(", ")}`)], isError: true };
+                }
+              }
+
+              directives = params.custom_directives;
+            } else {
+              directives = hardening_level === "strict" ? strictDirectives : basicDirectives;
+            }
             const overrideDir = `/etc/systemd/system/${service}.d`;
             const overrideFile = `${overrideDir}/security.conf`;
             const overrideContent = `[Service]\n${directives.join("\n")}`;

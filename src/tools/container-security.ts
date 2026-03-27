@@ -85,6 +85,8 @@ export function registerContainerSecurityTools(server: McpServer): void {
         log_driver: z.enum(["json-file", "journald"]).optional(),
         log_max_size: z.string().optional().default("10m"),
         log_max_file: z.string().optional().default("3"),
+        ip: z.string().optional().describe("Default bind address for published ports on default bridge (e.g. '127.0.0.1')"),
+        default_bind_address: z.string().optional().describe("Default bind address for user-defined bridge networks (e.g. '127.0.0.1')"),
       }).optional().describe("Settings to apply (daemon action with daemon_action=apply)"),
       // image_scan params
       image: z.string().optional().describe("Docker image name/ID to scan, e.g. 'nginx:latest' (image_scan action)"),
@@ -313,6 +315,8 @@ export function registerContainerSecurityTools(server: McpServer): void {
                 { key: "icc", present: existingConfig["icc"] === false, recommended: "false", severity: "HIGH" },
                 { key: "live-restore", present: !!existingConfig["live-restore"], recommended: "true", severity: "LOW" },
                 { key: "log-driver", present: !!existingConfig["log-driver"], recommended: '"json-file"', severity: "LOW" },
+                { key: "ip", present: !!existingConfig["ip"] && existingConfig["ip"] !== "0.0.0.0", recommended: '"127.0.0.1"', severity: "HIGH" },
+                { key: "default-network-opts", present: !!(existingConfig["default-network-opts"] as Record<string, Record<string, string>> | undefined)?.["bridge"]?.["com.docker.network.bridge.host_binding_ipv4"], recommended: '{"bridge":{"com.docker.network.bridge.host_binding_ipv4":"127.0.0.1"}}', severity: "HIGH" },
               ];
               let missingCount = 0;
               for (const c of checks) { if (!c.present) missingCount++; sections.push(`  ${c.present ? "✅ Present" : "❌ Missing"}: ${c.key} [${c.severity}]`); }
@@ -338,6 +342,8 @@ export function registerContainerSecurityTools(server: McpServer): void {
               if (settings.log_max_file) logOpts["max-file"] = settings.log_max_file;
               newConfig["log-opts"] = logOpts;
             }
+            if (settings.ip !== undefined) { newConfig["ip"] = settings.ip; changes.push(`ip: "${settings.ip}"`); }
+            if (settings.default_bind_address !== undefined) { const netOpts = (newConfig["default-network-opts"] as Record<string, Record<string, string>>) || {}; const bridgeOpts = netOpts["bridge"] || {}; bridgeOpts["com.docker.network.bridge.host_binding_ipv4"] = settings.default_bind_address; netOpts["bridge"] = bridgeOpts; newConfig["default-network-opts"] = netOpts; changes.push(`default-network-opts.bridge.host_binding_ipv4: "${settings.default_bind_address}"`); }
 
             if (changes.length === 0) { sections.push("\n  No changes to apply."); return { content: [createTextContent(sections.join("\n"))] }; }
 

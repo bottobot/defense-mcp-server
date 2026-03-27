@@ -694,4 +694,131 @@ describe("hardening tools", () => {
       });
     });
   });
+
+  // ── bootloader_configure set_password ─────────────────────────────────
+
+  describe("bootloader_configure set_password", () => {
+    it("should require configure_action for bootloader_configure", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({ action: "bootloader_configure" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("configure_action");
+    });
+
+    it("should require grub_password for set_password", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({
+        action: "bootloader_configure",
+        configure_action: "set_password",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("grub_password is required");
+    });
+
+    it("should reject short grub_password", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({
+        action: "bootloader_configure",
+        configure_action: "set_password",
+        grub_password: "short",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("at least 8 characters");
+    });
+
+    it("should reject invalid grub_superuser name", async () => {
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({
+        action: "bootloader_configure",
+        configure_action: "set_password",
+        grub_password: "supersecure123",
+        grub_superuser: "123invalid",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid grub_superuser name");
+    });
+
+    it("should preview set_password in dry_run mode", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({
+        exitCode: 0,
+        stdout: "PBKDF2 hash of your password is grub.pbkdf2.sha512.10000.ABCDEF1234567890",
+        stderr: "",
+      });
+      const handler = tools.get("harden_kernel")!.handler;
+      const result = await handler({
+        action: "bootloader_configure",
+        configure_action: "set_password",
+        grub_password: "supersecure123",
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.dryRun).toBe(true);
+      expect(output.action).toBe("set_password");
+      expect(output.superuser).toBe("grubadmin");
+    });
+  });
+
+  // ── systemd_apply custom ──────────────────────────────────────────────
+
+  describe("systemd_apply custom directives", () => {
+    it("should require custom_directives for custom level", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({
+        action: "systemd_apply",
+        service: "myapp.service",
+        hardening_level: "custom",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("custom_directives");
+    });
+
+    it("should reject invalid directive format", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({
+        action: "systemd_apply",
+        service: "myapp.service",
+        hardening_level: "custom",
+        custom_directives: ["not a valid directive"],
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid directive format");
+    });
+
+    it("should reject unknown directive names", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({
+        action: "systemd_apply",
+        service: "myapp.service",
+        hardening_level: "custom",
+        custom_directives: ["ExecStart=/bin/malicious"],
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("disallowed directive");
+    });
+
+    it("should accept valid custom directives in dry_run", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      const handler = tools.get("harden_host")!.handler;
+      const result = await handler({
+        action: "systemd_apply",
+        service: "myapp.service",
+        hardening_level: "custom",
+        custom_directives: ["ProtectSystem=strict", "PrivateTmp=yes", "NoNewPrivileges=yes"],
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.dryRun).toBe(true);
+      expect(output.directives).toEqual(["ProtectSystem=strict", "PrivateTmp=yes", "NoNewPrivileges=yes"]);
+    });
+  });
 });

@@ -8,7 +8,7 @@
  *   auditd_rules, auditd_search, auditd_report, auditd_cis_rules
  *   journalctl_query
  *   fail2ban_status, fail2ban_ban, fail2ban_unban, fail2ban_reload, fail2ban_audit
- *   syslog_analyze, rotation_audit
+ *   syslog_analyze, rotation_audit, rotation_configure
  *   siem_syslog_forward, siem_filebeat, siem_audit_forwarding, siem_test_connectivity
  */
 
@@ -583,7 +583,7 @@ async function testConnectivity(
 export function registerLoggingTools(server: McpServer): void {
   server.tool(
     "log_management",
-    "Log management: auditd rules/search/reporting, journalctl queries, fail2ban management, syslog analysis, log rotation audit, and SIEM integration (syslog forwarding, Filebeat, connectivity testing).",
+    "Log management: auditd rules/search/reporting, journalctl queries, fail2ban management, syslog analysis, log rotation audit/configure, and SIEM integration (syslog forwarding, Filebeat, connectivity testing).",
     {
       action: z
         .enum([
@@ -599,13 +599,14 @@ export function registerLoggingTools(server: McpServer): void {
           "fail2ban_audit",
           "syslog_analyze",
           "rotation_audit",
+          "rotation_configure",
           "siem_syslog_forward",
           "siem_filebeat",
           "siem_audit_forwarding",
           "siem_test_connectivity",
         ])
         .describe(
-          "Action: auditd_rules/search/report/cis_rules, journalctl_query, fail2ban_status/ban/unban/reload/audit, syslog_analyze, rotation_audit, siem_syslog_forward/filebeat/audit_forwarding/test_connectivity"
+          "Action: auditd_rules/search/report/cis_rules, journalctl_query, fail2ban_status/ban/unban/reload/audit, syslog_analyze, rotation_audit/configure, siem_syslog_forward/filebeat/audit_forwarding/test_connectivity"
         ),
       // auditd rules params
       rules_action: z
@@ -741,6 +742,33 @@ export function registerLoggingTools(server: McpServer): void {
         .array(z.string())
         .optional()
         .describe("Log sources to forward (e.g., auth, syslog, kern, audit)"),
+      // rotation_configure params
+      logrotate_path: z
+        .string()
+        .optional()
+        .describe("Log file path to configure rotation for (rotation_configure)"),
+      logrotate_name: z
+        .string()
+        .optional()
+        .describe("Config filename under /etc/logrotate.d/ (rotation_configure)"),
+      rotate_count: z
+        .number()
+        .optional()
+        .default(7)
+        .describe("Number of rotated files to keep"),
+      rotate_frequency: z
+        .enum(["daily", "weekly", "monthly"])
+        .optional()
+        .default("weekly"),
+      compress_logs: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Compress rotated files"),
+      extra_directives: z
+        .array(z.string())
+        .optional()
+        .describe("Additional logrotate directives like missingok, notifempty, delaycompress"),
     },
     async (params) => {
       const { action } = params;
@@ -1115,6 +1143,112 @@ export function registerLoggingTools(server: McpServer): void {
             return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
+          }
+        }
+
+        // ── rotation_configure ─────────────────────────────────────────────
+        case "rotation_configure": {
+          const {
+            logrotate_path,
+            logrotate_name,
+            rotate_count = 7,
+            rotate_frequency = "weekly",
+            compress_logs = true,
+            extra_directives,
+            dry_run,
+          } = params;
+          try {
+            if (!logrotate_path) {
+              return { content: [createErrorContent("logrotate_path is required for rotation_configure action")], isError: true };
+            }
+            if (!logrotate_name) {
+              return { content: [createErrorContent("logrotate_name is required for rotation_configure action")], isError: true };
+            }
+
+            // Validate logrotate_name: reject path traversal
+            if (!/^[a-zA-Z0-9_-]+$/.test(logrotate_name)) {
+              return { content: [createErrorContent(`Invalid logrotate_name '${logrotate_name}' — must match /^[a-zA-Z0-9_-]+$/ (no path separators)`)], isError: true };
+            }
+
+            // Validate extra_directives against safe list
+            const SAFE_DIRECTIVES = [
+              "missingok", "notifempty", "delaycompress", "copytruncate",
+              "sharedscripts", "dateext", "dateformat", "create",
+              "postrotate", "endscript", "prerotate", "firstaction",
+              "lastaction", "su",
+            ];
+            if (extra_directives && extra_directives.length > 0) {
+              for (const d of extra_directives) {
+                const keyword = d.trim().split(/\s+/)[0];
+                if (!SAFE_DIRECTIVES.includes(keyword)) {
+                  return { content: [createErrorContent(`Unsafe logrotate directive '${keyword}' — allowed: ${SAFE_DIRECTIVES.join(", ")}`)], isError: true };
+                }
+              }
+            }
+
+            // Build logrotate config string
+            const configLines: string[] = [];
+            configLines.push(`${logrotate_path} {`);
+            configLines.push(`    ${rotate_frequency}`);
+            configLines.push(`    rotate ${rotate_count}`);
+            if (compress_logs) {
+              configLines.push("    compress");
+            }
+            if (extra_directives && extra_directives.length > 0) {
+              for (const d of extra_directives) {
+                configLines.push(`    ${d}`);
+              }
+            }
+            configLines.push("}");
+            const content = configLines.join("\n") + "\n";
+
+            const configFilePath = `/etc/logrotate.d/${logrotate_name}`;
+
+            if (dry_run ?? getConfig().dryRun) {
+              logChange(createChangeEntry({
+                tool: "log_management",
+                action: "[DRY-RUN] Configure logrotate",
+                target: configFilePath,
+                after: content,
+                dryRun: true,
+                success: true,
+              }));
+              return { content: [createTextContent(`[DRY-RUN] Would write to ${configFilePath}:\n\n${content}`)] };
+            }
+
+            // Backup existing file if present
+            if (existsSync(configFilePath)) {
+              try { backupFile(configFilePath); } catch { /* file may not be readable without sudo */ }
+            }
+
+            // Write config via sudo tee
+            const writeResult = await executeCommand({
+              command: "sudo",
+              args: ["tee", configFilePath],
+              stdin: content,
+              toolName: "log_management",
+              timeout: getToolTimeout("auditd"),
+            });
+
+            const ok = writeResult.exitCode === 0;
+            logChange(createChangeEntry({
+              tool: "log_management",
+              action: "Configure logrotate",
+              target: configFilePath,
+              after: content,
+              dryRun: false,
+              success: ok,
+              error: ok ? undefined : writeResult.stderr,
+              rollbackCommand: `sudo rm ${configFilePath}`,
+            }));
+
+            if (!ok) {
+              return { content: [createErrorContent(`Failed to write ${configFilePath} (exit ${writeResult.exitCode}): ${writeResult.stderr}`)], isError: true };
+            }
+
+            return { content: [createTextContent(`Logrotate configuration written to ${configFilePath}:\n\n${content}`)] };
+          } catch (err: unknown) {
+            return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
           }
         }
 

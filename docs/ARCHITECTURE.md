@@ -1,7 +1,7 @@
 # Defense MCP Server — Architecture Document
 
 > **Project**: `defense-mcp-server`
-> **Version**: 0.7.3
+> **Version**: 0.8.2
 > **Purpose**: Standalone MCP server for defensive security, system hardening, and blue team operations
 > **SDK**: `@modelcontextprotocol/sdk` v1.27.1 · `zod` v3.25.76
 > **Transport**: StdioServerTransport
@@ -19,7 +19,6 @@
 6. [Tool Modules](#tool-modules)
    - [1. Firewall Management](#1-firewall-management-firewallts)
    - [2. System Hardening](#2-system-hardening-hardeningts)
-   - [3. Intrusion Detection](#3-intrusion-detection-idsts)
    - [4. Log Analysis & Monitoring](#4-log-analysis--monitoring-loggingts)
    - [5. Network Defense](#5-network-defense-network-defensets)
    - [6. Compliance & Benchmarking](#6-compliance--benchmarking-compliancets)
@@ -99,8 +98,8 @@ defense-mcp-server/
 │   └── tools/
 │       ├── firewall.ts          ← iptables, nftables, ufw management + USB device control
 │       ├── hardening.ts         ← sysctl, kernel params, services, file perms, GRUB, banners
-│       ├── ids.ts               ← AIDE, rkhunter, chkrootkit, file integrity monitoring
-│       ├── logging.ts           ← auditd, journalctl, fail2ban, syslog analysis
+│       ├── integrity.ts         ← AIDE, rootkit scan, file integrity, drift baselines
+│       ├── logging.ts           ← auditd, journalctl, fail2ban, syslog, SIEM forwarding
 │       ├── network-defense.ts   ← tcpdump, connection monitoring, port scan detection, segmentation
 │       ├── compliance.ts        ← lynis, OpenSCAP, CIS benchmarks, compliance reporting
 │       ├── malware.ts           ← ClamAV, YARA, suspicious file analysis, quarantine
@@ -114,11 +113,9 @@ defense-mcp-server/
 │       ├── incident-response.ts ← volatile data collection, IOC scan, timeline + forensics
 │       ├── sudo-management.ts   ← sudo elevation, session management
 │       ├── supply-chain-security.ts ← SBOM, cosign signing, SLSA verification
-│       ├── drift-detection.ts   ← configuration drift baselines and comparison
 │       ├── zero-trust-network.ts ← WireGuard VPN, mTLS certs, microsegmentation
 │       ├── ebpf-security.ts     ← Falco runtime security, eBPF program listing
 │       ├── app-hardening.ts     ← per-app hardening (nginx, sshd, postgresql, redis, etc.)
-│       ├── reporting.ts         ← consolidated security reports (Markdown/HTML/JSON/CSV)
 │       ├── dns-security.ts      ← DNSSEC, tunneling detection, domain blocklists, query log audit
 │       ├── vulnerability-management.ts ← nmap/nikto scanning, vuln tracking, risk prioritization
 │       ├── process-security.ts  ← process audit, Linux capabilities, namespace isolation, anomaly detection
@@ -127,8 +124,7 @@ defense-mcp-server/
 │       ├── cloud-security.ts    ← AWS/GCP/Azure detection, IMDS security, IAM credential scanning
 │       ├── api-security.ts      ← API discovery, auth auditing, rate-limit testing, CORS checking
 │       ├── deception.ts         ← canary tokens, honeyport listeners, trigger monitoring
-│       ├── wireless-security.ts ← Bluetooth/WiFi audit, rogue AP detection, interface disabling
-│       └── siem-integration.ts  ← rsyslog/Filebeat forwarding, log audit, connectivity testing
+│       └── wireless-security.ts ← Bluetooth/WiFi audit, rogue AP detection, interface disabling
 └── build/                       ← compiled JS output (tsc)
 ```
 
@@ -143,7 +139,7 @@ graph TB
     end
 
     subgraph Server_Core
-        MCP[McpServer - defense-mcp-server v0.7.3]
+        MCP[McpServer - defense-mcp-server v0.8.2]
     end
 
     subgraph Core_Modules
@@ -160,28 +156,26 @@ graph TB
     end
 
     subgraph Tool_Modules
-        FW[firewall.ts - 5 tools]
-        HD[hardening.ts - 8 tools]
-        IDS[ids.ts - 3 tools]
-        LOG[logging.ts - 4 tools]
-        ND[network-defense.ts - 4 tools]
-        CMP[compliance.ts - 7 tools]
-        MAL[malware.ts - 4 tools]
+        FW[firewall.ts - 1 tool]
+        HD[hardening.ts - 2 tools]
+        INT[integrity.ts - 1 tool]
+        LOG[logging.ts - 1 tool]
+        ND[network-defense.ts - 1 tool]
+        CMP[compliance.ts - 1 tool]
+        MAL[malware.ts - 1 tool]
         BKP[backup.ts - 1 tool]
-        ACC[access-control.ts - 6 tools]
-        ENC[encryption.ts - 5 tools]
-        CTR[container-security.ts - 6 tools]
-        META[meta.ts - 6 tools]
-        PM[patch-management.ts - 5 tools]
-        SEC[secrets.ts - 4 tools]
-        IR[incident-response.ts - 2 tools]
-        SUDO[sudo-management.ts - 6 tools]
+        ACC[access-control.ts - 1 tool]
+        ENC[encryption.ts - 1 tool]
+        CTR[container-security.ts - 2 tools]
+        META[meta.ts - 1 tool]
+        PM[patch-management.ts - 1 tool]
+        SEC[secrets.ts - 1 tool]
+        IR[incident-response.ts - 1 tool]
+        SUDO[sudo-management.ts - 1 tool]
         SC[supply-chain-security.ts - 1 tool]
-        DD[drift-detection.ts - 1 tool]
         ZT[zero-trust-network.ts - 1 tool]
-        EBPF[ebpf-security.ts - 2 tools]
+        EBPF[ebpf-security.ts - 1 tool]
         APP[app-hardening.ts - 1 tool]
-        REP[reporting.ts - 1 tool]
         DNS[dns-security.ts - 1 tool]
         VM[vulnerability-management.ts - 1 tool]
         PS[process-security.ts - 1 tool]
@@ -191,16 +185,15 @@ graph TB
         API[api-security.ts - 1 tool]
         DEC[deception.ts - 1 tool]
         WS[wireless-security.ts - 1 tool]
-        SIEM[siem-integration.ts - 1 tool]
     end
 
     STDIO <--> MCP
-    MCP --> FW & HD & IDS & LOG & ND & CMP & MAL & BKP & ACC & ENC & CTR & META
-    MCP --> PM & SEC & IR & SUDO & SC & DD & ZT & EBPF & APP
-    MCP --> REP & DNS & VM & PS & WAF & TI & CS & API & DEC & WS & SIEM
-    FW & HD & IDS & LOG & ND & CMP & MAL & BKP & ACC & ENC & CTR & META --> EXE & SAN & PAR & CHL
-    PM & SEC & IR & SC & DD & ZT & EBPF & APP --> EXE & SAN & PAR & CHL
-    REP & DNS & VM & PS & WAF & TI & CS & API & DEC & WS & SIEM --> EXE & SAN & PAR & CHL
+    MCP --> FW & HD & INT & LOG & ND & CMP & MAL & BKP & ACC & ENC & CTR & META
+    MCP --> PM & SEC & IR & SUDO & SC & ZT & EBPF & APP
+    MCP --> DNS & VM & PS & WAF & TI & CS & API & DEC & WS
+    FW & HD & INT & LOG & ND & CMP & MAL & BKP & ACC & ENC & CTR & META --> EXE & SAN & PAR & CHL
+    PM & SEC & IR & SC & ZT & EBPF & APP --> EXE & SAN & PAR & CHL
+    DNS & VM & PS & WAF & TI & CS & API & DEC & WS --> EXE & SAN & PAR & CHL
     EXE --> CFG
     EXE --> DST
     INS --> DST
@@ -314,6 +307,119 @@ Pre-flight results are cached to minimize repeated subprocess calls:
 | `dependency-validator` binary cache | ∞ (startup) | `clearDependencyCache()` after auto-install |
 
 The `invalidatePreflightCaches()` function (exported from `tool-wrapper.ts`) is called from `sudo-management.ts` tool handlers whenever the sudo session state changes.
+
+### Error Message Templates
+
+#### Missing Binary — Required
+
+```
+❌ Pre-flight Failed: firewall_iptables_list
+
+Missing required tool: iptables
+  Package: iptables (Debian/Ubuntu)
+  Purpose: Required to list firewall rules
+
+To fix:
+  • Run: sudo apt install iptables
+  • Or: Enable auto-install with DEFENSE_MCP_AUTO_INSTALL=true
+  • Or: Use the defense_check_tools MCP tool to install all missing tools
+```
+
+#### Sudo Required but Not Elevated
+
+```
+❌ Pre-flight Failed: firewall_iptables_add
+
+Elevated privileges required.
+  Reason: iptables requires root to modify firewall rules
+  Current user: robert (UID 1000)
+
+To fix:
+  • Call sudo_elevate first to provide your password
+  • Password is cached securely for 15 minutes
+  • All subsequent tools will use it automatically
+```
+
+#### Missing Capability
+
+```
+❌ Pre-flight Failed: netdef_tcpdump_capture
+
+Missing Linux capability: CAP_NET_RAW
+  Reason: tcpdump requires raw socket access to capture packets
+  Current capabilities: [none detected]
+
+To fix:
+  • Elevate via sudo_elevate (recommended)
+  • Or: setcap cap_net_raw+ep /usr/bin/tcpdump
+```
+
+#### Partial — Optional Dependencies Missing (Warning Banner)
+
+```
+⚠️ Pre-flight Warnings for ids_rootkit_summary:
+  • Optional: rkhunter not found (install for rootkit scanning)
+  • Optional: chkrootkit not found (install for alternative rootkit detection)
+  Functionality will be reduced. Install missing tools for full coverage.
+```
+
+### Pre-flight Configuration
+
+Pre-flight behavior is controlled via environment variables (consistent with the existing `config.ts` pattern):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEFENSE_MCP_AUTO_INSTALL` | `false` | Auto-install missing binaries during pre-flight |
+| `DEFENSE_MCP_PREFLIGHT` | `true` | Enable/disable pre-flight globally |
+| `DEFENSE_MCP_PREFLIGHT_BANNERS` | `true` | Prepend status banners to tool output |
+| `DEFENSE_MCP_PREFLIGHT_CACHE_TTL` | `60` | Cache TTL in seconds for passing pre-flight results |
+| `DEFENSE_MCP_PREFLIGHT_SAFETY` | `true` | Run SafeguardRegistry safety checks |
+
+### Dependency Graph Between Pre-flight Modules
+
+```mermaid
+graph TD
+    TW[tool-wrapper.ts] --> PF[preflight.ts]
+    TW --> TR[tool-registry.ts]
+    PF --> TR
+    PF --> PM[privilege-manager.ts]
+    PF --> AI[auto-installer.ts]
+    PF --> SG[safeguards.ts - existing]
+    PM --> SS[sudo-session.ts - existing]
+    AI --> IN[installer.ts - existing]
+    AI --> DA[distro-adapter.ts - existing]
+    TR --> TD[tool-dependencies.ts - existing, data source]
+    IX[index.ts] --> TW
+    IX --> TR
+```
+
+### Circular Dependency Prevention
+
+| Module | Can Import | Cannot Import |
+|--------|-----------|---------------|
+| `tool-registry.ts` | `tool-dependencies.ts` | anything else (pure data) |
+| `privilege-manager.ts` | `sudo-session.ts`, `executor.ts` | `preflight.ts`, `tool-wrapper.ts` |
+| `auto-installer.ts` | `installer.ts`, `distro-adapter.ts`, `executor.ts`, `config.ts` | `preflight.ts`, `tool-wrapper.ts` |
+| `preflight.ts` | `tool-registry.ts`, `privilege-manager.ts`, `auto-installer.ts`, `safeguards.ts`, `config.ts` | `tool-wrapper.ts` |
+| `tool-wrapper.ts` | `preflight.ts`, `tool-registry.ts` | nothing else directly |
+
+### Pre-flight Testing Strategy
+
+| Module | Test Focus |
+|--------|-----------|
+| `tool-registry.ts` | Manifest lookup, migration from legacy format, category filtering |
+| `privilege-manager.ts` | Mock `/proc/self/status` parsing, capability decoding, sudo session integration |
+| `auto-installer.ts` | Mock `executeCommand`, verify fallback chain, verify no install when dry-run |
+| `preflight.ts` | Mock registry + privilege manager + installer, verify pipeline order, verify caching |
+| `tool-wrapper.ts` | Verify handler wrapping, verify bypass list, verify overload detection, verify error formatting |
+
+Integration test scenarios:
+1. **Happy path**: Register a tool with all dependencies satisfied → handler executes normally
+2. **Missing binary, no auto-install**: Pre-flight blocks → structured error returned
+3. **Missing binary, auto-install on**: Pre-flight installs → handler executes
+4. **Sudo needed, not elevated**: Pre-flight blocks with sudo guidance
+5. **Bypass tool**: `sudo_elevate` invoked → no pre-flight, handler runs directly
+6. **Cached pre-flight**: Second invocation within TTL reuses result
 
 ---
 
@@ -817,84 +923,11 @@ Audit /etc/login.defs for password and login security settings.
 
 ---
 
-### 3. Intrusion Detection (`ids.ts`)
-
-**Registered by**: `registerIdsTools(server: McpServer): void`
-**Tools**: 5
-
-#### `aide_manage`
-Initialize, check, or update the AIDE file integrity database.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `action` | `z.enum` | yes | — | Action: init, check, update |
-| `config` | `z.string` | no | — | Custom AIDE config file path |
-| `dryRun` | `z.boolean` | no | `true` | Preview command without executing |
-
-**Commands**:
-- init: `aide --init` then rename `aide.db.new` → `aide.db`
-- check: `aide --check`
-- update: `aide --update`
-
-**Privilege**: `sudo`
-**Modifies system**: Yes for init/update (creates/updates database)
-
-#### `rkhunter_scan`
-Run rkhunter rootkit detection scan.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `update_first` | `z.boolean` | no | `true` | Update rkhunter database before scanning |
-| `skip_keypress` | `z.boolean` | no | `true` | Don't wait for keypress between tests |
-| `report_warnings_only` | `z.boolean` | no | `false` | Only report warnings |
-
-**Command**: `rkhunter --check [--sk] [--rwo]`
-**Privilege**: `sudo`
-**Modifies system**: No
-
-#### `chkrootkit_scan`
-Run chkrootkit to detect rootkits.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `quiet` | `z.boolean` | no | `false` | Only show infected results |
-| `expert` | `z.boolean` | no | `false` | Enable expert mode (more verbose) |
-
-**Command**: `chkrootkit [-q] [-x]`
-**Privilege**: `sudo`
-**Modifies system**: No
-
-#### `file_integrity_check`
-Check integrity of specific files using checksums (sha256sum).
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `paths` | `z.array(z.string)` | yes | — | Files to check |
-| `baseline_file` | `z.string` | no | — | Baseline checksum file to compare against |
-| `generate_baseline` | `z.boolean` | no | `false` | Generate new baseline instead of checking |
-| `algorithm` | `z.enum` | no | `"sha256"` | Hash algorithm: sha256, sha512, md5 |
-
-**Command**: `sha256sum <files>` or `sha256sum -c <baseline>`
-**Privilege**: `sudo` for system files
-**Modifies system**: No
-
-#### `rootkit_detection_summary`
-Aggregate and summarize rootkit detection results from multiple tools.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `run_rkhunter` | `z.boolean` | no | `true` | Include rkhunter scan |
-| `run_chkrootkit` | `z.boolean` | no | `true` | Include chkrootkit scan |
-| `check_hidden_files` | `z.boolean` | no | `true` | Check for hidden files in common locations |
-| `check_kernel_modules` | `z.boolean` | no | `true` | Check for suspicious kernel modules |
-
-**Command**: Combines multiple detection tool outputs into unified report
-**Privilege**: `sudo`
-**Modifies system**: No
+> **Note:** Section 3 (Intrusion Detection / `ids.ts`) was removed in v0.7.0. IDS functionality (AIDE, rootkit scanning, file integrity) is now part of the `integrity` tool in [`integrity.ts`](../src/tools/integrity.ts). See [TOOLS-REFERENCE.md](TOOLS-REFERENCE.md) for the current `integrity` tool actions.
 
 ---
 
-### 4. Log Analysis & Monitoring (`logging.ts`)
+### 3. Log Analysis & Monitoring (`logging.ts`)
 
 **Registered by**: `registerLoggingTools(server: McpServer): void`
 **Tools**: 7
@@ -2103,36 +2136,33 @@ main().catch((err) => {
 
 | Module | File | Tools |
 |--------|------|:-----:|
-| Firewall Management | `firewall.ts` | 5 |
-| System Hardening | `hardening.ts` | 9 |
-| Intrusion Detection | `ids.ts` | 3 |
-| Log Analysis & Monitoring | `logging.ts` | 4 |
-| Network Defense | `network-defense.ts` | 4 |
-| Compliance & Benchmarking | `compliance.ts` | 7 |
-| Malware Analysis | `malware.ts` | 4 |
-| Backup & Recovery | `backup.ts` | 1 |
-| Access Control | `access-control.ts` | 6 |
-| Encryption & PKI | `encryption.ts` | 5 |
-| Container & MAC Security | `container-security.ts` | 6 |
-| Meta Tools | `meta.ts` | 6 |
-| Patch Management | `patch-management.ts` | 5 |
-| Secrets Management | `secrets.ts` | 4 |
-| Incident Response & Forensics | `incident-response.ts` | 2 |
-| Supply Chain Security | `supply-chain-security.ts` | 1 |
-| Drift Detection | `drift-detection.ts` | 1 |
-| Zero-Trust Network | `zero-trust-network.ts` | 1 |
-| eBPF Security | `ebpf-security.ts` | 2 |
-| App Hardening | `app-hardening.ts` | 1 |
-| Sudo Management | `sudo-management.ts` | 6 |
-| Reporting | `reporting.ts` | 1 |
-| DNS Security | `dns-security.ts` | 1 |
-| Vulnerability Management | `vulnerability-management.ts` | 1 |
-| Process Security | `process-security.ts` | 1 |
-| WAF Management | `waf.ts` | 1 |
-| Threat Intelligence | `threat-intel.ts` | 1 |
-| Cloud Security | `cloud-security.ts` | 1 |
+| Firewall Management | `firewall.ts` | 1 |
+| System Hardening | `hardening.ts` | 2 |
+| Access Control | `access-control.ts` | 1 |
+| Compliance & Benchmarking | `compliance.ts` | 1 |
+| File Integrity & Drift Detection | `integrity.ts` | 1 |
+| Log Analysis, Monitoring & SIEM | `logging.ts` | 1 |
+| Malware Detection | `malware.ts` | 1 |
+| Container & MAC Security | `container-security.ts` | 2 |
+| eBPF & Runtime Security | `ebpf-security.ts` | 1 |
+| Cryptography & PKI | `encryption.ts` | 1 |
+| Network Defense | `network-defense.ts` | 1 |
+| Patch Management | `patch-management.ts` | 1 |
+| Secrets Detection | `secrets.ts` | 1 |
+| Incident Response & Forensics | `incident-response.ts` | 1 |
+| Defense Management & Reporting | `meta.ts` | 1 |
+| Sudo / Privilege Management | `sudo-management.ts` | 1 |
 | API Security | `api-security.ts` | 1 |
+| App Hardening | `app-hardening.ts` | 1 |
+| Backup & Recovery | `backup.ts` | 1 |
+| Cloud Security | `cloud-security.ts` | 1 |
 | Deception / Honeypots | `deception.ts` | 1 |
+| DNS Security | `dns-security.ts` | 1 |
+| Process Security | `process-security.ts` | 1 |
+| Supply Chain Security | `supply-chain-security.ts` | 1 |
+| Threat Intelligence | `threat-intel.ts` | 1 |
+| Vulnerability Management | `vulnerability-management.ts` | 1 |
+| WAF Management | `waf.ts` | 1 |
 | Wireless Security | `wireless-security.ts` | 1 |
-| SIEM Integration | `siem-integration.ts` | 1 |
+| Zero-Trust Network | `zero-trust-network.ts` | 1 |
 | **Total** | **29 modules** | **31 tools** |

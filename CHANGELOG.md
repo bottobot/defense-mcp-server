@@ -6,6 +6,70 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.2] — 2026-03-26
+
+### v0.8.2 — Sudoers Management, Per-User Password Policy, GRUB Password, Log Rotation Config
+
+#### New Actions
+- **`access_control` → `sudoers_manage`**: Write, remove, and validate sudoers drop-in files under `/etc/sudoers.d/` with `visudo -cf` validation, atomic write, backup, and rollback
+- **`access_control` → `password_policy_set` + `target_user`**: Per-user password aging via `chage` (min_days, max_days, warn_days, inactive_days) — complements existing system-wide `login.defs` path
+- **`harden_kernel` → `bootloader_configure set_password`**: Set GRUB bootloader password with PBKDF2 hashing, configurable superuser, `--unrestricted` boot support, and `update-grub` integration
+- **`harden_host` → `systemd_apply custom`**: Custom systemd sandboxing directives with allowlist validation (40+ approved directives)
+- **`log_management` → `rotation_configure`**: Create logrotate configs under `/etc/logrotate.d/` with frequency, retention, compression, and safe directive validation
+
+#### Improvements
+- Command allowlist: added `grub-mkpasswd-pbkdf2`, expanded `chage` and `logrotate` candidate paths
+- Orphan cleanup: deleted deprecated stub files (`drift-detection.ts`, `reporting.ts`, `siem-integration.ts`) and their orphaned tests
+- Moved design docs to `docs/adr/`: PAM-HARDENING-FIX, SUDO-SESSION-DESIGN, pam-sanity-validation
+- Created `CONTRIBUTING.md`, `REMEDIATION.md`, `docs/DOC-AUDIT.md`, `scripts/verify-tool-imports.mjs`
+- Updated `ARCHITECTURE.md`, `SPECIFICATION.md`, `README.md`, `SAFEGUARDS.md` for v0.8.x accuracy
+
+---
+
+## [0.8.1] — 2026-03-26
+
+### v0.8.1 — PAM Sanity Validation & SSH Service-Awareness
+
+#### PAM Policy Sanity Validation
+- **NEW**: `validatePamPolicySanity()` in `pam-utils.ts` — detects syntactically valid but semantically dangerous PAM policies before applying them
+- Two-level validation: syntax (`validatePamConfig`) + policy sanity (`validatePamPolicySanity`)
+- Severity classification: `critical` = block, `warning` = proceed with notice
+- `force=true` parameter allows overriding critical blocks with explicit acknowledgment
+- CIS-aligned thresholds defined in `PAM_SANITY_THRESHOLDS`:
+  - `faillock deny < 3` → critical (too aggressive lockout)
+  - `unlock_time = 0` → critical (permanent lock)
+  - `minlen > 64` → critical (unusable password policy)
+- Auto-rollback on any failure during PAM modification
+
+#### SSH Service-Awareness
+- `ssh_audit` now detects whether sshd is installed/running before flagging config issues
+- Service states: `active` (real findings), `installed_inactive` (downgraded severity), `removed_residual` (all INFO), `not_installed` (skip)
+- Prevents false positives from leftover `/etc/ssh/sshd_config` after package removal
+
+---
+
+## [0.8.0] — 2026-03-20
+
+### v0.8.0 — Module Consolidation (31→29 tool files, zero capability loss)
+
+#### Tool Module Merges
+- **SIEM Integration** (`siem-integration.ts`) absorbed into **Log Management** (`logging.ts`) — `siem_syslog_forward`, `siem_filebeat`, `siem_audit_forwarding`, `siem_test_connectivity` are now actions within the `log_management` tool
+- **Reporting** (`reporting.ts`) absorbed into **Defense Management** (`meta.ts`) — `report_generate`, `report_list`, `report_formats` are now actions within the `defense_mgmt` tool
+- **Drift Detection** (`drift-detection.ts`) absorbed into **File Integrity** (`integrity.ts`) — `baseline_create`, `baseline_compare`, `baseline_list` are now actions within the `integrity` tool
+- **IDS** (`ids.ts`) previously absorbed into `integrity.ts` in v0.7.0 — source file now fully deprecated
+
+#### Deprecated Files (not imported by index.ts)
+- `src/tools/drift-detection.ts` — stub with `@deprecated` comment and re-export
+- `src/tools/reporting.ts` — stub with `@deprecated` comment
+- `src/tools/siem-integration.ts` — stub with `@deprecated` comment and re-export
+
+#### Tool Count
+- 31 registered tools (unchanged from v0.7.0)
+- 29 active tool source files (down from 32)
+- 150+ total actions across all tools
+
+---
+
 ## [0.7.1] — 2026-03-14
 
 ### v0.7.1 — Critical PAM Hardening Fix
@@ -352,6 +416,8 @@ Adds a comprehensive pre-flight validation system that automatically checks depe
 - `src/tools/sudo-management.ts` — Calls `invalidatePreflightCaches()` on `sudo_elevate` and `sudo_drop` to clear stale privilege/dependency caches
 
 ---
+
+> **Version ordering note:** Versions below v0.3.0 use the project's original numbering scheme (1.0.0 → 2.0.0). The project was re-versioned to 0.x.x starting at v0.3.0 to follow semver pre-1.0 conventions. The entries below are in chronological order within each numbering era.
 
 ## [2.0.0] — 2026-02-21
 

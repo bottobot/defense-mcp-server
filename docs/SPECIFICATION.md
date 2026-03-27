@@ -5,7 +5,7 @@
 | Field | Value |
 |-------|-------|
 | **Name** | defense-mcp-server |
-| **Version** | 0.7.3 |
+| **Version** | 0.8.2 |
 | **Language** | TypeScript 5.9+ |
 | **Target** | ES2022 |
 | **Module System** | Node16 (ESM with `.js` extensions in imports) |
@@ -31,12 +31,12 @@ The server runs as a child process communicating over stdio JSON-RPC. It wraps L
 | Metric | Value |
 |--------|-------|
 | Tool count | 31 |
-| Tool modules (`src/tools/`) | 29 files |
-| Core modules (`src/core/`) | 26 files |
-| Test files | 47 |
-| Test count | 873 |
+| Tool modules (`src/tools/`) | 29 active files |
+| Core modules (`src/core/`) | 29 files |
+| Test files | 58 |
+| Test count | 1880 |
 | Runtime dependencies | 2 |
-| Allowlisted binaries | 115 |
+| Allowlisted binaries | 197 |
 
 ### Security Model Summary
 
@@ -78,26 +78,25 @@ src/
 │   ├── tool-dependencies.ts    — Tool-to-binary dependency mappings
 │   ├── rate-limiter.ts         — Sliding-window rate limiter (per-tool + global)
 │   └── logger.ts               — Structured JSON logging with security level
-└── tools/                      — 32 tool modules
-    ├── access-control.ts       — 6 tools: SSH, sudo, users, passwords, PAM, shell
+└── tools/                      — 29 active tool modules
+    ├── access-control.ts       — 1 tool: SSH, sudo, users, passwords, PAM, shell
     ├── app-hardening.ts        — 1 tool: audit/recommend/firewall/systemd
     ├── backup.ts               — 1 tool: unified backup (config/state/restore/verify/list)
-    ├── compliance.ts           — 7 tools: lynis, oscap, CIS, policy, cron, tmp
-    ├── container-security.ts   — 6 tools: Docker, AppArmor, SELinux, namespaces, images, seccomp
-    ├── drift-detection.ts      — 1 tool: create/compare/list baselines
-    ├── ebpf-security.ts        — 2 tools: ebpf_list_programs, ebpf_falco
-    ├── encryption.ts           — 4 tools: TLS, GPG, LUKS, file hash
-    ├── firewall.ts             — 5 tools: iptables, ufw, nftables, persist, audit
-    ├── hardening.ts            — 8 tools: sysctl, services, permissions, kernel, etc.
-    ├── ids.ts                  — 3 tools: AIDE, rootkit scan, file integrity
-    ├── incident-response.ts    — 1 tool: collect/ioc_scan/timeline
-    ├── logging.ts              — 4 tools: auditd, journalctl, fail2ban, syslog
-    ├── malware.ts              — 4 tools: ClamAV, YARA, file scan, quarantine
-    ├── meta.ts                 — 5 tools: check tools, workflow, history, posture, scheduled
-    ├── network-defense.ts      — 3 tools: connections, capture, security audit
-    ├── patch-management.ts     — 5 tools: updates, unattended, integrity, kernel, vulns
-    ├── secrets.ts              — 4 tools: scan, env audit, SSH key sprawl, git history
-    ├── sudo-management.ts      — 6 tools: elevate, elevate_gui, status, drop, extend, batch
+    ├── compliance.ts           — 1 tool: lynis, oscap, CIS, policy, cron, tmp
+    ├── container-security.ts   — 2 tools: Docker audit + container isolation
+    ├── ebpf-security.ts        — 1 tool: eBPF programs, Falco
+    ├── encryption.ts           — 1 tool: TLS, GPG, LUKS, file hash, cert lifecycle
+    ├── firewall.ts             — 1 tool: iptables, ufw, nftables, persist, audit
+    ├── hardening.ts            — 2 tools: harden_kernel, harden_host
+    ├── integrity.ts            — 1 tool: AIDE, rootkit scan, file integrity, drift baselines
+    ├── incident-response.ts    — 1 tool: collect/ioc_scan/timeline/forensics
+    ├── logging.ts              — 1 tool: auditd, journalctl, fail2ban, syslog, SIEM
+    ├── malware.ts              — 1 tool: ClamAV, YARA, file scan, quarantine
+    ├── meta.ts                 — 1 tool: check tools, workflow, history, posture, reporting
+    ├── network-defense.ts      — 1 tool: connections, capture, security audit, segmentation
+    ├── patch-management.ts     — 1 tool: updates, unattended, integrity, kernel, vulns
+    ├── secrets.ts              — 1 tool: scan, env audit, SSH key sprawl, git history
+    ├── sudo-management.ts      — 1 tool: elevate, elevate_gui, status, drop, extend, preflight
     ├── supply-chain-security.ts — 1 tool: sbom/sign/verify_slsa
     └── zero-trust-network.ts   — 1 tool: wireguard/wg_peers/mtls/microsegment
 ```
@@ -532,42 +531,41 @@ All tools use a `prefix_subject` snake_case pattern. Prefixes match module names
 | `ebpf_` | eBPF Security | `ebpf_list_programs`, `ebpf_falco` |
 | `app_` | App Hardening | `app_harden` |
 
-### 5.3 Tool Modules (29 files, 31 tools)
+### 5.3 Tool Modules (29 active files, 31 tools)
+
+> **Note:** `ids.ts`, `drift-detection.ts`, `reporting.ts`, and `siem-integration.ts` were deleted in v0.8.2. Their functionality was absorbed into `integrity.ts`, `logging.ts`, and `meta.ts` respectively in v0.8.0. See [TOOLS-REFERENCE.md](TOOLS-REFERENCE.md) for the canonical tool list.
 
 | # | Module | File | Tools | Tool Names |
 |---|--------|------|:-----:|------------|
-| 1 | Sudo Management | `sudo-management.ts` | 6 | `sudo_elevate`, `sudo_elevate_gui`, `sudo_status`, `sudo_drop`, `sudo_extend`, `preflight_batch_check` |
-| 2 | Firewall | `firewall.ts` | 5 | `firewall_iptables`, `firewall_ufw`, `firewall_persist`, `firewall_nftables_list`, `firewall_policy_audit` |
-| 3 | Hardening | `hardening.ts` | 9 | `harden_sysctl`, `harden_service`, `harden_permissions`, `harden_systemd`, `harden_kernel`, `harden_bootloader`, `harden_misc`, `harden_memory`, `usb_device_control` |
-| 4 | IDS | `ids.ts` | 3 | `ids_aide_manage`, `ids_rootkit_scan`, `ids_file_integrity_check` |
-| 5 | Logging | `logging.ts` | 4 | `log_auditd`, `log_journalctl_query`, `log_fail2ban`, `log_system` |
-| 6 | Network Defense | `network-defense.ts` | 4 | `netdef_connections`, `netdef_capture`, `netdef_security_audit`, `network_segmentation_audit` |
-| 7 | Compliance | `compliance.ts` | 7 | `compliance_lynis_audit`, `compliance_oscap_scan`, `compliance_check`, `compliance_policy_evaluate`, `compliance_report`, `compliance_cron_restrict`, `compliance_tmp_hardening` |
-| 8 | Malware | `malware.ts` | 4 | `malware_clamav`, `malware_yara_scan`, `malware_file_scan`, `malware_quarantine_manage` |
+| 1 | Sudo Management | `sudo-management.ts` | 1 | `sudo_session` |
+| 2 | Firewall | `firewall.ts` | 1 | `firewall` |
+| 3 | Hardening | `hardening.ts` | 2 | `harden_kernel`, `harden_host` |
+| 4 | File Integrity | `integrity.ts` | 1 | `integrity` |
+| 5 | Logging | `logging.ts` | 1 | `log_management` |
+| 6 | Network Defense | `network-defense.ts` | 1 | `network_defense` |
+| 7 | Compliance | `compliance.ts` | 1 | `compliance` |
+| 8 | Malware | `malware.ts` | 1 | `malware` |
 | 9 | Backup | `backup.ts` | 1 | `backup` |
-| 10 | Access Control | `access-control.ts` | 6 | `access_ssh`, `access_sudo_audit`, `access_user_audit`, `access_password_policy`, `access_pam`, `access_restrict_shell` |
-| 11 | Encryption | `encryption.ts` | 5 | `crypto_tls`, `crypto_gpg_keys`, `crypto_luks_manage`, `crypto_file_hash`, `certificate_lifecycle` |
-| 12 | Container Security | `container-security.ts` | 6 | `container_docker`, `container_apparmor`, `container_selinux_manage`, `container_namespace_check`, `container_image_scan`, `container_security_config` |
-| 13 | Meta | `meta.ts` | 6 | `defense_check_tools`, `defense_workflow`, `defense_change_history`, `defense_security_posture`, `defense_scheduled_audit`, `auto_remediate` |
-| 14 | Patch Management | `patch-management.ts` | 5 | `patch_update_audit`, `patch_unattended_audit`, `patch_integrity_check`, `patch_kernel_audit`, `patch_vulnerability_intel` |
-| 15 | Secrets | `secrets.ts` | 4 | `secrets_scan`, `secrets_env_audit`, `secrets_ssh_key_sprawl`, `secrets_git_history_scan` |
-| 16 | Incident Response | `incident-response.ts` | 2 | `incident_response`, `ir_forensics` |
+| 10 | Access Control | `access-control.ts` | 1 | `access_control` |
+| 11 | Encryption | `encryption.ts` | 1 | `crypto` |
+| 12 | Container Security | `container-security.ts` | 2 | `container_docker`, `container_isolation` |
+| 13 | Meta | `meta.ts` | 1 | `defense_mgmt` |
+| 14 | Patch Management | `patch-management.ts` | 1 | `patch` |
+| 15 | Secrets | `secrets.ts` | 1 | `secrets` |
+| 16 | Incident Response | `incident-response.ts` | 1 | `incident_response` |
 | 17 | Supply Chain | `supply-chain-security.ts` | 1 | `supply_chain` |
-| 18 | Drift Detection | `drift-detection.ts` | 1 | `drift_baseline` |
-| 19 | Zero Trust | `zero-trust-network.ts` | 1 | `zero_trust` |
-| 20 | eBPF Security | `ebpf-security.ts` | 2 | `ebpf_list_programs`, `ebpf_falco` |
-| 21 | App Hardening | `app-hardening.ts` | 1 | `app_harden` |
-| 22 | Reporting | `reporting.ts` | 1 | `report_export` |
-| 23 | DNS Security | `dns-security.ts` | 1 | `dns_security` |
-| 24 | Vulnerability Management | `vulnerability-management.ts` | 1 | `vuln_manage` |
-| 25 | Process Security | `process-security.ts` | 1 | `process_security` |
-| 26 | WAF Management | `waf.ts` | 1 | `waf_manage` |
-| 27 | Threat Intelligence | `threat-intel.ts` | 1 | `threat_intel` |
-| 28 | Cloud Security | `cloud-security.ts` | 1 | `cloud_security` |
-| 29 | API Security | `api-security.ts` | 1 | `api_security` |
-| 30 | Deception/Honeypots | `deception.ts` | 1 | `honeypot_manage` |
-| 31 | Wireless Security | `wireless-security.ts` | 1 | `wireless_security` |
-| 32 | SIEM Integration | `siem-integration.ts` | 1 | `siem_export` |
+| 18 | Zero Trust | `zero-trust-network.ts` | 1 | `zero_trust` |
+| 19 | eBPF Security | `ebpf-security.ts` | 1 | `ebpf` |
+| 20 | App Hardening | `app-hardening.ts` | 1 | `app_harden` |
+| 21 | DNS Security | `dns-security.ts` | 1 | `dns_security` |
+| 22 | Vulnerability Management | `vulnerability-management.ts` | 1 | `vuln_manage` |
+| 23 | Process Security | `process-security.ts` | 1 | `process_security` |
+| 24 | WAF Management | `waf.ts` | 1 | `waf_manage` |
+| 25 | Threat Intelligence | `threat-intel.ts` | 1 | `threat_intel` |
+| 26 | Cloud Security | `cloud-security.ts` | 1 | `cloud_security` |
+| 27 | API Security | `api-security.ts` | 1 | `api_security` |
+| 28 | Deception/Honeypots | `deception.ts` | 1 | `honeypot_manage` |
+| 29 | Wireless Security | `wireless-security.ts` | 1 | `wireless_security` |
 
 ---
 

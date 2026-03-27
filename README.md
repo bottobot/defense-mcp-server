@@ -19,7 +19,7 @@ Here are the tools:
 | **Patch Management** | Check for updates, apply patches, track CVEs |
 | **Access Control** | Configure SSH, PAM, user account policies |
 | **Malware** | Scan with ClamAV, manage quarantine, deploy YARA rules |
-| **IDS** | Configure AIDE, Falco, rootkit detection |
+| **File Integrity** | AIDE, rootkit detection, file hashing, drift baselines |
 | **Logging** | Set up auditd rules, log rotation, fail2ban |
 | **Encryption** | Manage TLS certificates, LUKS volumes, GPG keys |
 | **Certificate Lifecycle** | Inventory certs, check renewal, audit CA trust store, OCSP, CT logs |
@@ -31,13 +31,11 @@ Here are the tools:
 | **Incident Response** | Collect volatile evidence, IOC scan, filesystem timeline |
 | **Forensics** | Memory dumps, disk imaging, evidence chain of custody |
 | **eBPF Security** | Deploy Falco rules, list eBPF programs |
-| **Drift Detection** | Track configuration changes against baselines |
 | **Supply Chain** | SBOM generation, package integrity verification |
 | **Zero Trust Network** | WireGuard tunnels, mTLS, microsegmentation |
 | **App Hardening** | Harden Apache, Nginx, MySQL, PostgreSQL, Docker |
 | **Sudo Management** | Manage sudo elevation, session tracking |
 | **Meta/Workflow** | Security posture assessment, defense workflows, auto-remediation |
-| **Reporting** | Generate consolidated security reports (Markdown/HTML/JSON/CSV) |
 | **DNS Security** | DNSSEC validation, tunneling detection, domain blocklists, query log analysis |
 | **Vulnerability Management** | nmap/nikto scanning, vulnerability lifecycle tracking, risk prioritization |
 | **Process Security** | Capability auditing, namespace isolation, anomaly detection |
@@ -47,7 +45,6 @@ Here are the tools:
 | **API Security** | Local API discovery, auth auditing, rate-limit testing, CORS checking |
 | **Deception/Honeypots** | Canary token deployment, honeyport listeners, trigger monitoring |
 | **Wireless Security** | Bluetooth/WiFi auditing, rogue AP detection, interface disabling |
-| **SIEM Integration** | rsyslog/Filebeat configuration, log forwarding audit, connectivity testing |
 
 Every tool runs with safety guardrails:
 - **Dry-run by default** — tools preview what they would do before making changes

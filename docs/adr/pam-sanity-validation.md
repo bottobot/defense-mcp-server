@@ -1,10 +1,10 @@
 # PAM Policy Sanity Validation — Design Document
 
-> **Status**: Draft  
+> **Status**: Implemented (v0.8.1)
 > **Created**: 2026-03-26  
 > **Scope**: Detect overly restrictive PAM policies that could cause user lockouts  
 > **Risk**: **High** — valid-but-dangerous PAM configs bypass existing syntactic validation  
-> **Predecessor**: [PAM Hardening Fix](../docs/PAM-HARDENING-FIX.md) (fixed corrupted configs)
+> **Predecessor**: [PAM Hardening Fix](./PAM-HARDENING-FIX.md) (fixed corrupted configs)
 
 ---
 
