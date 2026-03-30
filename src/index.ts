@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 
 // ── Dynamic version from package.json ────────────────────────────────────────
@@ -330,13 +332,147 @@ async function main() {
 
   // ── Phase 3: Connect transport ───────────────────────────────────────────
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error(`Defense MCP Server v${VERSION} running on stdio`);
-  console.error(
+  const transportMode = process.env.MCP_TRANSPORT ?? "stdio";
+  const registrationMsg =
     `Registered ${registered} tool modules with consolidated defensive security tools` +
-    `${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`
-  );
+    `${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`;
+
+  if (transportMode === "http") {
+    const port = parseInt(process.env.MCP_PORT ?? "3100", 10);
+
+    // Server card for Smithery discovery
+    const serverCard = {
+      serverInfo: {
+        name: "defense-mcp-server",
+        version: VERSION,
+        description: "31 defensive security tools (250+ actions) for Linux system hardening, compliance, and threat detection",
+      },
+      authentication: { required: false },
+      tools: [
+        { name: "access_control", description: "Access control: SSH, PAM, sudo, user audit, password policy, shell restriction" },
+        { name: "api_security", description: "API security: local API discovery, auth audit, rate limiting, TLS verify, CORS check" },
+        { name: "app_harden", description: "App hardening: audit running apps, recommendations, firewall rules, systemd sandboxing" },
+        { name: "backup", description: "Backup: config files, system state snapshots, restore, verify integrity, list backups" },
+        { name: "cloud_security", description: "Cloud: environment detection, metadata audit, IAM credentials, storage audit, IMDS security" },
+        { name: "compliance", description: "Compliance: Lynis, OpenSCAP, CIS benchmarks, framework checks, policy, cron/tmp hardening" },
+        { name: "container_docker", description: "Docker security: audit, CIS bench, seccomp, daemon config, image scan" },
+        { name: "container_isolation", description: "Container isolation: AppArmor, SELinux, namespaces, seccomp, rootless setup" },
+        { name: "crypto", description: "Crypto: TLS/SSL audit, GPG, LUKS, file hashing, certificate lifecycle" },
+        { name: "defense_mgmt", description: "Defense: tool checks, workflows, change history, posture, scheduled audits, remediation, reports" },
+        { name: "dns_security", description: "DNS: resolver audit, DNSSEC check, tunneling detection, domain blocklists, query log audit" },
+        { name: "ebpf", description: "eBPF/Falco: list eBPF programs, Falco status, deploy rules, read events" },
+        { name: "firewall", description: "Firewall: iptables, UFW, nftables, persistence, policy audit" },
+        { name: "harden_host", description: "Host hardening: services, permissions, systemd, cron, umask, banners, USB control" },
+        { name: "harden_kernel", description: "Kernel hardening: sysctl, kernel security, bootloader, memory protections" },
+        { name: "honeypot_manage", description: "Deception: canary tokens, honeyport listeners, trigger detection, canary management" },
+        { name: "incident_response", description: "Incident response: volatile data, IOC scan, timeline, forensics (memory/disk/network/evidence/custody)" },
+        { name: "integrity", description: "Integrity: AIDE, rootkit scanning, file hashing, drift baselines" },
+        { name: "log_management", description: "Logging: auditd, journalctl, fail2ban, syslog, log rotation, SIEM integration" },
+        { name: "malware", description: "Malware: ClamAV scan/update, YARA rules, suspicious files, webshells, quarantine" },
+        { name: "network_defense", description: "Network: connections, traffic capture, port scan detection, IPv6 audit, self-scan, segmentation" },
+        { name: "patch", description: "Patches: pending updates, unattended upgrades, package integrity, kernel audit, CVE lookup" },
+        { name: "process_security", description: "Processes: audit running, capabilities, namespaces, anomaly detection, cgroup limits" },
+        { name: "secrets", description: "Secrets: filesystem scan, env variable audit, SSH key sprawl, git history leak detection" },
+        { name: "sudo_session", description: "Sudo: elevate privileges, check/drop/extend session, preflight tool checks" },
+        { name: "supply_chain", description: "Supply chain: SBOM generation, cosign artifact signing, SLSA provenance verification" },
+        { name: "threat_intel", description: "Threat intel: IP/hash/domain reputation, feed management, blocklist application" },
+        { name: "vuln_manage", description: "Vulnerabilities: nmap scan, nikto web scan, tracking, risk prioritization, remediation plans" },
+        { name: "waf_manage", description: "WAF: ModSecurity audit, rule management, rate limiting, OWASP CRS, blocked request analysis" },
+        { name: "wireless_security", description: "Wireless: Bluetooth audit, WiFi assessment, rogue AP detection, disable unused interfaces" },
+        { name: "zero_trust", description: "Zero-trust: WireGuard VPN, peer management, mTLS certificates, microsegmentation" },
+      ],
+      resources: [],
+      prompts: [],
+    };
+
+    // Track active transports by session ID
+    const sessions = new Map<string, StreamableHTTPServerTransport>();
+
+    const httpServer = createServer(async (req, res) => {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      const pathname = url.pathname;
+
+      // CORS for Smithery Gateway
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id, smithery-*");
+      res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+
+      if (req.method === "OPTIONS") {
+        res.writeHead(204).end();
+        return;
+      }
+
+      // Health check
+      if (req.method === "GET" && pathname === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", version: VERSION, tools: registered }));
+        return;
+      }
+
+      // Smithery server card
+      if (req.method === "GET" && pathname === "/.well-known/mcp/server-card.json") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(serverCard));
+        return;
+      }
+
+      // MCP Streamable HTTP endpoint
+      if (pathname === "/mcp" || pathname === "/") {
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+        if (req.method === "GET" || req.method === "POST") {
+          // Reuse existing session or create new one
+          let transport = sessionId ? sessions.get(sessionId) : undefined;
+          if (!transport) {
+            transport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => crypto.randomUUID(),
+            });
+            await server.connect(transport);
+            // Store session after first request so we can retrieve it by ID
+            transport.onclose = () => {
+              const sid = [...sessions.entries()].find(([, t]) => t === transport)?.[0];
+              if (sid) sessions.delete(sid);
+            };
+          }
+          await transport.handleRequest(req, res);
+          // Capture session ID from response headers if new session
+          if (!sessionId) {
+            const newSid = res.getHeader("mcp-session-id") as string | undefined;
+            if (newSid && transport) sessions.set(newSid, transport);
+          }
+          return;
+        }
+
+        if (req.method === "DELETE") {
+          if (sessionId && sessions.has(sessionId)) {
+            const transport = sessions.get(sessionId)!;
+            await transport.handleRequest(req, res);
+            sessions.delete(sessionId);
+          } else {
+            res.writeHead(404).end("Session not found");
+          }
+          return;
+        }
+      }
+
+      res.writeHead(404).end("Not found");
+    });
+
+    httpServer.listen(port, () => {
+      console.error(`Defense MCP Server v${VERSION} running on HTTP port ${port}`);
+      console.error(registrationMsg);
+      console.error("[startup] MCP endpoint: http://0.0.0.0:" + port + "/mcp");
+      console.error("[startup] Health check: http://0.0.0.0:" + port + "/health");
+      console.error("[startup] Server card: http://0.0.0.0:" + port + "/.well-known/mcp/server-card.json");
+    });
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error(`Defense MCP Server v${VERSION} running on stdio`);
+    console.error(registrationMsg);
+  }
+
   console.error("[startup] 💡 Use sudo_elevate to provide your password once for all privileged operations");
 }
 

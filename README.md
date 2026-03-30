@@ -1,9 +1,34 @@
 # Defense MCP Server
 
-A Model Context Protocol (MCP) server that gives AI assistants access to **31 defensive security tools** (with 250+ actions) on Linux. Connect it to Claude Desktop, Cursor, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
+[![Smithery](https://smithery.ai/badge/@bottobot/defense-mcp-server)](https://smithery.ai/server/@bottobot/defense-mcp-server)
+[![npm version](https://img.shields.io/npm/v/defense-mcp-server)](https://www.npmjs.com/package/defense-mcp-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+**31 defensive security tools. 250+ actions. One MCP server.**
+
+A Model Context Protocol (MCP) server that gives AI assistants access to **31 defensive security tools** (with 250+ actions) on Linux. Connect it to Claude Desktop, Cursor, Smithery, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
+
+---
+
+## Install via Smithery
+
+The fastest way to get started — no clone, no build:
+
+```bash
+npx -y @smithery/cli install @bottobot/defense-mcp-server --client claude
+```
+
+Or connect directly via the hosted server:
+
+```
+https://server.defensemcp.net/mcp
+```
+
+---
 
 ## Why I Made This
-Basically I'm a total noob when it comes to really serious system hardening so I thought I'd test the latest LLM models and see how far I could get. Turns out they're pretty helpful! I got tired of hardening my new systems by hand every time I spun up a new one so I made this MCP server to make it pretty easy. I jam packed as many security tools as I could into this thing so be prepared to burn tokens using it. Hopefully it helps you about half as much as its helped me. 
+
+Basically I'm a total noob when it comes to really serious system hardening so I thought I'd test the latest LLM models and see how far I could get. Turns out they're pretty helpful! I got tired of hardening my new systems by hand every time I spun up a new one so I made this MCP server to make it pretty easy. I jam packed as many security tools as I could into this thing so be prepared to burn tokens using it. Hopefully it helps you about half as much as its helped me.
 
 ## So What It Does
 
@@ -46,7 +71,10 @@ Here are the tools:
 | **Deception/Honeypots** | Canary token deployment, honeyport listeners, trigger monitoring |
 | **Wireless Security** | Bluetooth/WiFi auditing, rogue AP detection, interface disabling |
 
-Every tool runs with safety guardrails:
+### Safety Guardrails
+
+Every tool runs with safety guardrails — you won't blow up your box:
+
 - **Dry-run by default** — tools preview what they would do before making changes
 - **Command allowlist** — only pre-approved binaries can execute (no shell interpreters)
 - **Input sanitization** — all parameters validated against injection attacks
@@ -81,7 +109,7 @@ DEFENSE_MCP_AUTO_INSTALL=false node build/index.js
 ## Requirements
 
 - **Linux** (Kali, Debian, Ubuntu, RHEL, Arch, or any systemd-based distro)
-- **Node.js 20+**
+- **Node.js 22+**
 - **npm 9+**
 
 ## System Dependencies
@@ -122,13 +150,19 @@ These are **not available** in standard Debian/Ubuntu repos and require manual i
 
 ## Installation
 
-### Option A: npm (recommended)
+### Option A: Smithery (recommended)
+
+```bash
+npx -y @smithery/cli install @bottobot/defense-mcp-server --client claude
+```
+
+### Option B: npm
 
 ```bash
 npm install -g defense-mcp-server
 ```
 
-### Option B: Clone and build
+### Option C: Clone and build
 
 1. Clone the repository:
    ```bash
@@ -185,6 +219,12 @@ Any MCP client that supports stdio transport can connect. The server communicate
 node build/index.js
 ```
 
+For HTTP/SSE transport (used by Smithery and remote clients):
+
+```bash
+MCP_TRANSPORT=http MCP_PORT=3100 node build/index.js
+```
+
 ## Usage Examples
 
 Once connected, talk to your AI assistant naturally:
@@ -227,6 +267,8 @@ Configuration is via environment variables. All have secure defaults:
 | `DEFENSE_MCP_AUTO_INSTALL` | `true` | Auto-install missing tool dependencies |
 | `DEFENSE_MCP_PREFLIGHT` | `true` | Enable pre-flight dependency checks |
 | `DEFENSE_MCP_PREFLIGHT_BANNERS` | `true` | Show pre-flight status in tool output |
+| `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` or `http` |
+| `MCP_PORT` | `3100` | HTTP server port (when `MCP_TRANSPORT=http`) |
 
 To apply changes for real (not just preview), set:
 ```bash
@@ -235,16 +277,125 @@ DEFENSE_MCP_DRY_RUN=false node build/index.js
 
 ## Security
 
-This server is designed to be safe by default:
+A security tool that isn't secure itself is worse than useless. This server implements defense-in-depth across 10 layers, from configuration defaults down to cryptographic verification.
 
-- Commands execute with `shell: false` — no shell interpretation
-- All binaries resolved against a 190-entry allowlist at startup
-- Input validated with Zod schemas before execution
-- Passwords handled as Buffers (zeroed after use, never logged)
-- Rate limited to prevent abuse (30/tool/min, 100 global/min)
-- All file writes go through secure-fs with audit trail
-- Encrypted state storage (AES-256-GCM) for sensitive runtime data
-- Atomic file writes (write-to-temp-then-rename) to prevent corruption
+### MCP Specification Compliance
+
+The [MCP spec](https://modelcontextprotocol.io/) defines security requirements for servers. Here's how this project meets them:
+
+| MCP Requirement | Implementation |
+|----------------|---------------|
+| **Validate all tool inputs** | Zod schemas on every parameter + 15 specialized validators (paths, IPs, ports, service names, etc.) |
+| **Implement access controls** | 200+ entry command allowlist, `shell: false` enforced, sudo session management |
+| **Rate limit tool invocations** | 30/tool/min, 100 global/min, auth failure throttling (5 attempts per 5 minutes) |
+| **Sanitize tool outputs** | Error sanitization strips paths, stack traces, and truncates to 500 chars |
+
+### Layer 1: Safe Defaults
+
+Everything is locked down out of the box. You have to explicitly opt in to making changes:
+
+- **Dry-run mode on by default** — every tool previews what it would do before touching anything
+- **Backups before changes** — system state is backed up automatically before any modification
+- **Confirmation required** — destructive actions need explicit confirmation
+- **Restricted directories** — the server can only access explicitly allowed paths; root `/`, `/etc`, `/usr`, `/bin`, `/sbin` are blocked by default
+- **Protected paths** — system-critical files are blocked from modification regardless of directory config
+
+### Layer 2: Command Execution
+
+No tool can run arbitrary commands. Every command goes through multiple gates:
+
+- **Binary allowlist** — 200+ pre-approved binaries across 18 categories. If a binary isn't on the list, it doesn't run. Period.
+- **Absolute path resolution** — binaries are resolved to absolute paths at startup via `fs.existsSync()`, never through `which` or PATH
+- **`shell: false` enforced** — hardcoded, cannot be overridden. Shell metacharacters (`;`, `|`, `&`, `` ` ``, `$`, etc.) have no effect
+- **TOCTOU detection** — binary inodes are recorded at startup and verified before execution to detect replacement
+- **No fallback** — if a binary can't be resolved to a known path, execution is refused entirely
+
+### Layer 3: Input Validation
+
+Every parameter is validated before it reaches any tool handler:
+
+- **Zod schemas** — runtime type checking with string length limits, enum constraints, numeric ranges, array bounds
+- **Path traversal protection** — `../` sequences rejected, null bytes blocked, symlinks resolved and re-validated
+- **Shell metacharacter blocking** — `[;|&$\`(){}<>!\\\n\r]` stripped from all inputs
+- **Control character rejection** — `[\x00-\x08\x0e-\x1f\x7f]` blocked
+- **Specialized validators** for: targets (hostname/IP/CIDR), ports, service names, sysctl keys, package names, iptables chains, network interfaces, usernames, YARA rules, certificate paths, firewall zones, auditd keys
+- **ReDoS protection** — regex patterns limited to 200 characters, nested quantifiers and excessive alternation rejected
+
+### Layer 4: Sudo & Privilege Management
+
+The server never asks for your password in a way an AI can see:
+
+- **GUI elevation** — `sudo_elevate_gui` opens a native zenity/kdialog dialog. The password goes directly to sudo, never through the AI conversation
+- **Buffer storage** — passwords are stored as Node.js Buffers (not V8 strings), which can be explicitly zeroed from memory
+- **Auto-zeroing** — password buffer is zeroed on session drop, timeout expiry, and process exit
+- **Credential validation** — password is tested with `sudo -S -k -v` before being accepted
+- **Auth rate limiting** — 5 failed attempts per 5 minutes, then locked out
+- **Session UID guard** — session is dropped immediately if the OS user ID changes
+- **NOPASSWD:ALL rejection** — the sudoers management tool explicitly refuses to write `NOPASSWD: ALL` rules
+- **`sudo -S` stdin piping** — passwords are piped via stdin, never passed as command-line arguments (which would be visible in `ps`)
+- **40+ permission error patterns** — detected and surfaced with clear elevation prompts instead of cryptic failures
+
+### Layer 5: Secure File Operations
+
+Every file write is atomic and permission-hardened:
+
+- **Atomic writes** — write to temp file, then rename. No partial writes, no corruption on crash
+- **Owner-only permissions** — files created with `0o600`, directories with `0o700`
+- **Explicit chmod** — permissions enforced independently of umask
+- **Symlink protection** — real paths resolved and re-validated against allowed directories
+- **Backup before modify** — timestamped backups with manifest tracking under `~/.defense-mcp/backups/`
+
+### Layer 6: Encrypted State Storage
+
+Sensitive runtime data is encrypted at rest:
+
+- **Algorithm**: AES-256-GCM (authenticated encryption)
+- **Key derivation**: PBKDF2 with 100,000 iterations, SHA-512
+- **IV**: 96-bit (GCM-recommended)
+- **Auth tag**: 128-bit
+- **Salt**: 128-bit per file
+- **Fallback**: plaintext JSON with warning when no key is configured (`DEFENSE_MCP_STATE_KEY`)
+
+### Layer 7: Supply Chain Security
+
+Auto-installed tools are verified, not blindly trusted:
+
+- **System packages** — installed only via official package manager (apt/dnf/pacman)
+- **pip allowlist** — only 9 pre-approved packages (yara-python, python-nmap, etc.)
+- **npm allowlist** — only 2 pre-approved packages (cdxgen, snyk)
+- **Third-party tools** (Falco, Trivy, Grype, Syft, TruffleHog, slsa-verifier):
+  - Never uses `curl | sh` — all downloads verified before execution
+  - SHA256 checksums hardcoded in manifest
+  - GPG fingerprints verified against known-good values
+  - Cosign verification where available
+  - Requires explicit `DEFENSE_MCP_THIRD_PARTY_INSTALL=true` to enable
+
+### Layer 8: Rate Limiting & Safeguards
+
+Protection against runaway or abusive tool invocations:
+
+- **Per-tool limit**: 30 invocations per 60 seconds
+- **Global limit**: 100 invocations per 60 seconds
+- **Running service detection** — detects VS Code, Docker, databases, web servers, MCP servers, SSH sessions before operations that could affect them
+- **Pre-flight validation** — every tool checks dependencies, privileges, and safeguards before executing
+
+### Layer 9: Audit Trail & Rollback
+
+Every change is recorded and reversible:
+
+- **Structured changelog** — JSON entries with tool name, action, target, before/after values, timestamp
+- **Rollback commands** — stored with each change, validated against command allowlist
+- **Structured logging** — JSON-formatted security events to stderr with file rotation (10 MB, 5 files)
+- **Security log level** — critical events always logged regardless of log level setting
+
+### Layer 10: Policy Engine
+
+Hardening policies are enforced safely:
+
+- **No shell interpreters** — policy check and remediation commands use direct binary invocation only
+- **Regex safety** — pattern length limits (200 chars), nested quantifier rejection
+- **Severity classification** — critical, high, medium, low, info
+- **Secure policy storage** — policy files created with `0o700` directory permissions
 
 For the full security architecture, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
