@@ -9,7 +9,7 @@
  * WITHOUT mocks. I/O functions use mocked executeCommand.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 import {
   parsePamConfig,

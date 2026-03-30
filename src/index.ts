@@ -234,8 +234,8 @@ async function main() {
     const nopasswdCheck = SudoGuard.checkNopasswdConfiguration();
     if (nopasswdCheck.nopasswdDetected) {
       console.error(
-        `[startup] ⚠️  SECURITY CRITICAL: NOPASSWD:ALL detected in sudoers ` +
-        `(${nopasswdCheck.location}). sudo_elevate credential validation is NON-FUNCTIONAL. ` +
+        `[startup] ⚠️  SECURITY CRITICAL: NOPASSWD:ALL detected in sudoers. ` +
+        `sudo_elevate credential validation is NON-FUNCTIONAL. ` +
         `Remove the NOPASSWD entry from sudoers and set a real password for the MCP user.`
       );
     } else {

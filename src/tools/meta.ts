@@ -37,7 +37,7 @@ import {
   isThirdPartyInstallEnabled,
 } from "../core/third-party-installer.js";
 import { THIRD_PARTY_MANIFEST } from "../core/third-party-manifest.js";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { spawnSafe } from "../core/spawn-safe.js";
@@ -1464,13 +1464,16 @@ export function registerMetaTools(server: McpServer): void {
             ensurePostureDir();
             const historyPath = join(POSTURE_DIR, "history.json");
             let history: { timestamp: string; score: number; domains: Record<string, number> }[] = [];
-            try { if (existsSync(historyPath)) history = JSON.parse(readFileSync(historyPath, "utf-8")); } catch { /* start fresh */ }
+            try { history = JSON.parse(readFileSync(historyPath, "utf-8")); } catch { /* start fresh */ }
 
             const domainScores: Record<string, number> = {};
             for (const d of domains) domainScores[d.domain] = d.score;
             history.push({ timestamp: new Date().toISOString(), score: overallScore, domains: domainScores });
             if (history.length > 1000) history = history.slice(-1000);
-            writeFileSync(historyPath, JSON.stringify(history, null, 2), "utf-8");
+            // Atomic write: write to temp then rename to avoid partial-read races
+            const tmpPath = historyPath + `.tmp.${process.pid}`;
+            writeFileSync(tmpPath, JSON.stringify(history, null, 2), { encoding: "utf-8", mode: 0o600 });
+            renameSync(tmpPath, historyPath);
 
             return { content: [formatToolOutput({ overallScore, rating: overallScore >= 80 ? "GOOD" : overallScore >= 60 ? "FAIR" : overallScore >= 40 ? "POOR" : "CRITICAL", domains })] };
           } catch (err: unknown) {

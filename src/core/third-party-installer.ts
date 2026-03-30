@@ -671,7 +671,7 @@ async function installAptRepo(
       const tempSourcePath = join(tempDir, `${entry.binary}.list`);
       try {
         const { writeFileSync } = await import("node:fs");
-        writeFileSync(tempSourcePath, entry.aptRepoLine + "\n", { mode: 0o644 });
+        writeFileSync(tempSourcePath, entry.aptRepoLine + "\n", { mode: 0o600 });
         const copyResult = execWithSudo(
           ["cp", tempSourcePath, aptSourcePath],
           { timeoutMs: 5_000 },

@@ -78,7 +78,6 @@ import {
   backupPamFile,
   restorePamFile,
   parsePamConfig,
-  serializePamConfig,
   validatePamConfig,
 } from "../../src/core/pam-utils.js";
 import type { PamRule } from "../../src/core/pam-utils.js";
@@ -239,7 +238,7 @@ describe("access-control tools", () => {
       vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
 
       const handler = tools.get("access_control")!.handler;
-      const result = await handler({
+      await handler({
         action: "pam_configure",
         module: "faillock",
         dry_run: false,

@@ -198,7 +198,7 @@ describe("tool-durations", () => {
 
   describe("DURATION_DATABASE", () => {
     it("has recommended timeout > maxSeconds for all entries", () => {
-      for (const [key, est] of Object.entries(DURATION_DATABASE)) {
+      for (const [, est] of Object.entries(DURATION_DATABASE)) {
         const maxMs = est.maxSeconds * 1000;
         expect(est.recommendedTimeoutMs).toBeGreaterThanOrEqual(
           maxMs,
@@ -207,13 +207,13 @@ describe("tool-durations", () => {
     });
 
     it("has minSeconds <= maxSeconds for all entries", () => {
-      for (const [key, est] of Object.entries(DURATION_DATABASE)) {
+      for (const [, est] of Object.entries(DURATION_DATABASE)) {
         expect(est.minSeconds).toBeLessThanOrEqual(est.maxSeconds);
       }
     });
 
     it("has non-empty descriptions for all entries", () => {
-      for (const [key, est] of Object.entries(DURATION_DATABASE)) {
+      for (const [, est] of Object.entries(DURATION_DATABASE)) {
         expect(est.description.length).toBeGreaterThan(0);
       }
     });

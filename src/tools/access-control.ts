@@ -12,6 +12,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeFileSync, unlinkSync } from "node:fs";
 import { executeCommand } from "../core/executor.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
@@ -1923,14 +1924,11 @@ export function registerAccessControlTools(server: McpServer): void {
               const filePath = `/etc/sudoers.d/${sudoFilename}`;
               const tempPath = join(tmpdir(), `.defense-mcp-sudoers-validate-${randomUUID()}`);
 
-              // Write content to temp file for validation
-              await executeCommand({
-                command: "sudo",
-                args: ["tee", tempPath],
-                toolName: "access_control",
-                timeout: getToolTimeout("access_control"),
-                stdin: sudoContent,
-              });
+              // Write content to temp file for validation.
+              // Use direct writeFileSync instead of sudo tee — the temp dir is
+              // writable without sudo, and piping via sudo tee corrupts the
+              // content because injectSudoFlags prepends the password to stdin.
+              writeFileSync(tempPath, sudoContent + "\n", { mode: 0o600 });
 
               // Validate temp file with visudo
               const validateTempResult = await executeCommand({
@@ -1942,11 +1940,7 @@ export function registerAccessControlTools(server: McpServer): void {
 
               if (validateTempResult.exitCode !== 0) {
                 // Clean up temp file on validation failure
-                await executeCommand({
-                  command: "sudo",
-                  args: ["rm", tempPath],
-                  toolName: "access_control",
-                });
+                try { unlinkSync(tempPath); } catch { /* ignore */ }
 
                 return {
                   content: [createErrorContent(
@@ -1958,11 +1952,7 @@ export function registerAccessControlTools(server: McpServer): void {
 
               if (isDryRun) {
                 // Clean up temp file
-                await executeCommand({
-                  command: "sudo",
-                  args: ["rm", tempPath],
-                  toolName: "access_control",
-                });
+                try { unlinkSync(tempPath); } catch { /* ignore */ }
 
                 const entry = createChangeEntry({
                   tool: "access_control",
@@ -2015,11 +2005,7 @@ export function registerAccessControlTools(server: McpServer): void {
               });
 
               // Clean up temp file
-              await executeCommand({
-                command: "sudo",
-                args: ["rm", tempPath],
-                toolName: "access_control",
-              });
+              try { unlinkSync(tempPath); } catch { /* ignore */ }
 
               // Final validation of entire sudoers config
               const finalValidateResult = await executeCommand({

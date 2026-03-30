@@ -160,15 +160,18 @@ export class Logger {
     if (!this.logFile) return;
 
     try {
-      // Check if rotation is needed before writing
-      if (existsSync(this.logFile)) {
+      // Attempt rotation first, then append — both are best-effort.
+      // The append itself is atomic enough for structured log lines.
+      try {
         const stats = statSync(this.logFile);
         if (stats.size >= this.maxFileSize) {
           rotateLogFile(this.logFile, this.maxFiles);
         }
+      } catch {
+        // File may not exist yet — appendFileSync will create it
       }
 
-      appendFileSync(this.logFile, line, { encoding: "utf-8" });
+      appendFileSync(this.logFile, line, { encoding: "utf-8", mode: 0o600 });
     } catch {
       // Best-effort — don't crash the server on write failure
     }
