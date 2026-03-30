@@ -1,0 +1,23 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required: []
+    properties:
+      autoInstall:
+        type: boolean
+        default: true
+        description: Automatically install missing security tools when needed
+    description: >-
+      Defense MCP Server configuration. Runs on Linux systems with optional
+      auto-installation of security tools.
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'defense-mcp-server'],
+      env: {
+        DEFENSE_MCP_AUTO_INSTALL: config.autoInstall !== false ? 'true' : 'false'
+      }
+    })
