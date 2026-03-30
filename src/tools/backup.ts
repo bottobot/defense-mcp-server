@@ -92,30 +92,30 @@ export function registerBackupTools(server: McpServer): void {
 
   server.tool(
     "backup",
-    "Backup management: backup config files, capture system state, restore from backup, verify integrity, or list backups.",
+    "Backup: config files, system state snapshots, restore, verify integrity, list backups",
     {
-      action: z.enum(["config", "state", "restore", "verify", "list"]).describe("Action: config=backup config files, state=system state snapshot, restore=restore from backup, verify=verify integrity, list=list backups"),
+      action: z.enum(["config", "state", "restore", "verify", "list"]).describe("Backup management action"),
       // config params
-      files: z.string().optional().describe("Comma-separated file paths, or omit for default critical files (config action)"),
-      tag: z.string().optional().describe("Tag for this backup set (config action)"),
+      files: z.string().optional().describe("Comma-separated file paths to back up"),
+      tag: z.string().optional().describe("Tag for this backup set"),
       // state params
-      output_dir: z.string().optional().describe("Directory to save snapshot files (state action)"),
-      include_packages: z.boolean().optional().default(true).describe("Include installed packages list (state action)"),
-      include_services: z.boolean().optional().default(true).describe("Include service states (state action)"),
-      include_network: z.boolean().optional().default(true).describe("Include network configuration (state action)"),
-      include_firewall: z.boolean().optional().default(true).describe("Include firewall rules (state action)"),
-      include_users: z.boolean().optional().default(true).describe("Include user/group information (state action)"),
+      output_dir: z.string().optional().describe("Directory to save snapshot files"),
+      include_packages: z.boolean().optional().default(true).describe("Include installed packages list"),
+      include_services: z.boolean().optional().default(true).describe("Include service states"),
+      include_network: z.boolean().optional().default(true).describe("Include network configuration"),
+      include_firewall: z.boolean().optional().default(true).describe("Include firewall rules"),
+      include_users: z.boolean().optional().default(true).describe("Include user/group information"),
       // restore params
-      backup_path: z.string().optional().describe("Path to the backup file (restore/verify action)"),
-      original_path: z.string().optional().describe("Original file path to restore to (restore action)"),
+      backup_path: z.string().optional().describe("Path to the backup file"),
+      original_path: z.string().optional().describe("Original file path to restore to"),
       // verify params
-      check_integrity: z.boolean().optional().default(true).describe("Compute and verify SHA256 checksums (verify action)"),
+      check_integrity: z.boolean().optional().default(true).describe("Compute and verify SHA256 checksums"),
       // list params
-      filter: z.string().optional().describe("Filter by filename pattern (list action)"),
-      sort_by: z.enum(["date", "name", "size"]).optional().default("date").describe("Sort order (list action)"),
-      limit: z.number().optional().default(50).describe("Maximum number of results (list action)"),
+      filter: z.string().optional().describe("Filter by filename pattern"),
+      sort_by: z.enum(["date", "name", "size"]).optional().default("date").describe("Sort order"),
+      limit: z.number().optional().default(50).describe("Maximum number of results"),
       // shared
-      dry_run: z.boolean().optional().describe("Preview without executing (defaults to DEFENSE_MCP_DRY_RUN env var)"),
+      dry_run: z.boolean().optional().describe("Preview without executing"),
     },
     async (params) => {
       const { action } = params;

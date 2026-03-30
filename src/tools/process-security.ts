@@ -850,13 +850,11 @@ function formatAsJson(
 export function registerProcessSecurityTools(server: McpServer): void {
   server.tool(
     "process_security",
-    "Process security analysis: audit running processes, check capabilities, inspect namespaces, detect anomalies, and audit cgroup resource limits.",
+    "Processes: audit running, capabilities, namespaces, anomaly detection, cgroup limits",
     {
       action: z
         .enum(["audit_running", "check_capabilities", "check_namespaces", "detect_anomalies", "cgroup_audit"])
-        .describe(
-          "Action: audit_running=audit processes, check_capabilities=inspect Linux capabilities, check_namespaces=namespace isolation, detect_anomalies=comprehensive anomaly detection, cgroup_audit=resource limit audit",
-        ),
+        .describe("Process security action"),
       pid: z
         .number()
         .optional()
@@ -869,12 +867,12 @@ export function registerProcessSecurityTools(server: McpServer): void {
         .boolean()
         .optional()
         .default(false)
-        .describe("Show all processes or only suspicious ones"),
+        .describe("Show all processes, not just suspicious"),
       output_format: z
         .enum(["text", "json"])
         .optional()
         .default("text")
-        .describe("Output format: text or json"),
+        .describe("Output format"),
     },
     async (params) => {
       const { action, pid, filter, show_all, output_format } = params;

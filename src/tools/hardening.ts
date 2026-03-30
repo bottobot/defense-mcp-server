@@ -330,7 +330,7 @@ export function registerHardeningTools(server: McpServer): void {
 
   server.tool(
     "harden_kernel",
-    "Kernel security hardening. Actions: sysctl_get/sysctl_set/sysctl_audit=sysctl management, kernel_audit/kernel_modules/kernel_coredump=kernel security, bootloader_audit/bootloader_configure=bootloader hardening, memory_audit/memory_enforce_aslr/memory_report=memory protections",
+    "Kernel hardening: sysctl, kernel security, bootloader, memory protections",
     {
       action: z
         .enum([
@@ -341,32 +341,32 @@ export function registerHardeningTools(server: McpServer): void {
         ])
         .describe("Action to perform"),
       // sysctl params
-      key: z.string().optional().describe("Sysctl key (required for sysctl_get single/sysctl_set)"),
-      all: z.boolean().optional().default(false).describe("Return all sysctl values (for sysctl_get)"),
-      pattern: z.string().optional().describe("Filter keys matching substring (for sysctl_get)"),
-      value: z.string().optional().describe("Value to set (required for sysctl_set)"),
-      persistent: z.boolean().optional().default(false).describe("Write to /etc/sysctl.d/99-defense-mcp.conf (for sysctl_set)"),
-      category: z.enum(["network", "kernel", "fs", "all"]).optional().default("all").describe("Category of settings to audit (for sysctl_audit)"),
+      key: z.string().optional().describe("Sysctl key"),
+      all: z.boolean().optional().default(false).describe("Return all sysctl values"),
+      pattern: z.string().optional().describe("Filter keys matching substring"),
+      value: z.string().optional().describe("Value to set"),
+      persistent: z.boolean().optional().default(false).describe("Persist to /etc/sysctl.d/99-defense-mcp.conf"),
+      category: z.enum(["network", "kernel", "fs", "all"]).optional().default("all").describe("Settings category to audit"),
       // kernel params
       check_type: z
         .enum(["cpu_vulns", "lsm", "lockdown", "features", "all"])
         .optional()
         .default("all")
-        .describe("Type of kernel security check (for kernel_audit)"),
+        .describe("Kernel security check type"),
       // bootloader params
       configure_action: z
         .enum(["add_kernel_params", "status", "set_password"])
         .optional()
-        .describe("Configure sub-action (required for bootloader_configure)"),
+        .describe("Bootloader configure sub-action"),
       kernel_params: z
         .string()
         .optional()
-        .describe("Space-separated kernel parameters to add (for bootloader_configure action=add_kernel_params)"),
-      grub_password: z.string().optional().describe("GRUB bootloader password (bootloader_configure set_password)"),
-      grub_superuser: z.string().optional().default("grubadmin").describe("GRUB superuser name (default: grubadmin)"),
+        .describe("Space-separated kernel parameters to add"),
+      grub_password: z.string().optional().describe("GRUB bootloader password"),
+      grub_superuser: z.string().optional().default("grubadmin").describe("GRUB superuser name"),
       grub_unrestricted: z.boolean().optional().default(true).describe("Allow normal boot without password, require for editing"),
       // memory params
-      binaries: z.array(z.string()).optional().describe("Binary paths to check (for memory_audit)"),
+      binaries: z.array(z.string()).optional().describe("Binary paths to check"),
       // shared
       dry_run: z.boolean().optional().default(true).describe("Preview changes"),
     },
@@ -1614,7 +1614,7 @@ export function registerHardeningTools(server: McpServer): void {
 
   server.tool(
     "harden_host",
-    "Host hardening. Actions: service_manage/service_audit=service control, permissions_check/permissions_fix/permissions_audit=file permissions, systemd_audit/systemd_apply=systemd hardening, cron_audit/umask_audit/umask_set/banner_audit/banner_set=misc hardening, usb_audit_devices/usb_block_storage/usb_whitelist/usb_monitor=USB control",
+    "Host hardening: services, permissions, systemd, cron, umask, banners, USB control",
     {
       action: z
         .enum([
@@ -1626,53 +1626,53 @@ export function registerHardeningTools(server: McpServer): void {
         ])
         .describe("Action to perform"),
       // service params
-      service: z.string().optional().describe("Service name, e.g. 'ssh.service'"),
+      service: z.string().optional().describe("Service name"),
       service_action: z
         .enum(["enable", "disable", "stop", "start", "restart", "mask", "unmask", "status"])
         .optional()
-        .describe("Service action (required for service_manage)"),
-      show_all: z.boolean().optional().default(false).describe("Show all running services, not just flagged (for service_audit)"),
+        .describe("Service management action"),
+      show_all: z.boolean().optional().default(false).describe("Show all services, not just flagged"),
       // permissions params
-      path: z.string().optional().describe("File or directory path (required for permissions_check/permissions_fix)"),
-      mode: z.string().optional().describe("Desired octal permissions, e.g. '600' (for permissions_fix)"),
-      owner: z.string().optional().describe("Desired owner, e.g. 'root' (for permissions_fix)"),
-      group: z.string().optional().describe("Desired group, e.g. 'root' (for permissions_fix)"),
-      recursive: z.boolean().optional().default(false).describe("Apply changes recursively (for permissions_fix)"),
+      path: z.string().optional().describe("File or directory path"),
+      mode: z.string().optional().describe("Octal permissions, e.g. '600'"),
+      owner: z.string().optional().describe("File owner, e.g. 'root'"),
+      group: z.string().optional().describe("File group, e.g. 'root'"),
+      recursive: z.boolean().optional().default(false).describe("Apply recursively"),
       scope: z
         .enum(["passwd", "shadow", "ssh", "cron", "critical", "all"])
         .optional()
         .default("all")
-        .describe("Scope of files to audit (for permissions_audit)"),
+        .describe("Permissions audit scope"),
       // systemd params
-      threshold: z.number().optional().default(5).describe("Exposure score threshold 0-10 (for systemd_audit)"),
-      hardening_level: z.enum(["basic", "strict", "custom"]).optional().describe("Preset hardening level (required for systemd_apply)"),
-      custom_directives: z.array(z.string()).optional().describe("Array of systemd service directives for custom level, e.g. ['ProtectSystem=strict', 'PrivateTmp=yes']"),
+      threshold: z.number().optional().default(5).describe("Exposure score threshold 0-10"),
+      hardening_level: z.enum(["basic", "strict", "custom"]).optional().describe("Systemd hardening level"),
+      custom_directives: z.array(z.string()).optional().describe("Systemd directives for custom level"),
       // misc params
-      umask_value: z.enum(["027", "077"]).optional().describe("Umask value (required for umask_set)"),
+      umask_value: z.enum(["027", "077"]).optional().describe("Umask value"),
       targets: z
         .array(z.enum(["login.defs", "profile", "bashrc"]))
         .optional()
-        .describe("Files to update for umask_set (default: all)"),
-      banner_text: z.string().optional().describe("Custom banner text (for banner_set; uses CIS default if omitted)"),
+        .describe("Files to update for umask"),
+      banner_text: z.string().optional().describe("Custom banner text (CIS default if omitted)"),
       banner_targets: z
         .array(z.enum(["issue", "issue.net", "motd"]))
         .optional()
-        .describe("Banner files to update (for banner_set; default: all)"),
+        .describe("Banner files to update"),
       // usb params
       device_id: z
         .string()
         .optional()
-        .describe("USB device ID in vendor:product format (for usb_whitelist action)"),
+        .describe("USB device ID in vendor:product format"),
       block_method: z
         .enum(["modprobe", "udev"])
         .optional()
         .default("modprobe")
-        .describe("Method to block USB storage: modprobe=blacklist kernel module, udev=udev rule (default modprobe)"),
+        .describe("USB storage block method"),
       output_format: z
         .enum(["text", "json"])
         .optional()
         .default("text")
-        .describe("Output format (default text)"),
+        .describe("Output format"),
       // shared
       dry_run: z.boolean().optional().default(true).describe("Preview changes"),
     },

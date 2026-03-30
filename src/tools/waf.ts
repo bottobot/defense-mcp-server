@@ -914,44 +914,42 @@ async function handleBlockedRequests(
 export function registerWafTools(server: McpServer): void {
   server.tool(
     "waf_manage",
-    "Web Application Firewall management: audit ModSecurity, manage rules, configure rate limiting, deploy OWASP CRS, analyze blocked requests.",
+    "WAF: ModSecurity audit, rule management, rate limiting, OWASP CRS, blocked request analysis",
     {
       action: z
         .enum(["modsec_audit", "modsec_rules", "rate_limit_config", "owasp_crs_deploy", "blocked_requests"])
-        .describe(
-          "Action: modsec_audit=audit WAF config, modsec_rules=manage rules, rate_limit_config=rate limiting, owasp_crs_deploy=CRS status, blocked_requests=log analysis",
-        ),
+        .describe("WAF management action"),
       web_server: z
         .enum(["nginx", "apache"])
         .optional()
         .default("nginx")
-        .describe("Web server type (default: nginx)"),
+        .describe("Web server type"),
       rule_id: z
         .string()
         .optional()
-        .describe("ModSecurity rule ID (used with modsec_rules action)"),
+        .describe("ModSecurity rule ID"),
       rule_action: z
         .enum(["enable", "disable", "list"])
         .optional()
         .default("list")
-        .describe("Rule action: enable, disable, or list (used with modsec_rules)"),
+        .describe("Rule sub-action"),
       rate_limit: z
         .number()
         .optional()
-        .describe("Requests per second for rate limiting (used with rate_limit_config)"),
+        .describe("Requests per second for rate limiting"),
       rate_limit_zone: z
         .string()
         .optional()
-        .describe("Zone name for rate limiting (used with rate_limit_config)"),
+        .describe("Zone name for rate limiting"),
       log_path: z
         .string()
         .optional()
-        .describe("Path to WAF log file (used with blocked_requests)"),
+        .describe("Path to WAF log file"),
       output_format: z
         .enum(["text", "json"])
         .optional()
         .default("text")
-        .describe("Output format: text or json (default: text)"),
+        .describe("Output format"),
     },
     async (params) => {
       const { action } = params;

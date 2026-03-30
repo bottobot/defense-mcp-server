@@ -13,6 +13,7 @@ vi.mock("../../src/core/executor.js", () => ({
 vi.mock("../../src/core/config.js", () => ({
   getConfig: vi.fn().mockReturnValue({ dryRun: true }),
   getToolTimeout: vi.fn().mockReturnValue(30000),
+  getActionTimeout: vi.fn().mockReturnValue(900000),
 }));
 vi.mock("../../src/core/parsers.js", () => ({
   createTextContent: vi.fn((t: string) => ({ type: "text", text: t })),

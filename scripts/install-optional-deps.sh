@@ -38,7 +38,7 @@ GRYPE_VERSION="0.86.1"
 SYFT_VERSION="1.18.1"
 TRUFFLEHOG_VERSION="3.88.1"
 SLSA_VERIFIER_VERSION="2.6.0"
-CDXGEN_VERSION="11.1.7"
+CDXGEN_VERSION="latest"
 
 # SHA256 checksums (must match src/core/third-party-manifest.ts)
 GRYPE_SHA256_AMD64="2d1533dae213a27b741e0cb31b2cd354159a283325475512ae90c1c2412f4098"
@@ -51,8 +51,8 @@ SLSA_VERIFIER_SHA256_AMD64="1c9c0d6a272063f3def6d233fa3372adbaff1f5a3480611a07c7
 SLSA_VERIFIER_SHA256_ARM64="92b28eb2db998f9a6a048336928b29a38cb100076cd587e443ca0a2543d7c93d"
 
 # GPG fingerprints
-FALCO_GPG_FINGERPRINT="15ED05F191E40D74BA47109F9F76B25D35785F62"
-TRIVY_GPG_FINGERPRINT="232079315D25CF3BB7B0B81BCF44E8B631B27462"
+FALCO_GPG_FINGERPRINT="478B2FBBC75F4237B731DA4365106822B35B1B1F"
+TRIVY_GPG_FINGERPRINT="2E2D3567461632C84BB6CD6FE9D0A3616276FA6C"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -149,10 +149,10 @@ install_falco() {
   fi
   log_success "GPG fingerprint verified: $fingerprint"
 
-  # Step 3: Install keyring
-  sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg "$key_file" 2>/dev/null || \
-    (sudo rm -f /usr/share/keyrings/falco-archive-keyring.gpg && \
-     sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg "$key_file")
+  # Step 3: Install keyring (chmod 644 for Debian 13 sqv/APT to read as _apt user)
+  sudo rm -f /usr/share/keyrings/falco-archive-keyring.gpg
+  gpg --dearmor < "$key_file" | sudo tee /usr/share/keyrings/falco-archive-keyring.gpg > /dev/null
+  sudo chmod 644 /usr/share/keyrings/falco-archive-keyring.gpg
 
   # Step 4: Add APT source with signed-by
   echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" | \
@@ -198,10 +198,10 @@ install_trivy() {
   fi
   log_success "GPG fingerprint verified: $fingerprint"
 
-  # Step 3: Install keyring
-  sudo gpg --dearmor -o /usr/share/keyrings/trivy-archive-keyring.gpg "$key_file" 2>/dev/null || \
-    (sudo rm -f /usr/share/keyrings/trivy-archive-keyring.gpg && \
-     sudo gpg --dearmor -o /usr/share/keyrings/trivy-archive-keyring.gpg "$key_file")
+  # Step 3: Install keyring (chmod 644 for Debian 13 sqv/APT to read as _apt user)
+  sudo rm -f /usr/share/keyrings/trivy-archive-keyring.gpg
+  gpg --dearmor < "$key_file" | sudo tee /usr/share/keyrings/trivy-archive-keyring.gpg > /dev/null
+  sudo chmod 644 /usr/share/keyrings/trivy-archive-keyring.gpg
 
   # Step 4: Add APT source with signed-by
   echo "deb [signed-by=/usr/share/keyrings/trivy-archive-keyring.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | \
@@ -322,12 +322,28 @@ install_cdxgen() {
     return 0
   fi
 
-  if ! is_installed npm; then
+  # Find npm — handle nvm installs where sudo can't see npm
+  local npm_bin
+  npm_bin=$(command -v npm 2>/dev/null || true)
+  if [[ -z "$npm_bin" ]]; then
     log_error "npm is not installed. Install Node.js/npm first."
     return 1
   fi
 
-  sudo npm install -g "@cyclonedx/cdxgen@${CDXGEN_VERSION}"
+  # If npm is in nvm path, install as user (nvm global doesn't need sudo)
+  if [[ "$npm_bin" == *".nvm"* ]]; then
+    log_info "Detected nvm-managed npm, installing as user..."
+    "$npm_bin" install -g "@cyclonedx/cdxgen@${CDXGEN_VERSION}"
+    # Symlink to /usr/local/bin so MCP server and other contexts can find it
+    local cdxgen_bin
+    cdxgen_bin="$(dirname "$npm_bin")/cdxgen"
+    if [[ -f "$cdxgen_bin" ]]; then
+      sudo ln -sf "$cdxgen_bin" /usr/local/bin/cdxgen
+      log_info "Created symlink /usr/local/bin/cdxgen → $cdxgen_bin"
+    fi
+  else
+    sudo "$npm_bin" install -g "@cyclonedx/cdxgen@${CDXGEN_VERSION}"
+  fi
 
   log_success "cdxgen v${CDXGEN_VERSION} installed via npm"
   log_to_file "INSTALLED cdxgen v${CDXGEN_VERSION} via npm"

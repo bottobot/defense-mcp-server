@@ -583,7 +583,7 @@ async function testConnectivity(
 export function registerLoggingTools(server: McpServer): void {
   server.tool(
     "log_management",
-    "Log management: auditd rules/search/reporting, journalctl queries, fail2ban management, syslog analysis, log rotation audit/configure, and SIEM integration (syslog forwarding, Filebeat, connectivity testing).",
+    "Logging: auditd, journalctl, fail2ban, syslog, log rotation, SIEM integration",
     {
       action: z
         .enum([
@@ -605,69 +605,67 @@ export function registerLoggingTools(server: McpServer): void {
           "siem_audit_forwarding",
           "siem_test_connectivity",
         ])
-        .describe(
-          "Action: auditd_rules/search/report/cis_rules, journalctl_query, fail2ban_status/ban/unban/reload/audit, syslog_analyze, rotation_audit/configure, siem_syslog_forward/filebeat/audit_forwarding/test_connectivity"
-        ),
+        .describe("Log management action"),
       // auditd rules params
       rules_action: z
         .enum(["list", "add", "delete"])
         .optional()
-        .describe("Rule action (auditd_rules action)"),
+        .describe("Audit rule sub-action"),
       rule: z
         .string()
         .min(1)
         .optional()
-        .describe("Audit rule string (auditd_rules add/delete)"),
+        .describe("Audit rule string"),
       // auditd search params
       key: z
         .string()
         .min(1)
         .regex(/^[a-zA-Z0-9._-]+$/)
         .optional()
-        .describe("Audit key to search for (auditd_search action)"),
+        .describe("Audit key to search for"),
       syscall: z
         .string()
         .min(1)
         .regex(/^[a-zA-Z0-9_]+$/)
         .optional()
-        .describe("System call name to filter (auditd_search action)"),
+        .describe("System call name to filter"),
       uid: z
         .string()
         .min(1)
         .regex(/^[0-9]+$/)
         .optional()
-        .describe("User ID to filter (auditd_search action)"),
+        .describe("User ID to filter"),
       start: z
         .string()
         .min(1)
         .optional()
-        .describe("Start time e.g. 'today', '1 hour ago' (auditd_search/report action)"),
+        .describe("Start time, e.g. 'today', '1 hour ago'"),
       end: z
         .string()
         .min(1)
         .optional()
-        .describe("End time (auditd_search action)"),
+        .describe("End time"),
       success: z
         .enum(["yes", "no"])
         .optional()
-        .describe("Filter by success/failure (auditd_search action)"),
+        .describe("Filter by success/failure"),
       limit: z
         .number()
         .optional()
         .default(50)
-        .describe("Maximum number of lines to return (auditd_search action)"),
+        .describe("Maximum lines to return"),
       // auditd report params
       report_type: z
         .enum(["summary", "auth", "login", "account", "event", "file", "exec"])
         .optional()
         .default("summary")
-        .describe("Type of audit report (auditd_report action)"),
+        .describe("Audit report type"),
       // auditd cis_rules params
       cis_action: z
         .enum(["check", "generate"])
         .optional()
         .default("check")
-        .describe("check or generate CIS rules (auditd_cis_rules action)"),
+        .describe("Check or generate CIS rules"),
       // shared log params
       dry_run: z
         .boolean()
@@ -677,23 +675,23 @@ export function registerLoggingTools(server: McpServer): void {
       unit: z
         .string()
         .optional()
-        .describe("Systemd unit name to filter (journalctl_query action)"),
+        .describe("Systemd unit name to filter"),
       priority: z
         .enum(["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"])
         .optional()
-        .describe("Minimum priority level (journalctl_query action)"),
+        .describe("Minimum priority level"),
       since: z
         .string()
         .optional()
-        .describe("Start time, e.g. '1 hour ago', 'today', '2024-01-01' (journalctl_query action)"),
+        .describe("Start time, e.g. '1 hour ago', 'today'"),
       until: z
         .string()
         .optional()
-        .describe("End time (journalctl_query action)"),
+        .describe("End time"),
       grep: z
         .string()
         .optional()
-        .describe("Pattern to search for in log messages (journalctl_query action)"),
+        .describe("Pattern to search for in log messages"),
       lines: z
         .number()
         .optional()
@@ -701,29 +699,29 @@ export function registerLoggingTools(server: McpServer): void {
       output_format: z
         .string()
         .optional()
-        .describe("Output format: short/json/cat/verbose (journalctl_query), text/json (SIEM actions)"),
+        .describe("Output format"),
       // fail2ban params
       jail: z
         .string()
         .min(1)
         .regex(/^[a-zA-Z0-9._-]+$/)
         .optional()
-        .describe("Jail name (fail2ban_status: optional, fail2ban_ban/unban: required)"),
+        .describe("Fail2ban jail name"),
       ip: z
         .string()
         .min(1)
         .optional()
-        .describe("IP address to ban or unban (fail2ban_ban/unban action)"),
+        .describe("IP address to ban or unban"),
       // syslog_analyze params
       log_file: z
         .string()
         .optional()
-        .describe("Path to the log file (syslog_analyze action)"),
+        .describe("Path to log file"),
       pattern: z
         .enum(["auth_failures", "ssh_brute", "privilege_escalation", "service_changes", "all"])
         .optional()
         .default("all")
-        .describe("Security event pattern (syslog_analyze action)"),
+        .describe("Security event pattern to search"),
       // SIEM params
       siem_host: z
         .string()
@@ -732,25 +730,25 @@ export function registerLoggingTools(server: McpServer): void {
       siem_port: z
         .number()
         .optional()
-        .describe("SIEM server port (default 514 for syslog, 5044 for filebeat)"),
+        .describe("SIEM server port"),
       protocol: z
         .enum(["tcp", "udp", "tls"])
         .optional()
         .default("tcp")
-        .describe("Transport protocol (default tcp)"),
+        .describe("Transport protocol"),
       log_sources: z
         .array(z.string())
         .optional()
-        .describe("Log sources to forward (e.g., auth, syslog, kern, audit)"),
+        .describe("Log sources to forward"),
       // rotation_configure params
       logrotate_path: z
         .string()
         .optional()
-        .describe("Log file path to configure rotation for (rotation_configure)"),
+        .describe("Log file path to configure rotation for"),
       logrotate_name: z
         .string()
         .optional()
-        .describe("Config filename under /etc/logrotate.d/ (rotation_configure)"),
+        .describe("Config filename under /etc/logrotate.d/"),
       rotate_count: z
         .number()
         .optional()
@@ -768,7 +766,7 @@ export function registerLoggingTools(server: McpServer): void {
       extra_directives: z
         .array(z.string())
         .optional()
-        .describe("Additional logrotate directives like missingok, notifempty, delaycompress"),
+        .describe("Additional logrotate directives"),
     },
     async (params) => {
       const { action } = params;

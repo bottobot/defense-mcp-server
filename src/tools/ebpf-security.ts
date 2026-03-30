@@ -63,17 +63,17 @@ export function registerEbpfSecurityTools(server: McpServer): void {
 
   server.tool(
     "ebpf",
-    "eBPF and Falco security: list loaded eBPF programs, check Falco status, deploy Falco rules, or read recent Falco events.",
+    "eBPF/Falco: list eBPF programs, Falco status, deploy rules, read events",
     {
-      action: z.enum(["list_programs", "falco_status", "falco_deploy_rules", "falco_events"]).describe("Action: list_programs=list eBPF programs, falco_status=check Falco, falco_deploy_rules=deploy custom rules, falco_events=read recent events"),
+      action: z.enum(["list_programs", "falco_status", "falco_deploy_rules", "falco_events"]).describe("eBPF/Falco security action"),
       // list_programs params
-      dryRun: z.boolean().optional().default(true).describe("Preview only (list_programs / falco_deploy_rules)"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
       // falco_deploy_rules params
-      ruleName: z.string().optional().describe("Rule file name without .yaml extension (falco_deploy_rules action)"),
-      ruleContent: z.string().optional().describe("YAML rule content (falco_deploy_rules action)"),
+      ruleName: z.string().optional().describe("Rule file name without .yaml extension"),
+      ruleContent: z.string().optional().describe("YAML rule content"),
       // falco_events params
-      lines: z.number().optional().default(50).describe("Number of recent events to return (falco_events action)"),
-      priority: z.enum(["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]).optional().describe("Filter by minimum priority (falco_events action)"),
+      lines: z.number().optional().default(50).describe("Number of recent events to return"),
+      priority: z.enum(["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]).optional().describe("Filter by minimum priority"),
     },
     async (params) => {
       const { action } = params;

@@ -67,16 +67,16 @@ export function registerContainerSecurityTools(server: McpServer): void {
 
   server.tool(
     "container_docker",
-    "Docker security: audit configuration, run CIS benchmarks, audit seccomp profiles, configure daemon settings, or scan images for vulnerabilities.",
+    "Docker security: audit, CIS bench, seccomp, daemon config, image scan",
     {
-      action: z.enum(["audit", "bench", "seccomp", "daemon", "image_scan"]).describe("Action: audit=security audit, bench=CIS benchmark, seccomp=seccomp audit, daemon=configure daemon, image_scan=scan image for vulnerabilities"),
+      action: z.enum(["audit", "bench", "seccomp", "daemon", "image_scan"]).describe("Docker security action"),
       // audit params
-      check_type: z.enum(["daemon", "images", "containers", "network", "all"]).optional().default("all").describe("Docker check type (audit action)"),
+      check_type: z.enum(["daemon", "images", "containers", "network", "all"]).optional().default("all").describe("Docker audit check type"),
       // bench params
-      checks: z.string().optional().describe("Specific check sections e.g. '1,2,4' (bench action)"),
-      log_level: z.enum(["INFO", "WARN", "NOTE", "PASS"]).optional().default("WARN").describe("Min log level (bench action)"),
+      checks: z.string().optional().describe("Check sections, e.g. '1,2,4'"),
+      log_level: z.enum(["INFO", "WARN", "NOTE", "PASS"]).optional().default("WARN").describe("Minimum log level"),
       // daemon params
-      daemon_action: z.enum(["audit", "apply"]).optional().describe("Whether to audit or apply daemon settings (daemon action)"),
+      daemon_action: z.enum(["audit", "apply"]).optional().describe("Audit or apply daemon settings"),
       settings: z.object({
         userns_remap: z.boolean().optional(),
         no_new_privileges: z.boolean().optional(),
@@ -87,10 +87,10 @@ export function registerContainerSecurityTools(server: McpServer): void {
         log_max_file: z.string().optional().default("3"),
         ip: z.string().optional().describe("Default bind address for published ports on default bridge (e.g. '127.0.0.1')"),
         default_bind_address: z.string().optional().describe("Default bind address for user-defined bridge networks (e.g. '127.0.0.1')"),
-      }).optional().describe("Settings to apply (daemon action with daemon_action=apply)"),
+      }).optional().describe("Daemon settings to apply"),
       // image_scan params
-      image: z.string().optional().describe("Docker image name/ID to scan, e.g. 'nginx:latest' (image_scan action)"),
-      severity: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "ALL"]).optional().default("HIGH").describe("Minimum severity to report (image_scan action)"),
+      image: z.string().optional().describe("Docker image to scan, e.g. 'nginx:latest'"),
+      severity: z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "ALL"]).optional().default("HIGH").describe("Minimum severity to report"),
       // shared
       dry_run: z.boolean().optional().describe("Preview changes without executing"),
     },
@@ -397,7 +397,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
 
   server.tool(
     "container_isolation",
-    "Container isolation management: AppArmor profiles, SELinux settings, namespace checks, seccomp profile generation, and rootless container setup.",
+    "Container isolation: AppArmor, SELinux, namespaces, seccomp, rootless setup",
     {
       action: z.enum([
         "apparmor_status",
@@ -417,29 +417,29 @@ export function registerContainerSecurityTools(server: McpServer): void {
         "rootless_setup",
       ]).describe("Action to perform"),
       // apparmor enforce/complain/disable params
-      profile: z.string().optional().describe("Profile name (apparmor_enforce/apparmor_complain/apparmor_disable)"),
+      profile: z.string().optional().describe("AppArmor profile name"),
       // apparmor_apply_container params
-      profileName: z.string().optional().describe("AppArmor profile name (apparmor_apply_container / seccomp_profile)"),
-      containerName: z.string().optional().describe("Container name for context (apparmor_apply_container)"),
-      allowNetwork: z.boolean().optional().default(true).describe("Allow network access (apparmor_apply_container)"),
-      allowWrite: z.array(z.string()).optional().default([]).describe("Writable paths (apparmor_apply_container)"),
+      profileName: z.string().optional().describe("Profile name for container/seccomp"),
+      containerName: z.string().optional().describe("Container name"),
+      allowNetwork: z.boolean().optional().default(true).describe("Allow network access"),
+      allowWrite: z.array(z.string()).optional().default([]).describe("Writable paths"),
       // selinux params
-      mode: z.enum(["enforcing", "permissive", "disabled"]).optional().describe("SELinux mode (selinux_setenforce)"),
-      boolean_name: z.string().optional().describe("SELinux boolean name (selinux_booleans)"),
-      boolean_value: z.enum(["on", "off"]).optional().describe("SELinux boolean value (selinux_booleans)"),
+      mode: z.enum(["enforcing", "permissive", "disabled"]).optional().describe("SELinux mode"),
+      boolean_name: z.string().optional().describe("SELinux boolean name"),
+      boolean_value: z.enum(["on", "off"]).optional().describe("SELinux boolean value"),
       // namespace_check params
-      pid: z.number().optional().describe("Process ID to inspect namespaces for (namespace_check)"),
-      check_type: z.enum(["user", "network", "pid", "mount", "all"]).optional().default("all").describe("Type of namespace check (namespace_check)"),
+      pid: z.number().optional().describe("Process ID to inspect"),
+      check_type: z.enum(["user", "network", "pid", "mount", "all"]).optional().default("all").describe("Namespace check type"),
       // seccomp_profile params
-      allowedSyscalls: z.array(z.string()).optional().describe("List of syscall names to allow (seccomp_profile)"),
-      defaultAction: z.enum(["SCMP_ACT_ERRNO", "SCMP_ACT_KILL", "SCMP_ACT_LOG"]).optional().default("SCMP_ACT_ERRNO").describe("Default action for unlisted syscalls (seccomp_profile)"),
-      outputPath: z.string().optional().describe("Path to write the profile (seccomp_profile)"),
+      allowedSyscalls: z.array(z.string()).optional().describe("Syscall names to allow"),
+      defaultAction: z.enum(["SCMP_ACT_ERRNO", "SCMP_ACT_KILL", "SCMP_ACT_LOG"]).optional().default("SCMP_ACT_ERRNO").describe("Default action for unlisted syscalls"),
+      outputPath: z.string().optional().describe("Output path for profile"),
       // rootless_setup params
-      username: z.string().optional().describe("Username to configure (rootless_setup)"),
-      subuidCount: z.number().optional().default(65536).describe("Number of subordinate UIDs (rootless_setup)"),
+      username: z.string().optional().describe("Username to configure"),
+      subuidCount: z.number().optional().default(65536).describe("Subordinate UID count"),
       // shared
       dry_run: z.boolean().optional().describe("Preview changes without executing"),
-      dryRun: z.boolean().optional().default(true).describe("Preview only (seccomp_profile / rootless_setup)"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;

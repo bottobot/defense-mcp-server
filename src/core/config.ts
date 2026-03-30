@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getRecommendedTimeout } from "./tool-durations.js";
 
 /**
  * Known defensive tools that support per-tool timeout overrides
@@ -299,4 +300,39 @@ export function getToolTimeout(
   const cfg = config ?? getConfig();
   const lowerName = toolName.toLowerCase() as KnownTool;
   return cfg.toolTimeouts[lowerName] ?? cfg.defaultTimeout;
+}
+
+/**
+ * Returns the effective timeout for a specific tool action in milliseconds.
+ *
+ * Resolution order:
+ * 1. Per-tool env override (DEFENSE_MCP_TIMEOUT_<TOOL>)
+ * 2. Duration database recommended timeout for the specific action
+ * 3. Default timeout from config
+ *
+ * This ensures long-running tools (ClamAV, rkhunter, AIDE) get appropriate
+ * timeouts automatically without requiring env var configuration.
+ */
+export function getActionTimeout(
+  toolName: string,
+  action: string,
+  config?: DefenseConfig
+): number {
+  const cfg = config ?? getConfig();
+  const lowerName = toolName.toLowerCase() as KnownTool;
+
+  // 1. Explicit per-tool env override always wins
+  const envOverride = cfg.toolTimeouts[lowerName];
+  if (envOverride !== undefined) {
+    return envOverride;
+  }
+
+  // 2. Duration database recommended timeout for the specific action
+  const recommended = getRecommendedTimeout(toolName, action, undefined);
+  if (recommended) {
+    return recommended;
+  }
+
+  // 3. Fall back to default
+  return cfg.defaultTimeout;
 }

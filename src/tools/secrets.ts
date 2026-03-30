@@ -68,22 +68,22 @@ function sanitizeErrorMessage(message: string): string {
 export function registerSecretsTools(server: McpServer): void {
   server.tool(
     "secrets",
-    "Secrets scanning and audit: scan filesystem for hardcoded secrets, audit environment variables, detect SSH key sprawl, and scan git history for leaked secrets.",
+    "Secrets: filesystem scan, env variable audit, SSH key sprawl, git history leak detection",
     {
-      action: z.enum(["scan", "env_audit", "ssh_key_sprawl", "git_history_scan"]).describe("Action to perform"),
+      action: z.enum(["scan", "env_audit", "ssh_key_sprawl", "git_history_scan"]).describe("Secrets scanning action"),
       // scan params
-      path: z.string().default("/home").describe("Root path to scan for secrets (scan)"),
-      scan_type: z.enum(["all", "api_keys", "private_keys", "passwords", "tokens"]).default("all").describe("Type of secrets to scan for (scan)"),
-      max_depth: z.number().optional().default(5).describe("Maximum directory depth to search (scan)"),
+      path: z.string().default("/home").describe("Root path to scan"),
+      scan_type: z.enum(["all", "api_keys", "private_keys", "passwords", "tokens"]).default("all").describe("Type of secrets to scan for"),
+      max_depth: z.number().optional().default(5).describe("Maximum directory depth to search"),
       // env_audit params
-      check_env: z.boolean().optional().default(true).describe("Check environment variables for sensitive names (env_audit)"),
-      check_files: z.boolean().optional().default(true).describe("Check for exposed .env files on disk (env_audit)"),
+      check_env: z.boolean().optional().default(true).describe("Check environment variables for sensitive names"),
+      check_files: z.boolean().optional().default(true).describe("Check for exposed .env files on disk"),
       // ssh_key_sprawl params
-      search_path: z.string().optional().default("/home").describe("Root path to search for SSH keys (ssh_key_sprawl)"),
-      check_authorized_keys: z.boolean().optional().default(true).describe("Also audit authorized_keys files (ssh_key_sprawl)"),
+      search_path: z.string().optional().default("/home").describe("Root path to search for SSH keys"),
+      check_authorized_keys: z.boolean().optional().default(true).describe("Also audit authorized_keys files"),
       // git_history_scan params
-      repoPath: z.string().optional().describe("Path to git repository (git_history_scan)"),
-      dryRun: z.boolean().optional().default(true).describe("Preview only (git_history_scan)"),
+      repoPath: z.string().optional().describe("Path to git repository"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;

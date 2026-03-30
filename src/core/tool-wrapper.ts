@@ -368,39 +368,21 @@ function createWrappedHandler(
 
       return toolResult;
     } catch (err) {
-      // Pre-flight itself threw — log and fall through to original handler
+      // Pre-flight itself threw — return error instead of running without dependency checking
+      const errMsg = err instanceof Error ? err.message : String(err);
       console.error(
-        `[preflight] ⚠ Pre-flight failed unexpectedly for '${toolName}': ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `[preflight] ⚠ Pre-flight failed unexpectedly for '${toolName}': ${errMsg}`,
       );
 
-      const toolResult = (await originalHandler(
-        ...callbackArgs,
-      )) as Record<string, unknown> | undefined;
-
-      // Even when pre-flight is broken, still check for runtime permission errors
-      if (
-        toolResult &&
-        SudoGuard.isResponsePermissionError(toolResult)
-      ) {
-        const manifest = ctx.registry.getManifest(toolName);
-        const reason =
-          manifest?.sudoReason ??
-          "The command failed due to insufficient privileges.";
-        const originalText = SudoGuard.extractResponseText(toolResult);
-
-        console.error(
-          `[sudo-guard] Runtime permission error detected for '${toolName}' (post-preflight-failure) — returning elevation prompt`,
-        );
-        return SudoGuard.createElevationPrompt(
-          toolName,
-          reason,
-          originalText,
-        );
-      }
-
-      return toolResult;
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `⚠ Pre-flight internal error for '${toolName}'\n\nThe pre-flight dependency checking system encountered an unexpected error and the tool was not executed.\n\nError: ${errMsg}\n\nPlease retry the operation or check the pre-flight configuration. If this persists, the tool's dependency manifest may need attention.`,
+          },
+        ],
+        isError: true,
+      };
     }
   };
 }

@@ -263,7 +263,7 @@ function validateSshConfigValue(value: string): string {
 export function registerAccessControlTools(server: McpServer): void {
   server.tool(
     "access_control",
-    "Access control and authentication security. Actions: ssh_audit=check SSH config, ssh_harden=apply SSH hardening, ssh_cipher_audit=audit SSH cryptographic algorithms, pam_audit=check PAM config, pam_configure=set up PAM modules, sudo_audit=audit sudoers, sudoers_manage=manage sudoers drop-in files, user_audit=audit user accounts, password_policy_audit=audit password policy, password_policy_set=set password policy (system-wide or per-user via chage), restrict_shell=restrict user login shell",
+    "Access control: SSH, PAM, sudo, user audit, password policy, shell restriction",
     {
       action: z
         .enum([
@@ -285,36 +285,36 @@ export function registerAccessControlTools(server: McpServer): void {
         .string()
         .optional()
         .default("/etc/ssh/sshd_config")
-        .describe("Path to sshd_config file (ssh_audit, ssh_harden, ssh_cipher_audit)"),
+        .describe("Path to sshd_config file"),
       settings: z
         .string()
         .optional()
-        .describe("Comma-separated key=value pairs for ssh_harden, e.g. 'PermitRootLogin=no,MaxAuthTries=4'"),
+        .describe("Comma-separated key=value pairs, e.g. 'PermitRootLogin=no,MaxAuthTries=4'"),
       apply_recommended: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Apply all recommended SSH hardening settings (ssh_harden)"),
+        .describe("Apply all recommended SSH hardening settings"),
       restart_sshd: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Restart sshd after applying changes (ssh_harden)"),
+        .describe("Restart sshd after applying changes"),
       // ── PAM audit params ──
       service: z
         .string()
         .optional()
-        .describe("Specific PAM service to audit, e.g. 'sshd', 'login', 'sudo' (pam_audit)"),
+        .describe("PAM service to audit, e.g. 'sshd', 'login', 'sudo'"),
       check_all: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Check common-auth, common-password, etc. (pam_audit)"),
+        .describe("Check common-auth, common-password, etc."),
       // ── PAM configure params ──
       module: z
         .enum(["pwquality", "faillock"])
         .optional()
-        .describe("PAM module to configure (pam_configure)"),
+        .describe("PAM module to configure"),
       pam_settings: z
         .object({
           // pwquality settings
@@ -332,18 +332,18 @@ export function registerAccessControlTools(server: McpServer): void {
           fail_interval: z.number().optional(),
         })
         .optional()
-        .describe("PAM module-specific settings (pam_configure)"),
+        .describe("PAM module-specific settings"),
       // ── sudo_audit params ──
       check_nopasswd: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Check for NOPASSWD entries (sudo_audit, default: true)"),
+        .describe("Check for NOPASSWD entries"),
       check_insecure: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Check for insecure sudoers configurations (sudo_audit, default: true)"),
+        .describe("Check for insecure sudoers configurations"),
       // ── sudoers_manage params ──
       sudoers_action: z
         .enum(["write", "remove", "validate"])
@@ -362,59 +362,56 @@ export function registerAccessControlTools(server: McpServer): void {
         .enum(["all", "privileged", "inactive", "no_password", "shell", "locked"])
         .optional()
         .default("all")
-        .describe("Type of user audit to perform (user_audit, default: all)"),
+        .describe("Type of user audit"),
       // ── password_policy params ──
       min_days: z
         .number()
         .optional()
-        .describe("Minimum days between password changes (PASS_MIN_DAYS) (password_policy_set)"),
+        .describe("Minimum days between password changes (PASS_MIN_DAYS)"),
       max_days: z
         .number()
         .optional()
-        .describe("Maximum days before password must be changed (PASS_MAX_DAYS) (password_policy_set)"),
+        .describe("Maximum days before password change (PASS_MAX_DAYS)"),
       warn_days: z
         .number()
         .optional()
-        .describe("Days before expiry to warn user (PASS_WARN_AGE) (password_policy_set)"),
+        .describe("Days before expiry to warn user (PASS_WARN_AGE)"),
       min_length: z
         .number()
         .optional()
-        .describe("Minimum password length (PASS_MIN_LEN) (password_policy_set)"),
+        .describe("Minimum password length (PASS_MIN_LEN)"),
       inactive_days: z
         .number()
         .optional()
-        .describe("Days after password expires before account is disabled (password_policy_set)"),
+        .describe("Days after expiry before account disabled"),
       target_user: z
         .string()
         .optional()
-        .describe("Apply policy to specific user via chage instead of system-wide login.defs (password_policy_set)"),
+        .describe("Apply to specific user via chage instead of system-wide"),
       encrypt_method: z
         .enum(["SHA512", "YESCRYPT"])
         .optional()
-        .describe("Password hashing algorithm (ENCRYPT_METHOD) (password_policy_set)"),
+        .describe("Password hashing algorithm (ENCRYPT_METHOD)"),
       // ── restrict_shell params ──
       username: z
         .string()
         .optional()
-        .describe("The username to restrict (restrict_shell)"),
+        .describe("Username to restrict"),
       shell: z
         .string()
         .optional()
         .default("/usr/sbin/nologin")
-        .describe("Shell to set (restrict_shell, default: /usr/sbin/nologin)"),
+        .describe("Shell to set"),
       // ── shared ──
       force: z
         .boolean()
         .optional()
         .default(false)
-        .describe(
-          "Force operation even if sanity checks report critical findings (pam_configure). " +
-          "Use with extreme caution — may cause lockouts."
-        ),
+        .describe("Force past critical sanity check findings (caution: may cause lockouts)"),
       dry_run: z
         .boolean()
         .optional()
-        .describe("Preview changes without executing (ssh_harden, pam_configure, password_policy_set, sudoers_manage, restrict_shell)"),
+        .describe("Preview changes without executing"),
     },
     async (params) => {
       const { action } = params;

@@ -85,7 +85,7 @@ const NFTABLES_TABLE_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 export function registerFirewallTools(server: McpServer): void {
   server.tool(
     "firewall",
-    "Unified firewall management. Covers iptables rules/chains, UFW, firewall rule persistence, nftables ruleset listing, and firewall policy audit.",
+    "Firewall: iptables, UFW, nftables, persistence, policy audit",
     {
       action: z
         .enum([
@@ -104,130 +104,123 @@ export function registerFirewallTools(server: McpServer): void {
           "nftables_list",
           "policy_audit",
         ])
-        .describe(
-          "Action: iptables_list=show iptables rules, iptables_add=insert rule, iptables_delete=remove rule, " +
-          "iptables_set_policy=set chain default policy, iptables_create_chain=create custom chain, " +
-          "ufw_status=show UFW status, ufw_add=add UFW rule, ufw_delete=delete UFW rule, " +
-          "persist_save=save rules to file, persist_restore=restore rules from file, " +
-          "persist_enable=install persistence package, persist_status=check persistence status, " +
-          "nftables_list=list nftables ruleset, policy_audit=audit firewall configuration"
-        ),
+        .describe("Firewall action"),
       // ── iptables params ──────────────────────────────────────────────
       table: z
         .string()
         .optional()
         .default("filter")
-        .describe("Iptables table (default: filter) or nftables specific table name"),
+        .describe("Iptables/nftables table name"),
       chain: z
         .string()
         .optional()
-        .describe("Target chain (e.g., INPUT, OUTPUT, FORWARD) — required for iptables_list (optional), iptables_add, iptables_delete"),
+        .describe("Target chain (INPUT, OUTPUT, FORWARD, or custom)"),
       dry_run: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Preview changes (for iptables_add/iptables_delete/iptables_set_policy/iptables_create_chain, ufw_add/ufw_delete, persist_save/persist_restore/persist_enable)"),
+        .describe("Preview without applying"),
       ipv6: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Also apply to ip6tables (for iptables_set_policy/iptables_create_chain) or use ip6tables-save/restore (for persist_save/persist_restore)"),
+        .describe("Also apply to ip6tables"),
       verbose: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Show verbose output (iptables_list: packet/byte counters, ufw_status: logging and default policies)"),
+        .describe("Show verbose output"),
       protocol: z
         .enum(["tcp", "udp", "icmp", "all", "any"])
         .optional()
-        .describe("Protocol to match (iptables_add: tcp/udp/icmp/all, ufw_add/ufw_delete: tcp/udp/any)"),
+        .describe("Protocol to match"),
       source: z
         .string()
         .optional()
-        .describe("Source IP/CIDR to match (for iptables_add)"),
+        .describe("Source IP/CIDR"),
       destination: z
         .string()
         .optional()
-        .describe("Destination IP/CIDR to match (for iptables_add)"),
+        .describe("Destination IP/CIDR"),
       port: z
         .string()
         .optional()
-        .describe("Destination port or port range, e.g. '80', '8080:8090' (for iptables_add, ufw_add/ufw_delete)"),
+        .describe("Port or range, e.g. '80', '8080:8090'"),
       target_action: z
         .enum(["ACCEPT", "DROP", "REJECT", "LOG"])
         .optional()
         .default("DROP")
-        .describe("Rule target action (for iptables_add, default: DROP)"),
+        .describe("Rule target action"),
       position: z
         .number()
         .optional()
-        .describe("Position to insert rule (for iptables_add)"),
+        .describe("Rule insert position"),
       match_module: z
         .string()
         .optional()
-        .describe("Match module to load, e.g. 'limit', 'conntrack' (for iptables_add)"),
+        .describe("Match module, e.g. 'limit', 'conntrack'"),
       match_options: z
         .string()
         .optional()
-        .describe("Options for match module (for iptables_add)"),
+        .describe("Match module options"),
       tcp_flags: z
         .string()
         .optional()
-        .describe("TCP flags to match, e.g. '--syn' (for iptables_add)"),
+        .describe("TCP flags, e.g. '--syn'"),
       custom_chain: z
         .string()
         .optional()
-        .describe("Custom chain for -j target, overrides target_action (for iptables_add)"),
+        .describe("Custom chain for -j target, overrides target_action"),
       rule_number: z
         .number()
         .optional()
-        .describe("Rule number to delete (for iptables_delete)"),
+        .describe("Rule number to delete"),
       policy: z
         .enum(["ACCEPT", "DROP"])
         .optional()
-        .describe("Default policy to set (for iptables_set_policy)"),
+        .describe("Default chain policy"),
       chain_name: z
         .string()
         .optional()
-        .describe("Name of custom chain to create (for iptables_create_chain)"),
+        .describe("Custom chain name to create"),
       // ── UFW params ───────────────────────────────────────────────────
       rule_action: z
         .enum(["allow", "deny", "reject", "limit"])
         .optional()
-        .describe("Rule action (required for ufw_add/ufw_delete)"),
+        .describe("UFW rule action"),
       direction: z
         .enum(["in", "out"])
         .optional()
         .default("in")
-        .describe("Traffic direction (for ufw_add/ufw_delete, default: in)"),
+        .describe("Traffic direction"),
       from_addr: z
         .string()
         .optional()
-        .describe("Source address or 'any' (for ufw_add/ufw_delete)"),
+        .describe("Source address or 'any'"),
       to_addr: z
         .string()
         .optional()
-        .describe("Destination address or 'any' (for ufw_add/ufw_delete)"),
+        .describe("Destination address or 'any'"),
       // ── persist params ───────────────────────────────────────────────
       output_path: z
         .string()
         .optional()
         .default("/etc/iptables/rules.v4")
-        .describe("Output file path for persist_save (default: /etc/iptables/rules.v4)"),
+        .describe("Output file path for saved rules"),
       input_path: z
         .string()
         .optional()
-        .describe("Path to rules file to restore from (required for persist_restore)"),
+        .describe("Rules file path to restore from"),
       test_only: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Only test/validate rules file without applying (for persist_restore, default: true)"),
+        .describe("Validate rules without applying"),
       // ── nftables params ──────────────────────────────────────────────
       family: z
         .enum(["ip", "ip6", "inet", "arp", "bridge", "netdev"])
         .optional()
-        .describe("Address family (for nftables_list)"),
+        .describe("nftables address family"),
     },
     async (params) => {
       const { action } = params;

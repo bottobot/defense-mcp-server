@@ -868,7 +868,7 @@ async function corsCheck(target: string): Promise<CorsCheckResult> {
 export function registerApiSecurityTools(server: McpServer): void {
   server.tool(
     "api_security",
-    "API security: discover local APIs, audit authentication, check rate limiting, verify TLS configuration, and analyze CORS policies.",
+    "API security: local API discovery, auth audit, rate limiting, TLS verify, CORS check",
     {
       action: z
         .enum([
@@ -878,25 +878,21 @@ export function registerApiSecurityTools(server: McpServer): void {
           "tls_verify",
           "cors_check",
         ])
-        .describe(
-          "Action: scan_local_apis=discover local API services, audit_auth=audit authentication config, check_rate_limiting=test rate limits, tls_verify=verify TLS configuration, cors_check=check CORS policy",
-        ),
+        .describe("API security action"),
       target: z
         .string()
         .optional()
-        .describe("URL or host:port to scan (default: http://localhost)"),
+        .describe("URL or host:port to scan"),
       port_range: z
         .string()
         .optional()
         .default(DEFAULT_PORT_RANGE)
-        .describe(
-          "Port range to scan for APIs (comma-separated, used with scan_local_apis)",
-        ),
+        .describe("Comma-separated ports to scan for APIs"),
       output_format: z
         .enum(["text", "json"])
         .optional()
         .default("text")
-        .describe("Output format: text or json (default: text)"),
+        .describe("Output format"),
     },
     async (params) => {
       const { action } = params;

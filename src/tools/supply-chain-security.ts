@@ -78,17 +78,17 @@ export function registerSupplyChainSecurityTools(server: McpServer): void {
 
   server.tool(
     "supply_chain",
-    "Supply chain security: generate SBOMs, sign artifacts with cosign, or verify SLSA provenance attestations.",
+    "Supply chain: SBOM generation, cosign artifact signing, SLSA provenance verification",
     {
-      action: z.enum(["sbom", "sign", "verify_slsa"]).describe("Action: sbom=generate SBOM, sign=cosign signing, verify_slsa=verify SLSA attestation"),
+      action: z.enum(["sbom", "sign", "verify_slsa"]).describe("Supply chain security action"),
       // sbom params
-      path: z.string().optional().default(".").describe("Directory to scan (sbom action)"),
-      format: z.enum(["cyclonedx-json", "spdx-json", "table"]).optional().default("cyclonedx-json").describe("Output format (sbom action)"),
+      path: z.string().optional().default(".").describe("Directory to scan"),
+      format: z.enum(["cyclonedx-json", "spdx-json", "table"]).optional().default("cyclonedx-json").describe("SBOM output format"),
       // sign params
-      artifact: z.string().optional().describe("Image reference or file path to sign/verify (sign/verify_slsa action)"),
-      keyPath: z.string().optional().describe("Path to private key, omit for keyless (sign action)"),
+      artifact: z.string().optional().describe("Image reference or file path to sign/verify"),
+      keyPath: z.string().optional().describe("Path to private key, omit for keyless"),
       // verify_slsa params
-      source: z.string().optional().describe("Expected source repository URI (verify_slsa action)"),
+      source: z.string().optional().describe("Expected source repository URI"),
       // shared
       dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
