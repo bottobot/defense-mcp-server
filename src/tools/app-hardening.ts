@@ -488,15 +488,15 @@ export function registerAppHardeningTools(server: McpServer): void {
 
   server.tool(
     "app_harden",
-    "Application hardening: audit running apps, get recommendations, apply firewall rules, or apply systemd sandboxing.",
+    "App hardening: audit running apps, recommendations, firewall rules, systemd sandboxing",
     {
-      action: z.enum(["audit", "recommend", "firewall", "systemd"]).describe("Action: audit=detect/audit apps, recommend=hardening guide, firewall=network rules, systemd=sandboxing"),
+      action: z.enum(["audit", "recommend", "firewall", "systemd"]).describe("Application hardening action"),
       // recommend/firewall/systemd params
-      app_name: z.string().optional().describe("Application name (recommend/firewall/systemd). Available: " + Object.keys(APP_PROFILES).join(", ")),
+      app_name: z.string().optional().describe("Application name. Available: " + Object.keys(APP_PROFILES).join(", ")),
       // firewall params
-      lan_cidr: z.string().optional().default("192.168.0.0/16").describe("LAN CIDR for localhost-only ports (firewall action)"),
+      lan_cidr: z.string().optional().default("192.168.0.0/16").describe("LAN CIDR for localhost-only ports"),
       // systemd params
-      service_name: z.string().optional().describe("Override systemd service name (systemd action)"),
+      service_name: z.string().optional().describe("Override systemd service name"),
       // shared
       dry_run: z.boolean().optional().describe("Preview changes without applying"),
     },

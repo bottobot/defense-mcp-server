@@ -631,23 +631,21 @@ async function checkImds(): Promise<ImdsCheckResult> {
 export function registerCloudSecurityTools(server: McpServer): void {
   server.tool(
     "cloud_security",
-    "Cloud security: detect cloud environment, audit metadata services, check IAM credentials, audit storage, and test IMDS security for AWS/GCP/Azure.",
+    "Cloud: environment detection, metadata audit, IAM credentials, storage audit, IMDS security",
     {
       action: z
         .enum(["detect_environment", "audit_metadata", "check_iam_creds", "audit_storage", "check_imds"])
-        .describe(
-          "Action: detect_environment=detect cloud provider, audit_metadata=audit IMDS configuration, check_iam_creds=check for exposed credentials, audit_storage=audit cloud storage, check_imds=test IMDS security",
-        ),
+        .describe("Cloud security action"),
       provider: z
         .enum(["aws", "gcp", "azure", "auto"])
         .optional()
         .default("auto")
-        .describe("Cloud provider to target (default auto-detect)"),
+        .describe("Cloud provider to target"),
       output_format: z
         .enum(["text", "json"])
         .optional()
         .default("text")
-        .describe("Output format (default text)"),
+        .describe("Output format"),
     },
     async (params) => {
       const { action } = params;

@@ -37,29 +37,29 @@ export function registerZeroTrustNetworkTools(server: McpServer): void {
 
   server.tool(
     "zero_trust",
-    "Zero-trust networking: set up WireGuard VPN, manage WG peers, generate mTLS certificates, or configure microsegmentation.",
+    "Zero-trust: WireGuard VPN, peer management, mTLS certificates, microsegmentation",
     {
-      action: z.enum(["wireguard", "wg_peers", "mtls", "microsegment"]).describe("Action: wireguard=setup VPN, wg_peers=manage peers, mtls=generate certs, microsegment=firewall rules"),
+      action: z.enum(["wireguard", "wg_peers", "mtls", "microsegment"]).describe("Zero-trust networking action"),
       // wireguard params
-      interfaceName: z.string().optional().default("wg0").describe("WireGuard interface name (wireguard/wg_peers action)"),
-      listenPort: z.number().optional().default(51820).describe("UDP listen port (wireguard action)"),
-      address: z.string().optional().describe("Interface address with CIDR e.g. 10.0.0.1/24 (wireguard action)"),
+      interfaceName: z.string().optional().default("wg0").describe("WireGuard interface name"),
+      listenPort: z.number().optional().default(51820).describe("UDP listen port"),
+      address: z.string().optional().describe("Interface address with CIDR e.g. 10.0.0.1/24"),
       // wg_peers params
-      peer_action: z.enum(["add", "remove", "list"]).optional().describe("Peer action (wg_peers action)"),
-      publicKey: z.string().optional().describe("Peer public key (wg_peers add/remove)"),
-      allowedIps: z.string().optional().describe("Allowed IPs for peer (wg_peers add)"),
-      endpoint: z.string().optional().describe("Peer endpoint ip:port (wg_peers add)"),
+      peer_action: z.enum(["add", "remove", "list"]).optional().describe("Peer sub-action"),
+      publicKey: z.string().optional().describe("Peer public key"),
+      allowedIps: z.string().optional().describe("Allowed IPs for peer"),
+      endpoint: z.string().optional().describe("Peer endpoint ip:port"),
       // mtls params
-      outputDir: z.string().optional().describe("Directory to write certificates (mtls action)"),
-      commonName: z.string().optional().default("defense-mcp-ca").describe("CA common name (mtls action)"),
-      serverCN: z.string().optional().default("server.local").describe("Server common name (mtls action)"),
-      clientCN: z.string().optional().default("client.local").describe("Client common name (mtls action)"),
-      validDays: z.number().optional().default(365).describe("Certificate validity in days (mtls action)"),
+      outputDir: z.string().optional().describe("Directory to write certificates"),
+      commonName: z.string().optional().default("defense-mcp-ca").describe("CA common name"),
+      serverCN: z.string().optional().default("server.local").describe("Server common name"),
+      clientCN: z.string().optional().default("client.local").describe("Client common name"),
+      validDays: z.number().optional().default(365).describe("Certificate validity in days"),
       // microsegment params
-      service: z.string().optional().describe("Service name e.g. nginx, postgres (microsegment action)"),
-      allowPorts: z.array(z.number()).optional().describe("Ports to allow (microsegment action)"),
-      allowSources: z.array(z.string()).optional().default([]).describe("Source IPs/CIDRs to allow (microsegment action)"),
-      denyAll: z.boolean().optional().default(true).describe("Add deny-all rule for other ports (microsegment action)"),
+      service: z.string().optional().describe("Service name e.g. nginx, postgres"),
+      allowPorts: z.array(z.number()).optional().describe("Ports to allow"),
+      allowSources: z.array(z.string()).optional().default([]).describe("Source IPs/CIDRs to allow"),
+      denyAll: z.boolean().optional().default(true).describe("Add deny-all rule for other ports"),
       // shared
       dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },

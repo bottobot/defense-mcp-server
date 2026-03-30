@@ -42,7 +42,7 @@ export function registerPatchManagementTools(server: McpServer): void {
 
   server.tool(
     "patch",
-    "Patch management: audit pending updates, check unattended upgrades, verify package integrity, audit kernel, and query vulnerability intelligence.",
+    "Patches: pending updates, unattended upgrades, package integrity, kernel audit, CVE lookup",
     {
       action: z.enum([
         "update_audit",
@@ -52,20 +52,20 @@ export function registerPatchManagementTools(server: McpServer): void {
         "vuln_lookup",
         "vuln_scan",
         "vuln_urgency",
-      ]).describe("Action to perform"),
+      ]).describe("Patch management action"),
       // update_audit params
-      security_only: z.boolean().optional().default(false).describe("Only show security-relevant updates (update_audit)"),
+      security_only: z.boolean().optional().default(false).describe("Only show security-relevant updates"),
       // integrity_check params
-      package_name: z.string().optional().describe("Specific package to check (integrity_check)"),
-      changed_only: z.boolean().optional().default(true).describe("Only show changed files (integrity_check)"),
+      package_name: z.string().optional().describe("Specific package to check"),
+      changed_only: z.boolean().optional().default(true).describe("Only show changed files"),
       // vuln_lookup params
-      cveId: z.string().optional().describe("CVE ID e.g. CVE-2024-1234 (vuln_lookup)"),
+      cveId: z.string().optional().describe("CVE ID e.g. CVE-2024-1234"),
       // vuln_scan params
-      maxPackages: z.number().optional().default(50).describe("Maximum packages to check (vuln_scan)"),
+      maxPackages: z.number().optional().default(50).describe("Maximum packages to check"),
       // vuln_urgency params
-      packageName: z.string().optional().describe("Package name to check urgency for (vuln_urgency)"),
+      packageName: z.string().optional().describe("Package name to check urgency for"),
       // shared
-      dryRun: z.boolean().optional().default(true).describe("Preview only (vuln_* actions)"),
+      dryRun: z.boolean().optional().default(true).describe("Preview only"),
     },
     async (params) => {
       const { action } = params;

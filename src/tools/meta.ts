@@ -938,7 +938,7 @@ function formatAsCsv(sections: ReportSection[], _reportType: string, _timestamp:
 export function registerMetaTools(server: McpServer): void {
   server.tool(
     "defense_mgmt",
-    "Defense management: check tools, run workflows, view change history, assess security posture, manage scheduled audits, auto-remediate findings, and generate security reports.",
+    "Defense: tool checks, workflows, change history, posture, scheduled audits, remediation, reports",
     {
       action: z.enum([
         "check_tools",
@@ -961,48 +961,40 @@ export function registerMetaTools(server: McpServer): void {
         "report_formats",
         "check_optional_deps",
         "install_optional_deps",
-      ]).describe(
-        "Action to perform. check_tools=check tool availability; workflow_suggest/run=security workflows; " +
-        "change_history=audit trail; posture_score/trend/dashboard=security posture; " +
-        "scheduled_create/list/remove/history=scheduled audits; " +
-        "remediate_plan/apply/rollback/status=auto-remediation; " +
-        "report_generate/list/formats=security reports; " +
-        "check_optional_deps=status of optional third-party tools; " +
-        "install_optional_deps=install missing optional tools"
-      ),
+      ]).describe("Defense management action"),
       // check_tools params
-      category: z.string().optional().describe("Filter by category: hardening, firewall, monitoring, assessment, network, access, encryption, container (check_tools)"),
-      install_missing: z.boolean().optional().default(false).describe("Attempt to install missing tools (check_tools)"),
-      gate: z.boolean().optional().default(false).describe("Audit gate mode: returns isError + haltWorkflow if required tools are missing (check_tools)"),
+      category: z.string().optional().describe("Filter by tool category"),
+      install_missing: z.boolean().optional().default(false).describe("Attempt to install missing tools"),
+      gate: z.boolean().optional().default(false).describe("Audit gate mode: block if required tools missing"),
       // workflow params
-      objective: z.enum(["initial_hardening", "incident_response", "compliance_audit", "malware_investigation", "network_monitoring", "full_assessment"]).optional().describe("Security objective (workflow_suggest)"),
-      system_type: z.enum(["server", "desktop", "container", "cloud"]).optional().default("server").describe("System type (workflow_suggest)"),
-      workflow: z.enum(["quick_harden", "full_audit", "incident_prep", "backup_all", "network_lockdown"]).optional().describe("Workflow to execute (workflow_run)"),
+      objective: z.enum(["initial_hardening", "incident_response", "compliance_audit", "malware_investigation", "network_monitoring", "full_assessment"]).optional().describe("Security objective"),
+      system_type: z.enum(["server", "desktop", "container", "cloud"]).optional().default("server").describe("System type"),
+      workflow: z.enum(["quick_harden", "full_audit", "incident_prep", "backup_all", "network_lockdown"]).optional().describe("Workflow to execute"),
       // change_history params
-      limit: z.number().optional().default(20).describe("Maximum entries to return (change_history, posture_trend)"),
-      tool: z.string().optional().describe("Filter by tool name (change_history)"),
-      since: z.string().optional().describe("Filter by date (change_history, report_generate). E.g. 'today', '2024-01-01'"),
+      limit: z.number().optional().default(20).describe("Maximum entries to return"),
+      tool: z.string().optional().describe("Filter by tool name"),
+      since: z.string().optional().describe("Filter by date, e.g. 'today', '2024-01-01'"),
       // scheduled_audit params
-      name: z.string().optional().describe("Audit job name (scheduled_create/remove/history). Only [a-zA-Z0-9_-] allowed."),
-      command: z.enum(["lynis audit system", "rkhunter --check --skip-keypress", "aide --check", "clamscan -r /home", "chkrootkit", "freshclam", "tiger"]).optional().describe("Audit command to schedule (scheduled_create). Must be from the approved allowlist."),
-      schedule: z.string().optional().describe("Schedule cron format or systemd calendar (scheduled_create)"),
-      useSystemd: z.boolean().optional().default(true).describe("Use systemd timer vs cron (scheduled_create)"),
-      lines: z.number().optional().default(100).describe("Number of recent log lines (scheduled_history)"),
+      name: z.string().optional().describe("Audit job name ([a-zA-Z0-9_-] only)"),
+      command: z.enum(["lynis audit system", "rkhunter --check --skip-keypress", "aide --check", "clamscan -r /home", "chkrootkit", "freshclam", "tiger"]).optional().describe("Audit command from approved allowlist"),
+      schedule: z.string().optional().describe("Cron format or systemd calendar schedule"),
+      useSystemd: z.boolean().optional().default(true).describe("Use systemd timer vs cron"),
+      lines: z.number().optional().default(100).describe("Number of recent log lines"),
       // auto_remediate params
-      source: z.enum(["compliance", "hardening", "access_control", "firewall", "all"]).optional().default("all").describe("Source of findings to remediate (remediate_plan/apply)"),
-      severity_filter: z.enum(["critical", "high", "medium", "low"]).optional().default("medium").describe("Minimum severity level to include (remediate_plan/apply)"),
-      session_id: z.string().optional().describe("Remediation session ID (remediate_rollback/status)"),
-      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format (remediate_*)"),
+      source: z.enum(["compliance", "hardening", "access_control", "firewall", "all"]).optional().default("all").describe("Source of findings to remediate"),
+      severity_filter: z.enum(["critical", "high", "medium", "low"]).optional().default("medium").describe("Minimum severity to include"),
+      session_id: z.string().optional().describe("Remediation session ID"),
+      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format"),
       // optional deps params
-      tool_name: z.string().optional().describe("Specific tool binary name to install (install_optional_deps). If omitted, installs all missing."),
-      force: z.boolean().optional().default(false).describe("Force reinstall even if already installed (install_optional_deps)"),
+      tool_name: z.string().optional().describe("Tool binary name to install (omit for all missing)"),
+      force: z.boolean().optional().default(false).describe("Force reinstall even if installed"),
       // report params
-      report_type: z.enum(["executive_summary", "technical_detail", "compliance_evidence", "vulnerability_report", "hardening_status"]).optional().default("technical_detail").describe("Type of report to generate (report_generate)"),
-      format: z.enum(["markdown", "html", "json", "csv"]).optional().default("markdown").describe("Output format for the report (report_generate)"),
-      output_path: z.string().optional().describe("File path to save the report (report_generate)"),
-      include_sections: z.array(z.string()).optional().describe("Specific section names to include (report_generate, default: all)"),
+      report_type: z.enum(["executive_summary", "technical_detail", "compliance_evidence", "vulnerability_report", "hardening_status"]).optional().default("technical_detail").describe("Report type"),
+      format: z.enum(["markdown", "html", "json", "csv"]).optional().default("markdown").describe("Report output format"),
+      output_path: z.string().optional().describe("File path to save report"),
+      include_sections: z.array(z.string()).optional().describe("Section names to include"),
       // shared
-      dry_run: z.boolean().optional().default(true).describe("Preview without executing (workflow_run, scheduled_*, remediate_apply)"),
+      dry_run: z.boolean().optional().default(true).describe("Preview without executing"),
     },
     async (params) => {
       const { action } = params;

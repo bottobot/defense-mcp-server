@@ -33,29 +33,16 @@ MCP (Model Context Protocol) server providing 31 action-based Linux security too
 
 ## Security Layers
 
-- **Command allowlist** (`command-allowlist.ts`): ~150 binaries with absolute path resolution + inode TOCTOU verification.
-- **Input sanitization** (`sanitizer.ts`): `validateFilePath()` resolves symlinks, `sanitizeArgs()` strips shell metacharacters.
-- **Error sanitization**: `sanitizeToolError()` strips paths/stacks before returning to MCP clients.
-- **Sudo credential injection** is transparent — `prepareSudoOptions()` in executor.ts handles it automatically.
-- **Passwords must use `Buffer`** and be zeroed after use (`buffer.fill(0)`).
-- **`shell: false` always** — enforced in both `executor.ts` and `spawn-safe.ts`.
-- **Default allowed dirs**: `/tmp,/home,/var/log` — `/etc` deliberately excluded.
-
-## Adding a New Tool
-
-1. Create `src/tools/my-tool.ts` — export `registerMyToolTools(server)` with action-based pattern
-2. Add to `src/core/tool-dependencies.ts` — `TOOL_DEPENDENCIES` with `requiredBinaries`
-3. Add sudo overlay to `src/core/tool-registry.ts` — `SUDO_OVERLAYS` entry
-4. Add binaries to `src/core/command-allowlist.ts` — `ALLOWLIST_DEFINITIONS` with candidate paths
-5. Register in `src/index.ts` via `safeRegister()`
-6. Create `tests/tools/my-tool.test.ts` using mock server pattern
+- **Command allowlist** (`command-allowlist.ts`): ~150 binaries, absolute path resolution + inode TOCTOU verification
+- **Input sanitization** (`sanitizer.ts`): `validateFilePath()` resolves symlinks; `sanitizeArgs()` strips shell metacharacters
+- **Error sanitization**: `sanitizeToolError()` strips paths/stacks before returning to clients
+- **Sudo**: transparent credential injection via `prepareSudoOptions()` in executor.ts; passwords use `Buffer` + zero after use
+- **Enforced**: `shell: false` always (executor.ts + spawn-safe.ts); default allowed dirs `/tmp,/home,/var/log` — `/etc` excluded
 
 ## Testing
 
-- All external deps mocked via `vi.mock()` before imports — no real commands execute.
-- Mock server pattern: `createMockServer()` captures `.tool()` registrations, call handlers directly.
-- MCP response format: `{ content: [{ type: "text", text: "..." }], isError?: boolean }`.
-- Use `createTextContent()`, `createErrorContent()`, `formatToolOutput()` from `parsers.ts`.
+- All external deps mocked via `vi.mock()` before imports; `createMockServer()` captures `.tool()` registrations, call handlers directly
+- MCP response format: `{ content: [{ type: "text", text }], isError?: boolean }` — use `createTextContent()`/`createErrorContent()`/`formatToolOutput()` from `parsers.ts`
 - Coverage: 70% lines/functions/statements, 60% branches. `src/index.ts` excluded.
 
 ## Environment Variables (Non-Obvious Defaults)
@@ -65,10 +52,6 @@ MCP (Model Context Protocol) server providing 31 action-based Linux security too
 | `DEFENSE_MCP_DRY_RUN` | `true` | Must set `false` to actually modify system |
 | `DEFENSE_MCP_ALLOWED_DIRS` | `/tmp,/home,/var/log` | `/etc` excluded by design |
 | `DEFENSE_MCP_COMMAND_TIMEOUT` | `120` (sec) | Per-tool: `DEFENSE_MCP_TIMEOUT_<TOOL>` |
-
-## Runtime Dependencies
-
-Only 2: `@modelcontextprotocol/sdk` and `zod`. Everything else is devDependency.
 
 ## PAM Safety (v0.8.1+)
 

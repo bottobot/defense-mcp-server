@@ -16,9 +16,13 @@ import {
   parseLynisOutput,
   parseOscapOutput,
   parseClamavOutput,
+  extractClamavSummary,
   parseSsOutput,
   parseFail2banOutput,
   parseSystemctlOutput,
+  MAX_OUTPUT_SIZE,
+  truncateWithMetadata,
+  DEFAULT_MAX_ITEMS,
 } from "../../src/core/parsers.js";
 
 // ── Generic parsers ──────────────────────────────────────────────────────────
@@ -107,6 +111,78 @@ describe("formatToolOutput", () => {
     expect(result.type).toBe("text");
     expect(result.text).toContain('"key"');
     expect(result.text).toContain('"value"');
+  });
+
+  it("does not globally truncate large output (tools control their own size)", () => {
+    const hugeString = "x".repeat(MAX_OUTPUT_SIZE + 1000);
+    const result = formatToolOutput(hugeString);
+    // Global truncation was removed — output passes through unmodified
+    expect(result.text).toBe(hugeString);
+    expect(result.text).not.toContain("[OUTPUT TRUNCATED:");
+  });
+
+  it("does not truncate large JSON output (tools use truncateWithMetadata instead)", () => {
+    const bigData = { items: Array.from({ length: 5000 }, (_, i) => ({ id: i, name: "x".repeat(50) })) };
+    const result = formatToolOutput(bigData);
+    // Full JSON is preserved — no mid-JSON truncation
+    expect(result.text).toBe(JSON.stringify(bigData, null, 2));
+    expect(result.text).not.toContain("[OUTPUT TRUNCATED:");
+  });
+
+  it("does not truncate output under MAX_OUTPUT_SIZE", () => {
+    const normalData = { key: "value", nested: { a: 1, b: 2 } };
+    const result = formatToolOutput(normalData);
+    expect(result.text).not.toContain("[OUTPUT TRUNCATED:");
+    expect(result.text).toBe(JSON.stringify(normalData, null, 2));
+  });
+});
+
+describe("truncateWithMetadata", () => {
+  it("returns all items when under limit", () => {
+    const items = [1, 2, 3, 4, 5];
+    const { items: result, meta } = truncateWithMetadata(items, 10);
+    expect(result).toEqual([1, 2, 3, 4, 5]);
+    expect(meta).toEqual({ truncated: false, total_count: 5, showing: 5 });
+  });
+
+  it("truncates items exceeding limit and includes metadata", () => {
+    const items = Array.from({ length: 2000 }, (_, i) => `item-${i}`);
+    const { items: result, meta } = truncateWithMetadata(items, 500);
+    expect(result).toHaveLength(500);
+    expect(result[0]).toBe("item-0");
+    expect(result[499]).toBe("item-499");
+    expect(meta).toEqual({ truncated: true, total_count: 2000, showing: 500 });
+  });
+
+  it("handles exact limit boundary (not truncated)", () => {
+    const items = [1, 2, 3];
+    const { items: result, meta } = truncateWithMetadata(items, 3);
+    expect(result).toEqual([1, 2, 3]);
+    expect(meta.truncated).toBe(false);
+  });
+
+  it("handles empty array", () => {
+    const { items: result, meta } = truncateWithMetadata([], 100);
+    expect(result).toEqual([]);
+    expect(meta).toEqual({ truncated: false, total_count: 0, showing: 0 });
+  });
+
+  it("uses DEFAULT_MAX_ITEMS when no limit specified", () => {
+    const items = Array.from({ length: DEFAULT_MAX_ITEMS + 100 }, (_, i) => i);
+    const { items: result, meta } = truncateWithMetadata(items);
+    expect(result).toHaveLength(DEFAULT_MAX_ITEMS);
+    expect(meta.truncated).toBe(true);
+    expect(meta.total_count).toBe(DEFAULT_MAX_ITEMS + 100);
+    expect(meta.showing).toBe(DEFAULT_MAX_ITEMS);
+  });
+
+  it("preserves object references in truncated arrays", () => {
+    const obj1 = { id: 1, name: "test" };
+    const obj2 = { id: 2, name: "test2" };
+    const items = [obj1, obj2, { id: 3 }];
+    const { items: result } = truncateWithMetadata(items, 2);
+    expect(result[0]).toBe(obj1);
+    expect(result[1]).toBe(obj2);
   });
 });
 
@@ -283,6 +359,50 @@ describe("parseClamavOutput", () => {
 
   it("returns empty array for empty input", () => {
     expect(parseClamavOutput("")).toEqual([]);
+  });
+});
+
+describe("extractClamavSummary", () => {
+  it("extracts ClamAV built-in summary section", () => {
+    const stdout = `/home/user/file1.txt: OK
+/home/user/file2.txt: OK
+/tmp/malware.exe: Eicar-Signature FOUND
+
+----------- SCAN SUMMARY -----------
+Known viruses: 8000000
+Engine version: 1.0.0
+Scanned directories: 5
+Scanned files: 3
+Infected files: 1
+Data scanned: 0.50 MB
+Time: 2.500 sec (0 m 2 s)`;
+    const summary = extractClamavSummary(stdout);
+    expect(summary).toContain("SCAN SUMMARY");
+    expect(summary).toContain("Infected files: 1");
+    expect(summary).toContain("Scanned files: 3");
+    expect(summary).not.toContain("/home/user/file1.txt");
+  });
+
+  it("returns fallback summary when no summary marker found", () => {
+    const stdout = `/home/user/file1.txt: OK
+/home/user/file2.txt: OK
+/tmp/malware.exe: Eicar-Signature FOUND`;
+    const summary = extractClamavSummary(stdout);
+    expect(summary).toContain("Scanned files:");
+    expect(summary).toContain("Infected: 1");
+  });
+
+  it("handles empty input", () => {
+    const summary = extractClamavSummary("");
+    expect(summary).toContain("Scanned files: 0");
+    expect(summary).toContain("Infected: 0");
+  });
+
+  it("truncates summary to 500 chars max", () => {
+    // Create a very long fake summary section
+    const longSummary = "----------- SCAN SUMMARY -----------\n" + "A".repeat(600);
+    const summary = extractClamavSummary(longSummary);
+    expect(summary.length).toBeLessThanOrEqual(500);
   });
 });
 

@@ -33,7 +33,7 @@ export function registerSudoManagementTools(server: McpServer): void {
 
   server.tool(
     "sudo_session",
-    "Manage sudo privilege sessions: elevate (password or GUI), check status, drop, extend session, or pre-check tools for sudo requirements.",
+    "Sudo: elevate privileges, check/drop/extend session, preflight tool checks",
     {
       action: z.enum([
         "elevate",
@@ -42,23 +42,19 @@ export function registerSudoManagementTools(server: McpServer): void {
         "drop",
         "extend",
         "preflight_check",
-      ]).describe(
-        "Action: elevate=provide password to gain sudo, elevate_gui=use secure GUI dialog, " +
-        "status=check session state, drop=revoke privileges, extend=add time to session, " +
-        "preflight_check=pre-check tools for sudo/dep requirements"
-      ),
+      ]).describe("Sudo session action"),
       // elevate params
       password: z
         .string()
         .optional()
-        .describe("The user's sudo password (required for elevate action). Stored securely in a zeroable buffer and never logged."),
+        .describe("Sudo password (required for elevate). Stored securely, never logged."),
       timeout_minutes: z
         .number()
         .min(1)
         .max(480)
         .optional()
         .default(15)
-        .describe("Session timeout in minutes (default: 15, max: 480). Session auto-expires after this duration."),
+        .describe("Session timeout in minutes (max 480)"),
       // extend params
       minutes: z
         .number()
@@ -66,14 +62,14 @@ export function registerSudoManagementTools(server: McpServer): void {
         .max(480)
         .optional()
         .default(15)
-        .describe("Number of minutes to extend the session by (extend action, default: 15, max: 480)."),
+        .describe("Minutes to extend session by (max 480)"),
       // preflight_check params
       tools: z
         .array(z.string())
         .min(1)
         .max(100)
         .optional()
-        .describe("Array of tool names to pre-check (preflight_check action, e.g., ['access_ssh_audit', 'patch_update_audit'])"),
+        .describe("Tool names to pre-check for sudo/dependency requirements"),
     },
     async (params) => {
       const { action } = params;

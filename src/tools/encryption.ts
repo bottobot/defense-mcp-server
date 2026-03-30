@@ -183,7 +183,7 @@ async function runCertCommand(
 export function registerEncryptionTools(server: McpServer): void {
   server.tool(
     "crypto",
-    "Cryptography and encryption tools: TLS/SSL audit, GPG key management, LUKS volume management, file integrity hashing, and certificate lifecycle management.",
+    "Crypto: TLS/SSL audit, GPG, LUKS, file hashing, certificate lifecycle",
     {
       action: z.enum([
         "tls_remote_audit",
@@ -207,29 +207,29 @@ export function registerEncryptionTools(server: McpServer): void {
         "cert_ct_log_monitor",
       ]).describe("Action to perform"),
       // tls params
-      host: z.string().optional().describe("Target hostname or IP address (tls_remote_audit/tls_cert_expiry)"),
-      port: z.number().optional().default(443).describe("Target port (tls_remote_audit/tls_cert_expiry)"),
-      check_ciphers: z.boolean().optional().default(true).describe("Check for weak cipher suites (tls_remote_audit)"),
-      check_protocols: z.boolean().optional().default(true).describe("Check for weak protocol versions (tls_remote_audit)"),
-      check_certificate: z.boolean().optional().default(true).describe("Check certificate details (tls_remote_audit)"),
-      cert_path: z.string().optional().describe("Local certificate file path (tls_cert_expiry / cert_ocsp_check)"),
-      warn_days: z.number().optional().default(30).describe("Days before expiry to warn (tls_cert_expiry)"),
-      service: z.enum(["apache", "nginx", "system", "all"]).optional().default("all").describe("Service to audit TLS config for (tls_config_audit)"),
+      host: z.string().optional().describe("Target hostname or IP"),
+      port: z.number().optional().default(443).describe("Target port"),
+      check_ciphers: z.boolean().optional().default(true).describe("Check for weak ciphers"),
+      check_protocols: z.boolean().optional().default(true).describe("Check for weak protocols"),
+      check_certificate: z.boolean().optional().default(true).describe("Check certificate details"),
+      cert_path: z.string().optional().describe("Local certificate file path"),
+      warn_days: z.number().optional().default(30).describe("Days before expiry to warn"),
+      service: z.enum(["apache", "nginx", "system", "all"]).optional().default("all").describe("Service to audit TLS config for"),
       // gpg params
-      key_id: z.string().optional().describe("GPG key ID (gpg_export/gpg_verify)"),
-      file_path: z.string().optional().describe("File path (gpg_import/gpg_verify)"),
-      dry_run: z.boolean().optional().describe("Preview changes without executing (defaults to DEFENSE_MCP_DRY_RUN env var)"),
+      key_id: z.string().optional().describe("GPG key ID"),
+      file_path: z.string().optional().describe("File path for GPG import/verify"),
+      dry_run: z.boolean().optional().describe("Preview without executing"),
       // luks params
-      device: z.string().optional().describe("Block device path e.g. /dev/sda2 (luks_status/luks_dump/luks_open)"),
-      name: z.string().optional().describe("Mapper name for luks_open/luks_close/luks_status"),
+      device: z.string().optional().describe("Block device path, e.g. /dev/sda2"),
+      name: z.string().optional().describe("LUKS mapper name"),
       // file_hash params
-      path: z.string().optional().describe("File or directory path to hash (file_hash)"),
-      algorithm: z.enum(["sha256", "sha512", "sha1", "md5"]).optional().default("sha256").describe("Hash algorithm (file_hash)"),
-      recursive: z.boolean().optional().default(false).describe("Recursively hash all files in a directory (file_hash)"),
+      path: z.string().optional().describe("File or directory path to hash"),
+      algorithm: z.enum(["sha256", "sha512", "sha1", "md5"]).optional().default("sha256").describe("Hash algorithm"),
+      recursive: z.boolean().optional().default(false).describe("Hash files recursively"),
       // certificate_lifecycle params
-      domain: z.string().optional().describe("Domain for cert_ocsp_check/cert_ct_log_monitor"),
-      search_paths: z.array(z.string()).optional().describe("Additional paths to search for certificates (cert_inventory)"),
-      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format (cert_* actions)"),
+      domain: z.string().optional().describe("Domain name for certificate checks"),
+      search_paths: z.array(z.string()).optional().describe("Additional certificate search paths"),
+      output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format"),
     },
     async (params) => {
       const { action } = params;

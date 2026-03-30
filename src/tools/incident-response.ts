@@ -102,7 +102,7 @@ async function runForensicCommand(
 export function registerIncidentResponseTools(server: McpServer): void {
   server.tool(
     "incident_response",
-    "Incident response: collect volatile data (RFC 3227), scan for IOCs, generate filesystem timelines, and perform digital forensics (memory dumps, disk images, network captures, evidence bagging, chain-of-custody).",
+    "Incident response: volatile data, IOC scan, timeline, forensics (memory/disk/network/evidence/custody)",
     {
       action: z.enum([
         "collect",
@@ -113,31 +113,27 @@ export function registerIncidentResponseTools(server: McpServer): void {
         "forensics_network_capture",
         "forensics_evidence_bag",
         "forensics_chain_of_custody",
-      ]).describe(
-        "Action: collect=volatile data collection, ioc_scan=scan for indicators of compromise, timeline=filesystem timeline, " +
-        "forensics_memory_dump=acquire RAM, forensics_disk_image=forensic disk copy, forensics_network_capture=full packet capture, " +
-        "forensics_evidence_bag=bag+hash artifact, forensics_chain_of_custody=manage custody log"
-      ),
+      ]).describe("Incident response action"),
       // collect params
-      output_dir: z.string().optional().describe("Directory for output artifacts (defaults vary per action)"),
+      output_dir: z.string().optional().describe("Output directory for artifacts"),
       // ioc_scan params
-      check_type: z.enum(["processes", "connections", "persistence", "all"]).optional().default("all").describe("Type of IOC check to perform (ioc_scan action)"),
+      check_type: z.enum(["processes", "connections", "persistence", "all"]).optional().default("all").describe("IOC check type"),
       // timeline params
-      path: z.string().optional().default("/").describe("Root path to search for modified files (timeline action)"),
-      hours: z.number().optional().default(24).describe("Look back this many hours for modifications (timeline action)"),
-      exclude_paths: z.string().optional().default("/proc,/sys,/dev,/run").describe("Comma-separated paths to exclude from search (timeline action)"),
-      file_types: z.enum(["all", "executables", "configs", "scripts"]).optional().default("all").describe("Type of files to include in the timeline (timeline action)"),
+      path: z.string().optional().default("/").describe("Root path to search"),
+      hours: z.number().optional().default(24).describe("Hours to look back for modifications"),
+      exclude_paths: z.string().optional().default("/proc,/sys,/dev,/run").describe("Comma-separated paths to exclude"),
+      file_types: z.enum(["all", "executables", "configs", "scripts"]).optional().default("all").describe("File types to include"),
       // shared incident_response
-      dry_run: z.boolean().optional().describe("Preview what would be done without executing (defaults to DEFENSE_MCP_DRY_RUN env var)"),
+      dry_run: z.boolean().optional().describe("Preview without executing"),
       // forensics params
-      case_id: z.string().optional().describe("Case identifier for chain-of-custody tracking"),
-      device: z.string().optional().describe("Device path for disk imaging (e.g. /dev/sda1)"),
-      interface: z.string().optional().default("any").describe("Network interface for capture (default: any)"),
-      duration: z.number().optional().default(60).describe("Capture duration in seconds (default 60, max 300)"),
-      evidence_path: z.string().optional().describe("Path to evidence file (used with forensics_evidence_bag, forensics_chain_of_custody)"),
+      case_id: z.string().optional().describe("Case identifier for custody tracking"),
+      device: z.string().optional().describe("Device path, e.g. /dev/sda1"),
+      interface: z.string().optional().default("any").describe("Network interface for capture"),
+      duration: z.number().optional().default(60).describe("Capture duration in seconds (max 300)"),
+      evidence_path: z.string().optional().describe("Path to evidence file"),
       description: z.string().optional().describe("Description of the evidence item"),
       examiner: z.string().optional().describe("Name of the forensic examiner"),
-      custody_action: z.enum(["add", "view", "verify"]).optional().default("view").describe("Chain-of-custody sub-action: add, view, or verify"),
+      custody_action: z.enum(["add", "view", "verify"]).optional().default("view").describe("Chain-of-custody sub-action"),
     },
     async (params) => {
       const { action } = params;

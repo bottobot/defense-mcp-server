@@ -703,34 +703,32 @@ function listCanaries(): ListCanariesResult {
 export function registerDeceptionTools(server: McpServer): void {
   server.tool(
     "honeypot_manage",
-    "Honeypot/deception: deploy canary tokens (file, credential, directory, ssh_key), set up honeyport listeners, check triggers, remove canaries, and list deployed deception assets.",
+    "Deception: canary tokens, honeyport listeners, trigger detection, canary management",
     {
       action: z
         .enum(["deploy_canary", "deploy_honeyport", "check_triggers", "remove", "list"])
-        .describe(
-          "Action: deploy_canary=deploy canary token/tripwire, deploy_honeyport=set up honeyport listener, check_triggers=check if canaries triggered, remove=remove a canary, list=list all canaries",
-        ),
+        .describe("Honeypot/deception action"),
       canary_type: z
         .enum(["file", "credential", "directory", "ssh_key"])
         .optional()
-        .describe("Type of canary to deploy (used with deploy_canary): file, credential, directory, ssh_key"),
+        .describe("Type of canary to deploy"),
       canary_path: z
         .string()
         .optional()
-        .describe("Path for canary deployment (used with deploy_canary)"),
+        .describe("Path for canary deployment"),
       port: z
         .number()
         .optional()
-        .describe("Port for honeyport listener (used with deploy_honeyport)"),
+        .describe("Port for honeyport listener"),
       canary_id: z
         .string()
         .optional()
-        .describe("ID of canary to remove (used with remove)"),
+        .describe("ID of canary to remove"),
       output_format: z
         .enum(["text", "json"])
         .optional()
         .default("text")
-        .describe("Output format (default text)"),
+        .describe("Output format"),
     },
     async (params) => {
       const { action } = params;

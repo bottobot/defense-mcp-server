@@ -27,6 +27,9 @@ coverage/
 .roomodes
 .roo/
 
+# Generated SBOM artifacts
+bom.json
+
 # Security audit and fix reports (system-specific, never commit)
 SECURITY-AUDIT-REPORT.md
 *-AUDIT-*.md

@@ -241,39 +241,37 @@ function listFeeds(feedDir: string): Array<{
 export function registerThreatIntelTools(server: McpServer): void {
   server.tool(
     "threat_intel",
-    "Threat intelligence: check IPs, hashes, and domains against local threat feeds, manage feed updates, and apply blocklists to iptables/fail2ban/hosts.",
+    "Threat intel: IP/hash/domain reputation, feed management, blocklist application",
     {
       action: z
         .enum(["check_ip", "check_hash", "check_domain", "update_feeds", "blocklist_apply"])
-        .describe(
-          "Action: check_ip=check IP reputation, check_hash=check file hash, check_domain=check domain reputation, update_feeds=manage threat feeds, blocklist_apply=apply blocklist to security tools",
-        ),
+        .describe("Threat intelligence action"),
       indicator: z
         .string()
         .optional()
-        .describe("IP address, file hash, or domain to check (used with check_ip, check_hash, check_domain)"),
+        .describe("IP address, file hash, or domain to check"),
       feed_name: z
         .string()
         .optional()
-        .describe("Name of threat feed to update (used with update_feeds)"),
+        .describe("Name of threat feed to update"),
       feed_url: z
         .string()
         .optional()
-        .describe("URL of threat feed to download (used with update_feeds)"),
+        .describe("URL of threat feed to download"),
       blocklist_path: z
         .string()
         .optional()
-        .describe("Path to blocklist file (used with blocklist_apply)"),
+        .describe("Path to blocklist file"),
       apply_to: z
         .enum(["iptables", "fail2ban", "hosts"])
         .optional()
         .default("iptables")
-        .describe("Target to apply blocklist to (used with blocklist_apply, default iptables)"),
+        .describe("Target to apply blocklist to"),
       output_format: z
         .enum(["text", "json"])
         .optional()
         .default("text")
-        .describe("Output format (default text)"),
+        .describe("Output format"),
     },
     async (params) => {
       const { action } = params;

@@ -10,6 +10,49 @@ export interface McpTextContent {
   [key: string]: unknown;
 }
 
+/**
+ * Maximum output size constant (retained for backward compatibility in tests).
+ * No longer applied globally in formatToolOutput() — tools are responsible for
+ * controlling their own output size via truncateWithMetadata() or similar.
+ */
+export const MAX_OUTPUT_SIZE = 100 * 1024; // 100KB
+
+/** Default max items for truncateWithMetadata() */
+export const DEFAULT_MAX_ITEMS = 1000;
+
+/** Metadata added when an array is truncated */
+export interface TruncationMetadata {
+  truncated: boolean;
+  total_count: number;
+  showing: number;
+}
+
+/**
+ * Truncates an array to `maxItems` and returns the slice plus truncation metadata.
+ * Use this in tools to cap findings/results arrays while preserving actionable data
+ * and informing the consumer about what was omitted.
+ *
+ * @example
+ * const { items, meta } = truncateWithMetadata(allFindings, 1000);
+ * return { findings: items, ...meta };
+ */
+export function truncateWithMetadata<T>(
+  items: T[],
+  maxItems: number = DEFAULT_MAX_ITEMS
+): { items: T[]; meta: TruncationMetadata } {
+  const total = items.length;
+  const truncated = total > maxItems;
+  const slice = truncated ? items.slice(0, maxItems) : items;
+  return {
+    items: slice,
+    meta: {
+      truncated,
+      total_count: total,
+      showing: slice.length,
+    },
+  };
+}
+
 // ─── Generic Parsers ─────────────────────────────────────────────
 
 /**
@@ -85,12 +128,22 @@ export function parseJsonSafe(text: string): unknown | null {
 /**
  * Formats any data into MCP text content.
  * Objects are JSON-stringified with indentation.
+ *
+ * NOTE: Global truncation was removed in favor of per-tool smart truncation
+ * via truncateWithMetadata(). Tools are responsible for capping their own
+ * arrays/findings before calling this function. This preserves complete
+ * structured data (findings, results) while avoiding mid-JSON truncation
+ * that broke parsing for consumers.
  */
 export function formatToolOutput(data: unknown): McpTextContent {
+  let text: string;
   if (typeof data === "string") {
-    return { type: "text", text: data };
+    text = data;
+  } else {
+    text = JSON.stringify(data, null, 2);
   }
-  return { type: "text", text: JSON.stringify(data, null, 2) };
+
+  return { type: "text", text };
 }
 
 /**
@@ -460,6 +513,28 @@ export function parseClamavOutput(output: string): ClamavResult[] {
   }
 
   return results;
+}
+
+/**
+ * Extracts ClamAV's summary section from raw stdout output.
+ * ClamAV prints a "----------- SCAN SUMMARY -----------" block at the end.
+ * Returns the summary block (max ~500 chars) instead of the full per-file output.
+ * Falls back to a generated summary if the summary block isn't found.
+ */
+export function extractClamavSummary(stdout: string): string {
+  // Try to extract ClamAV's built-in summary section
+  const summaryMarker = "----------- SCAN SUMMARY -----------";
+  const markerIdx = stdout.indexOf(summaryMarker);
+  if (markerIdx !== -1) {
+    return stdout.slice(markerIdx).trim().slice(0, 500);
+  }
+
+  // Fallback: count lines and build a minimal summary
+  const lines = stdout.split("\n").filter((l) => l.trim().length > 0);
+  const infected = lines.filter((l) => l.includes("FOUND")).length;
+  const errors = lines.filter((l) => l.includes("ERROR")).length;
+  const scanned = lines.length - infected - errors;
+  return `Scanned files: ${scanned}, Infected: ${infected}, Errors: ${errors}`;
 }
 
 // ─── Network Parsers ─────────────────────────────────────────────

@@ -509,43 +509,43 @@ export function analyzeQueryLog(logContent: string): QueryLogAnalysis {
 export function registerDnsSecurityTools(server: McpServer): void {
   server.tool(
     "dns_security",
-    "DNS security: audit resolver config, check DNSSEC, detect DNS tunneling, manage domain blocklists, and audit query logs.",
+    "DNS: resolver audit, DNSSEC check, tunneling detection, domain blocklists, query log audit",
     {
       action: z
         .enum(["audit_resolv", "check_dnssec", "detect_tunneling", "block_domains", "query_log_audit"])
-        .describe("Action to perform"),
+        .describe("DNS security action"),
       domain: z
         .string()
         .optional()
-        .describe("Domain to check (used with check_dnssec)"),
+        .describe("Domain to check"),
       interface: z
         .string()
         .min(1)
         .optional()
         .default("any")
-        .describe("Network interface for capture (used with detect_tunneling)"),
+        .describe("Network interface for capture"),
       duration: z
         .number()
         .optional()
         .default(30)
-        .describe("Capture duration in seconds (used with detect_tunneling, max 120)"),
+        .describe("Capture duration in seconds (max 120)"),
       blocklist_path: z
         .string()
         .optional()
-        .describe("Path to blocklist file (used with block_domains)"),
+        .describe("Path to blocklist file"),
       domains_to_block: z
         .array(z.string())
         .optional()
-        .describe("Array of domains to add to blocklist (used with block_domains)"),
+        .describe("Domains to add to blocklist"),
       log_path: z
         .string()
         .optional()
-        .describe("Path to DNS query log (used with query_log_audit)"),
+        .describe("Path to DNS query log"),
       threshold: z
         .number()
         .optional()
         .default(3.5)
-        .describe("Entropy threshold for tunneling detection (default 3.5)"),
+        .describe("Entropy threshold for tunneling detection"),
     },
     async (params) => {
       const { action } = params;

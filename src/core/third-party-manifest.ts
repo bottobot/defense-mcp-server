@@ -57,7 +57,7 @@ export const THIRD_PARTY_MANIFEST: ThirdPartyManifestEntry[] = [
     verification: 'gpg-apt-repo',
     gpgKeyUrl: 'https://falco.org/repo/falcosecurity-packages.asc',
     // Falco CNCF project GPG fingerprint - verify at https://falco.org/docs/install-operate/installation/
-    gpgFingerprint: '15ED 05F1 91E4 0D74 BA47  109F 9F76 B25D 3578 5F62',
+    gpgFingerprint: '478B 2FBB C75F 4237 B731  DA43 6510 6822 B35B 1B1F',
     aptKeyringPath: '/usr/share/keyrings/falco-archive-keyring.gpg',
     aptRepoLine: 'deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main',
     aptPinnedPackages: ['falco'],
@@ -71,7 +71,7 @@ export const THIRD_PARTY_MANIFEST: ThirdPartyManifestEntry[] = [
     secondaryVerification: 'cosign',
     gpgKeyUrl: 'https://aquasecurity.github.io/trivy-repo/deb/public.key',
     // Aqua Security GPG fingerprint - verify at https://aquasecurity.github.io/trivy/
-    gpgFingerprint: '2320 7931 5D25 CF3B B7B0 B81B CF44 E8B6 31B2 7462',
+    gpgFingerprint: '2E2D 3567 4616 32C8 4BB6  CD6F E9D0 A361 6276 FA6C',
     aptKeyringPath: '/usr/share/keyrings/trivy-archive-keyring.gpg',
     aptRepoLine: 'deb [signed-by=/usr/share/keyrings/trivy-archive-keyring.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main',
     aptPinnedPackages: ['trivy'],
@@ -142,7 +142,7 @@ export const THIRD_PARTY_MANIFEST: ThirdPartyManifestEntry[] = [
   {
     binary: 'cdxgen',
     name: 'cdxgen',
-    version: '11.1.7',
+    version: 'latest',
     installMethod: 'npm-local',
     verification: 'npm-provenance',
     npmPackage: '@cyclonedx/cdxgen',

@@ -14,12 +14,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
-import { getConfig, getToolTimeout } from "../core/config.js";
+import { getConfig, getToolTimeout, getActionTimeout } from "../core/config.js";
 import {
   createTextContent,
   createErrorContent,
   formatToolOutput,
 } from "../core/parsers.js";
+import {
+  generateDurationBanner,
+  generateTimingSummary,
+  startTiming,
+} from "../core/progress.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
 import { sanitizeArgs, validateToolPath } from "../core/sanitizer.js";
 import {
@@ -118,7 +123,7 @@ function hashFile(filePath: string): string {
 export function registerIntegrityTools(server: McpServer): void {
   server.tool(
     "integrity",
-    "Integrity monitoring: AIDE file integrity database management, rootkit scanning (rkhunter/chkrootkit), file hash verification, and system drift detection baselines.",
+    "Integrity: AIDE, rootkit scanning, file hashing, drift baselines",
     {
       action: z
         .enum([
@@ -134,82 +139,76 @@ export function registerIntegrityTools(server: McpServer): void {
           "baseline_compare",
           "baseline_list",
         ])
-        .describe(
-          "Action: aide_init/check/update/compare (AIDE database), rootkit_rkhunter/chkrootkit/all (rootkit scanning), file_integrity (SHA-256 verification), baseline_create/compare/list (drift detection)"
-        ),
+        .describe("Integrity monitoring action"),
       // AIDE params
-      config: z.string().optional().describe("Path to custom AIDE config file"),
+      config: z.string().optional().describe("Custom AIDE config file path"),
       dry_run: z
         .boolean()
         .optional()
-        .describe(
-          "Preview the command without executing (defaults to DEFENSE_MCP_DRY_RUN env var)"
-        ),
+        .describe("Preview without executing"),
       // rkhunter params
       update_first: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Update rkhunter database before scanning (rootkit_rkhunter/rootkit_all)"),
+        .describe("Update rkhunter database before scanning"),
       skip_keypress: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Skip keypress prompts during scan (rootkit_rkhunter)"),
+        .describe("Skip keypress prompts"),
       report_warnings_only: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Only report warnings, not OK results (rootkit_rkhunter)"),
+        .describe("Only report warnings"),
       // chkrootkit params
       quiet: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Quiet mode - only show infected findings (rootkit_chkrootkit)"),
+        .describe("Only show infected findings"),
       expert: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Expert mode - show additional diagnostic info (rootkit_chkrootkit)"),
+        .describe("Show additional diagnostic info"),
       // rootkit_all params
       quick: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Quick scan mode - skip database updates (rootkit_all)"),
+        .describe("Quick scan, skip database updates"),
       // file_integrity params
       paths: z
         .union([z.string(), z.array(z.string())])
         .optional()
-        .describe(
-          "File path(s) to check — accepts a single comma-separated string or an array of paths (file_integrity)"
-        ),
+        .describe("File path(s) to check (string or array)"),
       baseline_path: z
         .string()
         .optional()
-        .describe("Path to baseline hash file for comparison (file_integrity)"),
+        .describe("Baseline hash file for comparison"),
       create_baseline: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Create a new baseline hash file from the given paths (file_integrity)"),
+        .describe("Create new baseline hash file"),
       // drift baseline params
       name: z
         .string()
         .optional()
         .default("default")
-        .describe("Baseline name (baseline_create/compare)"),
+        .describe("Baseline name"),
       directories: z
         .array(z.string())
         .optional()
         .default(["/etc"])
-        .describe("Directories to hash (baseline_create)"),
+        .describe("Directories to hash"),
       dryRun: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Preview only — do not write (baseline_create)"),
+        .describe("Preview only"),
     },
     async (params) => {
       const { action } = params;
@@ -361,13 +360,17 @@ export function registerIntegrityTools(server: McpServer): void {
         case "rootkit_rkhunter": {
           const { update_first, skip_keypress, report_warnings_only } = params;
           try {
+            const actionTimeout = getActionTimeout("integrity", "rootkit_rkhunter");
+            const timing = startTiming("integrity", "rootkit_rkhunter");
+            const banner = generateDurationBanner("integrity", "rootkit_rkhunter", actionTimeout);
+
             let updateOutput = "";
             if (update_first) {
               const updateResult = await executeCommand({
                 command: "sudo",
                 args: ["rkhunter", "--update"],
                 toolName: "integrity",
-                timeout: getToolTimeout("rkhunter"),
+                timeout: actionTimeout,
               });
               updateOutput = `Database update (exit ${updateResult.exitCode}):\n${updateResult.stdout}\n\n`;
             }
@@ -380,7 +383,7 @@ export function registerIntegrityTools(server: McpServer): void {
               command: "sudo",
               args,
               toolName: "integrity",
-              timeout: getToolTimeout("rkhunter"),
+              timeout: actionTimeout,
             });
 
             const warnings: string[] = [];
@@ -402,6 +405,8 @@ export function registerIntegrityTools(server: McpServer): void {
               }
             }
 
+            const timingSummary = generateTimingSummary("integrity", "rootkit_rkhunter", Date.now() - timing.startTime);
+
             const output = {
               exitCode: result.exitCode,
               updateOutput: update_first ? updateOutput : undefined,
@@ -415,7 +420,7 @@ export function registerIntegrityTools(server: McpServer): void {
                   : warnings.length > 0
                     ? "WARNING"
                     : "CLEAN",
-              raw: result.stdout,
+              raw: banner + result.stdout + timingSummary,
             };
 
             logChange(

@@ -10,7 +10,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
-import { getConfig, getToolTimeout } from "../core/config.js";
+import { getConfig, getToolTimeout, getActionTimeout } from "../core/config.js";
 import {
   createTextContent,
   createErrorContent,
@@ -18,6 +18,11 @@ import {
   parseOscapOutput,
   formatToolOutput,
 } from "../core/parsers.js";
+import {
+  generateDurationBanner,
+  generateTimingSummary,
+  startTiming,
+} from "../core/progress.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
 import { sanitizeArgs, validateFilePath } from "../core/sanitizer.js";
@@ -476,7 +481,7 @@ async function cisSystemChecks(level: string): Promise<CisCheckResult[]> {
 export function registerComplianceTools(server: McpServer): void {
   server.tool(
     "compliance",
-    "Compliance and audit tools. Actions: lynis_audit=run Lynis security audit, oscap_scan=run OpenSCAP scan, cis_check=CIS benchmark checks, framework_check=compliance framework check (PCI-DSS/HIPAA/SOC2/ISO27001/GDPR), policy_evaluate=evaluate compliance policy, report=generate compliance report, cron_restrict=create cron/at allow files, cron_restrict_status=check cron/at restriction status, tmp_audit=audit /tmp mount options, tmp_harden=harden /tmp mount",
+    "Compliance: Lynis, OpenSCAP, CIS benchmarks, framework checks, policy, cron/tmp hardening",
     {
       action: z
         .enum([
@@ -493,112 +498,112 @@ export function registerComplianceTools(server: McpServer): void {
         ])
         .describe("Action to perform"),
       // ── lynis_audit params ──
-      profile: z.string().optional().describe("Lynis profile file path (lynis_audit)"),
+      profile: z.string().optional().describe("Lynis profile file path"),
       test_group: z
         .string()
         .optional()
-        .describe("Specific test group like 'firewall', 'ssh', 'kernel' (lynis_audit)"),
+        .describe("Test group, e.g. 'firewall', 'ssh', 'kernel'"),
       pentest: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Enable pentest mode for more aggressive checks (lynis_audit)"),
+        .describe("Enable pentest mode"),
       quick: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Run in quick mode, skip some long-running tests (lynis_audit)"),
+        .describe("Quick mode, skip long-running tests"),
       // ── oscap_scan params ──
       oscap_profile: z
         .string()
         .optional()
         .default("xccdf_org.ssgproject.content_profile_standard")
-        .describe("XCCDF profile ID for the scan (oscap_scan)"),
+        .describe("XCCDF profile ID"),
       content: z
         .string()
         .optional()
-        .describe("Path to SCAP content DS file, auto-detected if omitted (oscap_scan)"),
+        .describe("Path to SCAP content DS file"),
       results_file: z
         .string()
         .optional()
-        .describe("Path to save XML results (oscap_scan)"),
+        .describe("Path to save XML results"),
       report_file: z
         .string()
         .optional()
-        .describe("Path to save HTML report (oscap_scan)"),
+        .describe("Path to save HTML report"),
       // ── cis_check params ──
       section: z
         .enum(["filesystem", "services", "network", "logging", "access", "system", "all"])
         .optional()
         .default("all")
-        .describe("CIS benchmark section to check (cis_check)"),
+        .describe("CIS benchmark section"),
       level: z
         .enum(["1", "2"])
         .optional()
         .default("1")
-        .describe("CIS benchmark level (cis_check)"),
+        .describe("CIS benchmark level"),
       // ── framework_check params ──
       framework: z
         .enum(["pci-dss-v4", "hipaa", "soc2", "iso27001", "gdpr"])
         .optional()
-        .describe("Compliance framework (framework_check)"),
+        .describe("Compliance framework"),
       dryRun: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Preview only (framework_check)"),
+        .describe("Preview only"),
       // ── policy_evaluate params ──
       policy_name: z
         .string()
         .optional()
-        .describe("Built-in policy name (policy_evaluate)"),
+        .describe("Built-in policy name"),
       policy_path: z
         .string()
         .optional()
-        .describe("Path to custom policy JSON file (policy_evaluate)"),
+        .describe("Path to custom policy JSON file"),
       // ── report params ──
       format: z
         .enum(["text", "json", "markdown"])
         .optional()
         .default("text")
-        .describe("Output format for the report (report)"),
+        .describe("Report output format"),
       include_lynis: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Include Lynis quick scan results (report)"),
+        .describe("Include Lynis results"),
       include_cis: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Include CIS benchmark check results (report)"),
+        .describe("Include CIS results"),
       include_policy: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Include custom policy evaluation results (report)"),
+        .describe("Include policy evaluation results"),
       report_policy_name: z
         .string()
         .optional()
-        .describe("Policy name to include in report (required if include_policy is true)"),
+        .describe("Policy name for report (required if include_policy=true)"),
       // ── cron_restrict params ──
       allowed_users: z
         .array(z.string())
         .optional()
         .default(["root"])
-        .describe("Users to include in cron.allow and at.allow (cron_restrict, default: ['root'])"),
+        .describe("Users for cron.allow and at.allow"),
       // ── tmp_harden params ──
       mount_options: z
         .string()
         .optional()
         .default("nodev,nosuid,noexec")
-        .describe("Mount options to apply (tmp_harden, default: 'nodev,nosuid,noexec')"),
+        .describe("Mount options for /tmp"),
       // ── shared ──
       dry_run: z
         .boolean()
         .optional()
         .default(true)
-        .describe("Preview changes without applying them (cron_restrict, tmp_harden)"),
+        .describe("Preview without applying"),
     },
     async (params) => {
       const { action } = params;
@@ -607,6 +612,10 @@ export function registerComplianceTools(server: McpServer): void {
         // ── lynis_audit ──────────────────────────────────────────────
         case "lynis_audit": {
           try {
+            const actionTimeout = getActionTimeout("compliance", "lynis_audit");
+            const timing = startTiming("compliance", "lynis_audit");
+            const banner = generateDurationBanner("compliance", "lynis_audit", actionTimeout);
+
             const args: string[] = ["lynis", "audit", "system"];
 
             if (params.profile) {
@@ -632,7 +641,7 @@ export function registerComplianceTools(server: McpServer): void {
               command: "sudo",
               args,
               toolName: "compliance",
-              timeout: getToolTimeout("lynis"),
+              timeout: actionTimeout,
             });
 
             // Lynis may exit with non-zero for findings, which is normal
@@ -645,6 +654,8 @@ export function registerComplianceTools(server: McpServer): void {
             const warnings = findings.filter((f) => f.severity === "warning");
             const suggestions = findings.filter((f) => f.severity === "suggestion");
 
+            const timingSummary = generateTimingSummary("compliance", "lynis_audit", Date.now() - timing.startTime);
+
             const output = {
               hardeningIndex,
               totalFindings: findings.length,
@@ -652,7 +663,7 @@ export function registerComplianceTools(server: McpServer): void {
               suggestions: suggestions.length,
               warningList: warnings,
               suggestionList: suggestions,
-              raw: result.stdout,
+              raw: banner + result.stdout + timingSummary,
             };
 
             return { content: [formatToolOutput(output)] };

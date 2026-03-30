@@ -735,22 +735,20 @@ async function disableUnused(iface?: string): Promise<DisableUnusedResult> {
 export function registerWirelessSecurityTools(server: McpServer): void {
   server.tool(
     "wireless_security",
-    "Wireless security: audit Bluetooth adapters, assess WiFi configuration, detect rogue access points with evil twin analysis, and disable unused wireless interfaces with kernel module recommendations.",
+    "Wireless: Bluetooth audit, WiFi assessment, rogue AP detection, disable unused interfaces",
     {
       action: z
         .enum(["bt_audit", "wifi_audit", "rogue_ap_detect", "disable_unused"])
-        .describe(
-          "Action: bt_audit=audit Bluetooth security, wifi_audit=audit WiFi configuration, rogue_ap_detect=scan for rogue APs, disable_unused=disable unused wireless interfaces",
-        ),
+        .describe("Wireless security action"),
       interface: z
         .string()
         .optional()
-        .describe("Specific wireless interface to audit (e.g., wlan0)"),
+        .describe("Specific wireless interface to audit (e.g. wlan0)"),
       output_format: z
         .enum(["text", "json"])
         .optional()
         .default("text")
-        .describe("Output format (default text)"),
+        .describe("Output format"),
     },
     async (params) => {
       const { action } = params;

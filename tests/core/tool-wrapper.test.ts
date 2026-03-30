@@ -289,7 +289,7 @@ describe("createPreflightServer", () => {
 
   // ── Error safety ───────────────────────────────────────────────────────────
 
-  it("falls through to original handler when pre-flight throws", async () => {
+  it("returns error instead of falling through when pre-flight throws", async () => {
     mockRunPreflight.mockRejectedValueOnce(new Error("Pre-flight crashed"));
 
     const server = createFakeMcpServer();
@@ -305,8 +305,11 @@ describe("createPreflightServer", () => {
     const wrappedHandler = registeredArgs[registeredArgs.length - 1];
     const result = await wrappedHandler();
 
-    expect(originalHandler).toHaveBeenCalled();
-    expect(result.content[0].text).toContain("Tool output despite preflight error");
+    expect(originalHandler).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Pre-flight internal error");
+    expect(result.content[0].text).toContain("Pre-flight crashed");
+    expect(result.content[0].text).toContain("retry");
   });
 
   // ── Short args passthrough ─────────────────────────────────────────────────

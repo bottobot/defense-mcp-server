@@ -173,7 +173,7 @@ async function runSudoSegmentCommand(
 export function registerNetworkDefenseTools(server: McpServer): void {
   server.tool(
     "network_defense",
-    "Network defense: list/audit connections, capture traffic, detect port scans, audit IPv6, self-scan, and network segmentation audit.",
+    "Network: connections, traffic capture, port scan detection, IPv6 audit, self-scan, segmentation",
     {
       action: z.enum([
         "connections_list",
@@ -188,29 +188,29 @@ export function registerNetworkDefenseTools(server: McpServer): void {
         "segmentation_verify_isolation",
         "segmentation_test_paths",
         "segmentation_audit_vlans",
-      ]).describe("Action to perform"),
+      ]).describe("Network defense action"),
       // connections params
-      protocol: z.enum(["tcp", "udp", "all"]).optional().default("all").describe("Protocol filter (connections_list)"),
-      listening: z.boolean().optional().default(false).describe("Show only listening sockets (connections_list)"),
-      process: z.boolean().optional().default(true).describe("Show process information (connections_list)"),
-      include_loopback: z.boolean().optional().default(false).describe("Include loopback services (connections_audit)"),
+      protocol: z.enum(["tcp", "udp", "all"]).optional().default("all").describe("Protocol filter"),
+      listening: z.boolean().optional().default(false).describe("Show only listening sockets"),
+      process: z.boolean().optional().default(true).describe("Show process information"),
+      include_loopback: z.boolean().optional().default(false).describe("Include loopback services"),
       // capture params
       interface: z.string().min(1).optional().default("any").describe("Network interface to capture on"),
       count: z.number().optional().default(100).describe("Number of packets to capture"),
       duration: z.number().optional().default(30).describe("Capture duration in seconds"),
-      filter: z.string().optional().describe("BPF filter expression (capture_custom)"),
-      output_file: z.string().optional().describe("Path to save pcap file (capture_custom)"),
-      dry_run: z.boolean().optional().describe("Preview the command without executing"),
+      filter: z.string().optional().describe("BPF filter expression"),
+      output_file: z.string().optional().describe("Path to save pcap file"),
+      dry_run: z.boolean().optional().describe("Preview without executing"),
       // security_scan_detect params
-      log_file: z.string().optional().describe("Log file to analyze (security_scan_detect)"),
-      threshold: z.number().optional().default(10).describe("Connection attempts threshold (security_scan_detect)"),
-      timeframe: z.number().optional().default(60).describe("Seconds to look back (security_scan_detect)"),
+      log_file: z.string().optional().describe("Log file to analyze"),
+      threshold: z.number().optional().default(10).describe("Connection attempts threshold"),
+      timeframe: z.number().optional().default(60).describe("Seconds to look back"),
       // security_self_scan params
-      target: z.enum(["localhost", "external"]).optional().default("localhost").describe("Scan target (security_self_scan)"),
-      scan_type: z.enum(["quick", "full", "service"]).optional().default("quick").describe("Scan type (security_self_scan)"),
+      target: z.enum(["localhost", "external"]).optional().default("localhost").describe("Scan target"),
+      scan_type: z.enum(["quick", "full", "service"]).optional().default("quick").describe("Scan type"),
       // segmentation params
-      source_zone: z.string().optional().describe("Source network zone/subnet CIDR (segmentation_test_paths)"),
-      dest_zone: z.string().optional().describe("Destination network zone/subnet CIDR (segmentation_test_paths)"),
+      source_zone: z.string().optional().describe("Source network zone/subnet CIDR"),
+      dest_zone: z.string().optional().describe("Destination network zone/subnet CIDR"),
       output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format"),
     },
     async (params) => {
