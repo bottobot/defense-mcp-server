@@ -236,43 +236,60 @@ npm install -g @cyclonedx/cdxgen
 - **`bpftool`**: On Debian Trixie, install the `bpftool` package directly (NOT `linux-tools-generic` which is Ubuntu-specific).
 - **`pam_pwquality`**: This is a PAM module (`libpam-pwquality`), not a standalone binary. Install via `apt-get install libpam-pwquality`.
 
-## Installation
+## Quick Start
 
-### Option A: Smithery (recommended)
+### Step 1: Install the server
 
-```bash
-npx -y @smithery/cli install @bottobot/defense-mcp-server --client claude
-```
+Pick one method:
 
-### Option B: npm
-
+**npm (recommended):**
 ```bash
 npm install -g defense-mcp-server
 ```
 
-### Option C: Clone and build
+**Or clone and build from source:**
+```bash
+git clone https://github.com/bottobot/defense-mcp-server.git
+cd defense-mcp-server
+npm install && npm run build
+```
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/bottobot/defense-mcp-server.git
-   cd defense-mcp-server
-   ```
+### Step 2: Connect to your AI client
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+The server supports any MCP client. Pick your client below and add the configuration:
 
-3. Build:
-   ```bash
-   npm run build
-   ```
+**Claude Code (CLI / VS Code / JetBrains):**
 
-## Connecting to Claude Desktop
+Create a `.mcp.json` file in your project root (or `~/.claude/` for global):
+```json
+{
+  "mcpServers": {
+    "defense-mcp-server": {
+      "command": "defense-mcp-server",
+      "env": {
+        "DEFENSE_MCP_DRY_RUN": "true",
+        "DEFENSE_MCP_ALLOWED_DIRS": "/tmp,/home,/var/log"
+      }
+    }
+  }
+}
+```
 
-Add this to your Claude Desktop configuration file (`~/.config/claude/claude_desktop_config.json` on Linux):
+**Claude Desktop:**
 
-**If installed globally via npm:**
+Edit `~/.config/claude/claude_desktop_config.json` (Linux) or `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+```json
+{
+  "mcpServers": {
+    "defense-mcp-server": {
+      "command": "defense-mcp-server"
+    }
+  }
+}
+```
+Restart Claude Desktop. The server will appear in the MCP tools panel.
+
+**Cursor / Other MCP clients:**
 ```json
 {
   "mcpServers": {
@@ -283,35 +300,37 @@ Add this to your Claude Desktop configuration file (`~/.config/claude/claude_des
 }
 ```
 
-**If cloned and built locally:**
+**If you cloned and built from source**, replace `"defense-mcp-server"` in the command field with:
 ```json
-{
-  "mcpServers": {
-    "defense-mcp-server": {
-      "command": "node",
-      "args": ["/path/to/defense-mcp-server/build/index.js"]
-    }
-  }
-}
+"command": "node",
+"args": ["/path/to/defense-mcp-server/build/index.js"]
 ```
 
-Replace `/path/to/` with the actual path where you cloned the repo.
+### Step 3: Verify it works
 
-Restart Claude Desktop. The server will appear in the MCP tools panel.
+Open your AI client and ask:
 
-## Connecting to Other MCP Clients
+> "Check my firewall status"
 
-Any MCP client that supports stdio transport can connect. The server communicates over stdin/stdout using the MCP protocol. Launch it with:
+The assistant should call the `firewall` tool and return your iptables/UFW rules. If it does, you're all set.
 
-```bash
-node build/index.js
-```
+### Step 4: Elevate when needed
 
-For HTTP/SSE transport (used by Smithery and remote clients):
+Most audit tools (listing firewall rules, checking patches, reading logs) work without sudo. When a tool needs elevated privileges, the server will tell you. Elevate securely:
 
-```bash
-MCP_TRANSPORT=http MCP_PORT=3100 node build/index.js
-```
+> "Elevate sudo with GUI dialog"
+
+This opens a native password dialog (zenity/kdialog) — your password never passes through the AI conversation. The session auto-expires after 15 minutes, or you can drop it anytime:
+
+> "Drop sudo privileges"
+
+### What happens on first run
+
+1. **Dry-run mode is on by default** — tools preview what they would do without changing anything
+2. **Missing tools are auto-installed** — if you ask for a malware scan but ClamAV isn't installed, the server installs it via apt/dnf automatically
+3. **All file access is restricted** — only `/tmp`, `/home`, and `/var/log` are accessible by default
+
+To enable live changes (not just previews), set `DEFENSE_MCP_DRY_RUN=false` in the env config above.
 
 ## Usage Examples
 
