@@ -8,6 +8,9 @@
 
 A Model Context Protocol (MCP) server that gives AI assistants access to **31 defensive security tools** (with 250+ actions) on Linux. Connect it to Claude Desktop, Cursor, Smithery, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
 
+### TLDR ###
+It's an all-in-one easy to use MCP server that will help you secure your Linux OS and harden it to external attackers. It's not perfect by any stretch but if you need something that'll take the pain out of hardening a fresh OS install then give it a try. It's as simple as saying "give me a full security audit using the Defense MCP Server" to your favourite LLM agent.  
+
 ## **The Story Of This Thing** ##
 I started experimenting with Kali and I had a weird thought that if someone ever gained control of that system they could do some damage in my network. I found it came with all sorts of interesting defensive tools besides the obvious offensive ones and so I started messing around with automating the hardening process. Eventually I left Kali to the hackers and just switched to a Debian 13 vanilla type setup on my daily driver. All those hacker tools just made me nervous! However I have spent an incredible amount of time learning about system security on Linux building this thing and I think its ready to see the light of day for others to use. 
 
@@ -31,11 +34,6 @@ npx -y @smithery/cli install @bottobot/defense-mcp-server --client claude
 ```
 
 ---
-
-## Why I Made This
-
-I got tired of hardening my new systems by hand every time I spun up a new one so I made this MCP server to make it pretty easy. I jam packed as many security tools as I could into this thwing so be prepared to burn tokens using it. Hopefully it helps you about half as much as its helped me.
-
 ## So What It Does
 
 This server exposes Linux security tools as MCP tools that an AI assistant can invoke on your behalf. Instead of memorizing command syntax for dozens of security utilities, you describe what you want in plain English and the assistant calls the right tool with the right parameters. Sounds pretty good right?
