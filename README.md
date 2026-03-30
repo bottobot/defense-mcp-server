@@ -8,6 +8,14 @@
 
 A Model Context Protocol (MCP) server that gives AI assistants access to **31 defensive security tools** (with 250+ actions) on Linux. Connect it to Claude Desktop, Cursor, Smithery, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
 
+##**The Story Of This Thing**##
+I started experimenting with Kali and I had a weird thought that if someone ever gained control of that system they could do some damage in my network. I found it came with all sorts of interesting defensive tools besides the obvious offensive ones and so I started messing around with automating the hardening process. Eventually I left Kali to the hackers and just switched to a Debian 13 vanilla type setup on my daily driver. All those hacker tools just made me nervous! However I have spent an incredible amount of time learning about system security on Linux building this thing and I think its ready to see the light of day for others to use. 
+
+Please don't hesitate to leave feedback or if you think there's a good tool I should include. 
+
+## Testing So Far ##
+So my stack for this that I've tested is VS Codium on Kali and Debian 13 using Roo Code and Claude Code using Anthropic Models. I gotta say I'm pretty happy with how well it does. I've really tried to get it to be a simple all-in-one hardening tool that'll at least plug the major gaps in anyones system. If you're using API's then its really gonna chug down some tokens so be warned. It did go through a few rounds of token efficiecny optimisation but it'll eat em up like their Girl Guides Thin Mint cookies. 
+
 ---
 
 ## Install via Smithery
@@ -28,11 +36,11 @@ https://server.defensemcp.net/mcp
 
 ## Why I Made This
 
-Basically I'm a total noob when it comes to really serious system hardening so I thought I'd test the latest LLM models and see how far I could get. Turns out they're pretty helpful! I got tired of hardening my new systems by hand every time I spun up a new one so I made this MCP server to make it pretty easy. I jam packed as many security tools as I could into this thing so be prepared to burn tokens using it. Hopefully it helps you about half as much as its helped me.
+I got tired of hardening my new systems by hand every time I spun up a new one so I made this MCP server to make it pretty easy. I jam packed as many security tools as I could into this thwing so be prepared to burn tokens using it. Hopefully it helps you about half as much as its helped me.
 
 ## So What It Does
 
-This server exposes Linux security tools as MCP tools that an AI assistant can invoke on your behalf. Instead of memorizing command syntax for dozens of security utilities, you describe what you want in plain English and the assistant calls the right tool with the right parameters. Sounds pretty good right!
+This server exposes Linux security tools as MCP tools that an AI assistant can invoke on your behalf. Instead of memorizing command syntax for dozens of security utilities, you describe what you want in plain English and the assistant calls the right tool with the right parameters. Sounds pretty good right?
 
 Here are the tools:
 
