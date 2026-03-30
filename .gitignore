@@ -32,7 +32,19 @@ bom.json
 
 # Security audit and fix reports (system-specific, never commit)
 SECURITY-AUDIT-REPORT.md
+DEFENSE_SYSTEM_AUDIT_REPORT.md
 *-AUDIT-*.md
 *-FIX-*.md
 *-REMEDIATION-*.md
 REMEDIATION.md
+
+# Internal docs (not user-facing)
+AGENTS.md
+docs/adr/
+docs/workflows/
+docs/PENTEST-REQUIREMENTS.md
+
+# Personal/deployment scripts
+scripts/deploy-hetzner.sh
+scripts/hetzner-setup.sh
+scripts/submit-to-directories.sh

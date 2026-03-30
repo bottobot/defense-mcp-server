@@ -22,9 +22,15 @@ PROGRESS.md
 
 # Security audit and fix reports (system-specific, never publish)
 SECURITY-AUDIT-REPORT.md
+DEFENSE_SYSTEM_AUDIT_REPORT.md
 *-AUDIT-*.md
 *-FIX-*.md
 *-REMEDIATION-*.md
+
+# Internal docs (not user-facing)
+docs/adr/
+docs/workflows/
+docs/PENTEST-REQUIREMENTS.md
 
 # IDE/tool config
 .roomodes
