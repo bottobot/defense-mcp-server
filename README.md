@@ -3,6 +3,8 @@
 [![Smithery](https://smithery.ai/badge/@bottobot/defense-mcp-server)](https://smithery.ai/server/@bottobot/defense-mcp-server)
 [![npm version](https://img.shields.io/npm/v/defense-mcp-server)](https://www.npmjs.com/package/defense-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github)](https://github.com/sponsors/bottobot)
+[![Support on Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi)](https://ko-fi.com/bottobot)
 
 **31 defensive security tools. 250+ actions. One MCP server.**
 
@@ -534,13 +536,6 @@ npm run audit:security
 - **2,048+ tests** across 62 test files
 - Every source module (core + tools) has a corresponding test file
 - Coverage enforced in CI pipeline
-
-## Support
-
-This project runs on Claude API tokens, which aren't free. If you find it useful, consider helping cover the costs:
-
-[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github)](https://github.com/sponsors/bottobot)
-[![Support on Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi)](https://ko-fi.com/bottobot)
 
 ## License
 
