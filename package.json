@@ -38,7 +38,7 @@
     "release:npm": "./scripts/release.sh --npm-only",
     "push": "git add -A && git commit -m 'chore: update' && git push origin $(git rev-parse --abbrev-ref HEAD)",
     "sbom": "./scripts/generate-sbom.sh",
-    "test:integration": "npm run build && vitest run tests/integration/"
+    "test:integration": "npm run build && vitest run --config vitest.integration.config.ts"
   },
   "keywords": [
     "mcp",

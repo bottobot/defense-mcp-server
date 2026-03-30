@@ -58,3 +58,7 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # Integration tests require the built server binary
+      - name: Integration tests
+        run: npx vitest run --config vitest.integration.config.ts

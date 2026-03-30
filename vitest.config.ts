@@ -8,6 +8,7 @@ export default defineConfig({
         // Test files live under tests/ mirroring the src/ directory structure.
         // Example: src/core/sanitizer.ts → tests/core/sanitizer.test.ts
         include: ["tests/**/*.test.ts"],
+        exclude: ["tests/integration/**"],
         coverage: {
             provider: "v8",
             include: ["src/core/**/*.ts", "src/tools/**/*.ts"],
