@@ -14,7 +14,7 @@ I started experimenting with Kali and I had a weird thought that if someone ever
 Please don't hesitate to leave feedback or if you think there's a good tool I should include. 
 
 ## Testing So Far ##
-So my stack for this that I've tested is VS Codium on Kali and Debian 13 using Roo Code and Claude Code using Anthropic Models. I gotta say I'm pretty happy with how well it does. I've really tried to get it to be a simple all-in-one hardening tool that'll at least plug the major gaps in anyones system. If you're using API's then its really gonna chug down some tokens so be warned. It did go through a few rounds of token efficiecny optimisation but it'll eat em up like their Girl Guides Thin Mint cookies. 
+So my stack for this that I've tested is VS Codium on Kali and Debian 13 using Roo Code and Claude Code using Anthropic Models. I gotta say I'm pretty happy with how well it does. I've really tried to get it to be a simple all-in-one hardening tool that'll at least plug the major gaps in anyones system. If you're using API's then its really gonna chug down some tokens so be warned. It did go through a few rounds of token efficiency optimisation but it'll eat em up like their Girl Guides Thin Mint cookies. 
 
 ---
 
