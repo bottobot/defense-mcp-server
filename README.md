@@ -18,18 +18,16 @@ So my stack for this that I've tested is VS Codium on Kali and Debian 13 using R
 
 ---
 
-## Install via Smithery
+## Install
 
-The fastest way to get started — no clone, no build:
+```bash
+npm install -g defense-mcp-server
+```
+
+Or via Smithery:
 
 ```bash
 npx -y @smithery/cli install @bottobot/defense-mcp-server --client claude
-```
-
-Or connect directly via the hosted server:
-
-```
-https://server.defensemcp.net/mcp
 ```
 
 ---
