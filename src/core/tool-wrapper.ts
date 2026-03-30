@@ -27,6 +27,7 @@ import { PreflightEngine, type PreflightResult } from "./preflight.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { PrivilegeManager } from "./privilege-manager.js";
 import { SudoGuard } from "./sudo-guard.js";
+import { SudoSession } from "./sudo-session.js";
 import { RateLimiter } from "./rate-limiter.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -317,20 +318,25 @@ function createWrappedHandler(
       )) as Record<string, unknown> | undefined;
 
       // ── Post-execution: Check for runtime permission errors ────────
-      // This catches `conditional` sudo tools and edge cases where
-      // pre-flight passed but the command still failed due to permissions.
+      // With auto-sudo, a runtime permission error means either:
+      //   1. The sudo session expired mid-execution
+      //   2. The command requires a capability the user doesn't have
       if (
         toolResult &&
         SudoGuard.isResponsePermissionError(toolResult)
       ) {
         const manifest = ctx.registry.getManifest(toolName);
-        const reason =
-          manifest?.sudoReason ??
-          "The command failed due to insufficient privileges at runtime.";
+        const session = SudoSession.getInstance();
+        const sessionActive = session.isElevated();
+
+        const reason = sessionActive
+          ? "The command requires a privilege or capability beyond the current sudo session."
+          : (manifest?.sudoReason ??
+             "Sudo session expired or not active. Call sudo_session with action=elevate_gui to re-authenticate.");
         const originalText = SudoGuard.extractResponseText(toolResult);
 
         console.error(
-          `[sudo-guard] Runtime permission error detected for '${toolName}' — returning elevation prompt`,
+          `[sudo-guard] Runtime permission error for '${toolName}' (session ${sessionActive ? "active" : "inactive"}) — returning elevation prompt`,
         );
         return SudoGuard.createElevationPrompt(
           toolName,

@@ -261,43 +261,28 @@ export class SudoGuard {
 
     const reasonText = reason ?? "This tool requires elevated (root) privileges to function.";
 
-    // Build the prompt message — designed to be assertive enough that
-    // AI clients will HALT their workflow and ask the user for credentials.
+    // Build the prompt message for AI clients.
     const lines: string[] = [];
-    lines.push("🛑 WORKFLOW HALTED — ELEVATED PRIVILEGES REQUIRED");
-    lines.push("═".repeat(50));
+    lines.push("🔒 Sudo session required");
+    lines.push("─".repeat(50));
     lines.push("");
     lines.push(`Tool: ${toolName}`);
     lines.push(`Reason: ${reasonText}`);
     lines.push("");
 
     if (status.elevated && status.remainingSeconds !== null && status.remainingSeconds <= 0) {
-      // Session expired
       lines.push("⚠️  Your sudo session has expired.");
       lines.push("");
+      lines.push("ACTION: Call sudo_session with action=elevate_gui to re-authenticate,");
+      lines.push("or action=extend to extend an active session.");
+    } else {
+      lines.push("ACTION: Call sudo_session with action=elevate_gui to authenticate.");
+      lines.push("Once elevated, ALL privileged tools will work automatically");
+      lines.push("for the session duration.");
     }
-
-    lines.push("⚠️  DO NOT SKIP THIS TOOL OR CONTINUE WITHOUT ELEVATION.");
-    lines.push("⚠️  You MUST ask the user for their sudo password NOW.");
     lines.push("");
-    lines.push("ACTION REQUIRED — BEFORE PROCEEDING:");
-    lines.push("─".repeat(50));
-    lines.push("");
-    lines.push("1. ASK the user for their sudo password");
-    lines.push("2. CALL sudo_elevate with the password");
-    lines.push("3. RETRY this tool (and any other tools that failed)");
-    lines.push("");
-    lines.push("  Tool: sudo_elevate");
-    lines.push("  Parameter: password = <user's sudo password>");
-    lines.push("");
-    lines.push("Once elevated, ALL privileged tools will work automatically");
-    lines.push("for the session duration (default: 15 minutes).");
-    lines.push("");
-    lines.push("Security guarantees for the user's password:");
-    lines.push("  • Stored securely in a zeroable memory buffer");
-    lines.push("  • Never logged or exposed in any output");
-    lines.push("  • Auto-expires after the configured timeout");
-    lines.push("  • Can be dropped at any time with sudo_drop");
+    lines.push("Security: Password is entered via a secure GUI dialog (zenity),");
+    lines.push("stored in a zeroable memory buffer, and never visible to the AI.");
 
     if (originalError) {
       lines.push("");

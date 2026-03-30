@@ -102,6 +102,15 @@ export interface ExecuteOptions {
   toolName: string;
   /** Skip automatic sudo credential injection (used internally) */
   skipSudoInjection?: boolean;
+  /**
+   * Skip auto-sudo wrapping for this command.
+   *
+   * When a SudoSession is active, `executeCommand()` automatically wraps
+   * non-sudo commands with `sudo` so credentials are injected transparently.
+   * Set this to `true` for commands that must NOT run as root (e.g.,
+   * user-level operations or sudo-session management itself).
+   */
+  skipAutoSudo?: boolean;
 }
 
 /**
@@ -234,6 +243,24 @@ export async function executeCommand(
       ? getToolTimeout(options.toolName, config)
       : config.commandTimeout);
   const maxBuffer = options.maxBuffer ?? config.maxBuffer;
+
+  // ── Auto-sudo elevation ─────────────────────────────────────────────
+  // When a SudoSession is active and the command is not already "sudo",
+  // transparently wrap the command so credentials are injected by
+  // prepareSudoOptions(). This ensures tools don't need to manually
+  // use `command: "sudo"` — a single elevate_gui call at the start of
+  // an audit session makes all privileged commands work automatically.
+  if (!options.skipAutoSudo && !options.skipSudoInjection) {
+    const isSudo =
+      options.command === "sudo" || options.command.endsWith("/sudo");
+    if (!isSudo && SudoSession.getInstance().isElevated()) {
+      options = {
+        ...options,
+        command: "sudo",
+        args: [options.command, ...options.args],
+      };
+    }
+  }
 
   // ── Command allowlist validation ─────────────────────────────────────
   // Resolve bare command names to absolute paths and reject anything

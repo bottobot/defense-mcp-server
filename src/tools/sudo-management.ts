@@ -911,8 +911,14 @@ async function openGuiPasswordDialog(tool: GuiPasswordTool): Promise<string | nu
 
     fs.writeFileSync(scriptPath, scriptLines.join("\n") + "\n", { mode: 0o700 });
 
-    // Launch the script directly via setsid — no bash -c with interpolated strings
-    const bg = spawnSafe("setsid", [scriptPath], {
+    // Resolve /bin/sh via the allowlist so we can use it as the script interpreter.
+    // We MUST invoke `setsid sh scriptPath` rather than `setsid scriptPath` because
+    // /tmp may be mounted with noexec (a common CIS hardening), which prevents the
+    // kernel from executing scripts directly from /tmp even if chmod +x is set.
+    // Using sh as the interpreter bypasses noexec since sh itself lives on a normal
+    // filesystem and merely reads the script file as data.
+    const resolvedSh = resolveCommand("sh");
+    const bg = spawnSafe("setsid", [resolvedSh, scriptPath], {
       stdio: "ignore",
       detached: true,
       env: sessionEnv,

@@ -26,7 +26,8 @@ export type ToolCategory =
   | "forensics"
   | "integrity"
   | "compliance"
-  | "logging";
+  | "logging"
+  | "supply-chain";
 
 /**
  * Package names per distribution family.
@@ -56,6 +57,29 @@ export interface ToolRequirement {
   required: boolean;
   /** If this tool is an alternative for another */
   alternativeFor?: string;
+  /**
+   * If true, this tool is NOT a standalone binary — it's a PAM module, library,
+   * or other non-binary dependency. Binary existence checks should be skipped;
+   * instead check for the package being installed (e.g. via dpkg -l).
+   */
+  isPackageOnly?: boolean;
+  /**
+   * If true, this tool is NOT available in standard distro repos and requires
+   * third-party installation (manual download, external repo, npm global, etc.).
+   * The `thirdPartyInstallHint` field provides the install command.
+   */
+  isThirdParty?: boolean;
+  /** Install command/instructions for third-party tools not in standard repos. */
+  thirdPartyInstallHint?: string;
+  /**
+   * Known conflicts with other packages. If any of these packages are installed,
+   * this tool cannot be installed alongside them.
+   */
+  conflictsWith?: string[];
+  /**
+   * Notes about availability, deprecation, or platform-specific issues.
+   */
+  availabilityNote?: string;
 }
 
 /**
@@ -189,6 +213,10 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
     },
     category: "firewall",
     required: false,
+    conflictsWith: ["iptables-persistent"],
+    availabilityNote:
+      "UFW conflicts with iptables-persistent on Debian — they cannot coexist. " +
+      "Prefer nftables for modern firewall management.",
   },
   {
     name: "Fail2ban",
@@ -266,6 +294,8 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
     name: "Snort",
     binary: "snort",
     packages: {
+      // NOTE: snort has been REMOVED from Debian Trixie+ repos.
+      // Use suricata instead (listed below as alternativeFor).
       debian: "snort",
       rhel: "snort",
       arch: "snort",
@@ -275,6 +305,9 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
     },
     category: "monitoring",
     required: false,
+    availabilityNote:
+      "Snort has been REMOVED from Debian Trixie (13+) repositories. " +
+      "Suricata is the recommended IDS alternative and is available in standard repos.",
   },
   {
     name: "Suricata",
@@ -542,6 +575,11 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
     },
     category: "access-control",
     required: false,
+    isPackageOnly: true,
+    availabilityNote:
+      "pam_pwquality is a PAM .so module (libpam-pwquality), NOT a standalone binary. " +
+      "Binary existence checks will not find it — check for the package instead " +
+      "(e.g. dpkg -l libpam-pwquality).",
   },
 
   // ─── Compliance ───────────────────────────────────────────
@@ -778,6 +816,11 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
     },
     category: "container",
     required: false,
+    isThirdParty: true,
+    thirdPartyInstallHint:
+      "curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin",
+    availabilityNote:
+      "Trivy is NOT in standard Debian/RHEL repos. Requires third-party installation.",
   },
   {
     name: "Grype",
@@ -792,6 +835,11 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
     },
     category: "container",
     required: false,
+    isThirdParty: true,
+    thirdPartyInstallHint:
+      "curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin",
+    availabilityNote:
+      "Grype is NOT in standard Debian/RHEL repos. Requires third-party installation.",
   },
   {
     name: "WireGuard Tools",
@@ -848,6 +896,13 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
     },
     category: "monitoring",
     required: false,
+    isThirdParty: true,
+    thirdPartyInstallHint:
+      'curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg && ' +
+      'echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" | sudo tee /etc/apt/sources.list.d/falcosecurity.list && ' +
+      "sudo apt-get update && sudo apt-get install -y falco",
+    availabilityNote:
+      "Falco is NOT in standard Debian repos. Requires the Falco Security third-party apt repository.",
   },
   {
     name: "logrotate",
@@ -918,6 +973,11 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
     },
     category: "assessment",
     required: false,
+    isThirdParty: true,
+    thirdPartyInstallHint:
+      "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin",
+    availabilityNote:
+      "TruffleHog is NOT in standard Debian repos. Requires third-party installation.",
   },
   {
     name: "Gitleaks",
@@ -958,8 +1018,13 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
       suse: "slsa-verifier",
       fallback: "slsa-verifier",
     },
-    category: "assessment",
+    category: "supply-chain",
     required: false,
+    isThirdParty: true,
+    thirdPartyInstallHint:
+      "Download from GitHub releases: https://github.com/slsa-framework/slsa-verifier/releases",
+    availabilityNote:
+      "slsa-verifier is NOT in standard Debian repos. Download the binary from GitHub releases.",
   },
   {
     name: "checksec",
@@ -1000,8 +1065,13 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
       suse: "syft",
       fallback: "syft",
     },
-    category: "assessment",
+    category: "supply-chain",
     required: false,
+    isThirdParty: true,
+    thirdPartyInstallHint:
+      "curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin",
+    availabilityNote:
+      "Syft is NOT in standard Debian repos. Requires third-party installation.",
   },
   {
     name: "cdxgen",
@@ -1014,8 +1084,12 @@ export const DEFENSIVE_TOOLS: ToolRequirement[] = [
       suse: "cdxgen",
       fallback: "cdxgen",
     },
-    category: "assessment",
+    category: "supply-chain",
     required: false,
+    isThirdParty: true,
+    thirdPartyInstallHint: "npm install -g @cyclonedx/cdxgen",
+    availabilityNote:
+      "cdxgen is NOT in standard Debian repos. Install globally via npm.",
   },
 ];
 
@@ -1226,4 +1300,37 @@ export async function installMissing(
   }
 
   return results;
+}
+
+/**
+ * Returns a human-readable install command for a given tool on the detected distro.
+ * E.g. "sudo apt install -y lynis"
+ */
+export async function getInstallHint(tool: ToolRequirement): Promise<string | null> {
+  const distro = await detectDistro();
+  const pkgName =
+    (tool.packages as Record<string, string | undefined>)[distro.family] ??
+    tool.packages.fallback;
+  if (!pkgName) return null;
+  const cmd = getInstallCommand(distro.packageManager, pkgName);
+  return cmd.join(" ");
+}
+
+/**
+ * Builds a reverse lookup from alternativeFor: primary tool name → alternative tools.
+ * Used by the audit gate to skip blocking on a required tool when its alternative
+ * is installed.
+ */
+export function getAlternativesMap(): Map<string, ToolRequirement[]> {
+  const map = new Map<string, ToolRequirement[]>();
+  for (const tool of DEFENSIVE_TOOLS) {
+    if (tool.alternativeFor) {
+      // Use lowercase key for case-insensitive lookup
+      const key = tool.alternativeFor.toLowerCase();
+      const list = map.get(key) || [];
+      list.push(tool);
+      map.set(key, list);
+    }
+  }
+  return map;
 }

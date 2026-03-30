@@ -26,6 +26,11 @@ import { SudoSession } from "./sudo-session.js";
 import { resolveCommand } from "./command-allowlist.js";
 import { logChange, createChangeEntry } from "./changelog.js";
 import type { ToolManifest } from "./tool-registry.js";
+import {
+  installThirdPartyTool,
+  getVerifiedInstallInstructions,
+  isThirdPartyInstallEnabled,
+} from "./third-party-installer.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -97,6 +102,7 @@ const ALLOWED_PIP_PACKAGES = new Set<string>([
 const ALLOWED_NPM_PACKAGES = new Set<string>([
   // Supply chain security / SBOM generation
   "cdxgen",
+  "@cyclonedx/cdxgen",
   // Container vulnerability scanning (when installed via npm)
   "snyk",
 ]);
@@ -307,6 +313,9 @@ const BINARY_VERSION_PATTERNS: Record<string, RegExp> = {
   grype: /grype/i,
   syft: /syft/i,
   cosign: /cosign/i,
+  falco: /falco/i,
+  trufflehog: /trufflehog/i,
+  "slsa-verifier": /slsa-verifier/i,
 };
 
 /**
@@ -564,6 +573,85 @@ export class AutoInstaller {
         message: `Binary "${binary}" is not in the approved DEFENSIVE_TOOLS list. Auto-install refused.`,
         duration: Date.now() - start,
       };
+    }
+
+    // Check if this is a third-party tool that can't be installed via apt
+    if (toolReq.isThirdParty) {
+      // Use the verified third-party installer if enabled
+      if (isThirdPartyInstallEnabled()) {
+        console.error(
+          `[auto-install] Binary "${binary}" is third-party — delegating to verified third-party installer`,
+        );
+        try {
+          const thirdPartyResult = await installThirdPartyTool(binary);
+          return {
+            dependency: binary,
+            type: "binary",
+            method: "binary-download",
+            success: thirdPartyResult.success,
+            message: thirdPartyResult.message,
+            duration: Date.now() - start,
+          };
+        } catch (err) {
+          return {
+            dependency: binary,
+            type: "binary",
+            method: "binary-download",
+            success: false,
+            message: `Third-party installer failed for "${binary}": ${String(err)}`,
+            duration: Date.now() - start,
+          };
+        }
+      }
+
+      // Third-party install not enabled — return verified instructions (NOT curl|sh hints)
+      const instructions = getVerifiedInstallInstructions(binary);
+      console.error(
+        `[auto-install] ⚠ Binary "${binary}" requires third-party installation (not in standard repos).\n` +
+        `  Set DEFENSE_MCP_THIRD_PARTY_INSTALL=true to enable verified auto-install.`,
+      );
+      return {
+        dependency: binary,
+        type: "binary",
+        method: "binary-download",
+        success: false,
+        message:
+          `Binary "${binary}" is a third-party tool not available in standard repos. ` +
+          `Set DEFENSE_MCP_THIRD_PARTY_INSTALL=true to enable verified auto-install, ` +
+          `or install manually:\n${instructions}`,
+        duration: Date.now() - start,
+      };
+    }
+
+    // Check if this is a package-only dependency (e.g. PAM module, not a binary)
+    if (toolReq.isPackageOnly) {
+      console.error(
+        `[auto-install] ℹ "${binary}" is a package-only dependency (e.g. PAM module), not a standalone binary. ` +
+        `Will attempt to install the package "${toolReq.packages.debian ?? toolReq.packages.fallback}".`,
+      );
+    }
+
+    // Check for package conflicts (e.g. ufw vs iptables-persistent)
+    if (toolReq.conflictsWith && toolReq.conflictsWith.length > 0 && distro.family === "debian") {
+      for (const conflictPkg of toolReq.conflictsWith) {
+        const checkResult = execSimple("dpkg", ["-l", conflictPkg], { timeoutMs: 10_000 });
+        if (checkResult.success && checkResult.stdout.includes("ii")) {
+          console.error(
+            `[auto-install] ⚠ CONFLICT: Cannot install "${binary}" — conflicting package "${conflictPkg}" is already installed. ` +
+            `${toolReq.availabilityNote ?? ""}`,
+          );
+          return {
+            dependency: binary,
+            type: "binary",
+            method: "system-package",
+            success: false,
+            message:
+              `Cannot install "${binary}": conflicts with already-installed package "${conflictPkg}". ` +
+              `${toolReq.availabilityNote ?? "Remove the conflicting package first."}`,
+            duration: Date.now() - start,
+          };
+        }
+      }
     }
 
     // Resolve distro-specific package name (no raw binary name fallback)

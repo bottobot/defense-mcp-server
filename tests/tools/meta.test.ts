@@ -35,6 +35,8 @@ vi.mock("../../src/core/changelog.js", () => ({
 vi.mock("../../src/core/installer.js", () => ({
   checkAllTools: vi.fn().mockResolvedValue([]),
   installMissing: vi.fn().mockResolvedValue([]),
+  getInstallHint: vi.fn().mockResolvedValue("sudo apt install -y example-pkg"),
+  getAlternativesMap: vi.fn().mockReturnValue(new Map()),
 }));
 vi.mock("../../src/core/safeguards.js", () => ({
   SafeguardRegistry: {
@@ -45,6 +47,19 @@ vi.mock("../../src/core/safeguards.js", () => ({
 }));
 vi.mock("../../src/core/spawn-safe.js", () => ({
   spawnSafe: vi.fn(),
+}));
+vi.mock("../../src/core/third-party-installer.js", () => ({
+  listThirdPartyTools: vi.fn().mockResolvedValue([]),
+  installThirdPartyTool: vi.fn().mockResolvedValue({ binary: "trivy", success: true, message: "Trivy v0.58.1 installed" }),
+  getVerifiedInstallInstructions: vi.fn().mockReturnValue("## Trivy v0.58.1 — Verified APT Installation\n\n```bash\nsudo apt-get install trivy\n```"),
+  isThirdPartyInstallEnabled: vi.fn().mockReturnValue(false),
+}));
+vi.mock("../../src/core/third-party-manifest.js", () => ({
+  THIRD_PARTY_MANIFEST: [
+    { binary: "falco", name: "Falco", version: "0.39.2", installMethod: "apt-repo", verification: "gpg-apt-repo" },
+    { binary: "trivy", name: "Trivy", version: "0.58.1", installMethod: "apt-repo", verification: "gpg-apt-repo" },
+    { binary: "grype", name: "Grype", version: "0.86.1", installMethod: "github-release", verification: "sha256" },
+  ],
 }));
 vi.mock("../../src/core/secure-fs.js", () => ({
   secureWriteFileSync: vi.fn(),
@@ -69,12 +84,23 @@ import { registerMetaTools } from "../../src/tools/meta.js";
 import { spawnSafe } from "../../src/core/spawn-safe.js";
 import { secureWriteFileSync } from "../../src/core/secure-fs.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { checkAllTools, getAlternativesMap } from "../../src/core/installer.js";
+import {
+  listThirdPartyTools,
+  installThirdPartyTool,
+  isThirdPartyInstallEnabled,
+} from "../../src/core/third-party-installer.js";
 
 const mockSpawnSafe = vi.mocked(spawnSafe);
 const mockSecureWriteFileSync = vi.mocked(secureWriteFileSync);
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFileSync = vi.mocked(readFileSync);
 const mockReaddirSync = vi.mocked(readdirSync);
+const mockCheckAllTools = vi.mocked(checkAllTools);
+const mockGetAlternativesMap = vi.mocked(getAlternativesMap);
+const mockListThirdPartyTools = vi.mocked(listThirdPartyTools);
+const mockInstallThirdPartyTool = vi.mocked(installThirdPartyTool);
+const mockIsThirdPartyInstallEnabled = vi.mocked(isThirdPartyInstallEnabled);
 
 // ── Helper ─────────────────────────────────────────────────────────────────
 
@@ -737,6 +763,290 @@ describe("meta tools", () => {
         const parsed = JSON.parse(result.content[0].text);
         expect(parsed.sessions).toEqual([]);
       });
+    });
+  });
+
+  // ── Audit Gate (check_tools gate=true) ────────────────────────────────
+
+  describe("check_tools gate mode", () => {
+    const makeTool = (name: string, binary: string, required: boolean, installed: boolean, alternativeFor?: string) => ({
+      tool: { name, binary, packages: { debian: name.toLowerCase() }, category: "assessment" as const, required, alternativeFor },
+      installed,
+      version: installed ? "1.0.0" : undefined,
+      path: installed ? `/usr/bin/${binary}` : undefined,
+    });
+
+    it("should return gateResult=passed when all tools installed", async () => {
+      mockCheckAllTools.mockResolvedValue([
+        makeTool("Lynis", "lynis", true, true),
+        makeTool("ClamAV", "clamscan", true, true),
+      ]);
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_tools", gate: true }) as Record<string, unknown>;
+      expect(result.isError).toBeUndefined();
+      expect(result.content).toBeDefined();
+      expect((result._meta as Record<string, unknown>).gateResult).toBe("passed");
+      expect((result._meta as Record<string, unknown>).haltWorkflow).toBe(false);
+    });
+
+    it("should return isError + haltWorkflow when required tools missing", async () => {
+      mockCheckAllTools.mockResolvedValue([
+        makeTool("Lynis", "lynis", true, true),
+        makeTool("ClamAV", "clamscan", true, false),
+      ]);
+      mockGetAlternativesMap.mockReturnValue(new Map());
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_tools", gate: true }) as Record<string, unknown>;
+      expect(result.isError).toBe(true);
+      expect((result._meta as Record<string, unknown>).haltWorkflow).toBe(true);
+      expect((result._meta as Record<string, unknown>).gateResult).toBe("blocked");
+      expect((result._meta as Record<string, unknown>).requiredMissingCount).toBe(1);
+    });
+
+    it("should return passed_with_warnings when only optional tools missing", async () => {
+      mockCheckAllTools.mockResolvedValue([
+        makeTool("Lynis", "lynis", true, true),
+        makeTool("htop", "htop", false, false),
+      ]);
+      mockGetAlternativesMap.mockReturnValue(new Map());
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_tools", gate: true }) as Record<string, unknown>;
+      expect(result.isError).toBeUndefined();
+      expect((result._meta as Record<string, unknown>).gateResult).toBe("passed_with_warnings");
+      expect((result._meta as Record<string, unknown>).haltWorkflow).toBe(false);
+      expect((result._meta as Record<string, unknown>).optionalMissingCount).toBe(1);
+    });
+
+    it("should NOT return isError when gate=false (backwards compatible)", async () => {
+      mockCheckAllTools.mockResolvedValue([
+        makeTool("ClamAV", "clamscan", true, false),
+      ]);
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_tools", gate: false }) as Record<string, unknown>;
+      expect(result.isError).toBeUndefined();
+      expect(result._meta).toBeUndefined();
+    });
+
+    it("should pass gate when required tool missing but alternative installed", async () => {
+      mockCheckAllTools.mockResolvedValue([
+        makeTool("iptables", "iptables", true, false),
+        makeTool("nftables", "nft", false, true, "iptables"),
+      ]);
+      mockGetAlternativesMap.mockReturnValue(
+        new Map([["iptables", [{ name: "nftables", binary: "nft", packages: { debian: "nftables" }, category: "firewall" as const, required: false, alternativeFor: "iptables" }]]])
+      );
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_tools", gate: true }) as Record<string, unknown>;
+      expect(result.isError).toBeUndefined();
+      expect((result._meta as Record<string, unknown>).haltWorkflow).toBe(false);
+    });
+
+    it("should include install hints in blocked gate output", async () => {
+      mockCheckAllTools.mockResolvedValue([
+        makeTool("ClamAV", "clamscan", true, false),
+      ]);
+      mockGetAlternativesMap.mockReturnValue(new Map());
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_tools", gate: true });
+      expect(result.content[0].text).toContain("AUDIT GATE: BLOCKED");
+      expect(result.content[0].text).toContain("Install:");
+    });
+  });
+
+  // ── check_optional_deps ─────────────────────────────────────────────────
+
+  describe("check_optional_deps action", () => {
+    it("should return formatted status of all third-party tools", async () => {
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "falco", name: "Falco", installed: true, currentVersion: "0.39.2", manifestVersion: "0.39.2", needsUpdate: false },
+        { binary: "trivy", name: "Trivy", installed: false, manifestVersion: "0.58.1", needsUpdate: false },
+        { binary: "grype", name: "Grype", installed: false, manifestVersion: "0.86.1", needsUpdate: false },
+      ]);
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_optional_deps" });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Optional Third-Party Tool Status");
+      expect(result.content[0].text).toContain("falco");
+      expect(result.content[0].text).toContain("trivy");
+      expect(result.content[0].text).toContain("grype");
+      expect(result.content[0].text).toContain("Installed: 1");
+      expect(result.content[0].text).toContain("Missing: 2");
+    });
+
+    it("should show install hints for missing tools", async () => {
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "trivy", name: "Trivy", installed: false, manifestVersion: "0.58.1", needsUpdate: false },
+      ]);
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_optional_deps" });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Install Hints");
+      expect(result.content[0].text).toContain("install_optional_deps");
+    });
+
+    it("should show all installed when nothing is missing", async () => {
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "falco", name: "Falco", installed: true, currentVersion: "0.39.2", manifestVersion: "0.39.2", needsUpdate: false },
+      ]);
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({ action: "check_optional_deps" });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Installed: 1");
+      expect(result.content[0].text).toContain("Missing: 0");
+      expect(result.content[0].text).not.toContain("Install Hints");
+    });
+  });
+
+  // ── install_optional_deps ───────────────────────────────────────────────
+
+  describe("install_optional_deps action", () => {
+    it("should return instructions when DEFENSE_MCP_THIRD_PARTY_INSTALL is not set", async () => {
+      mockIsThirdPartyInstallEnabled.mockReturnValue(false);
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "trivy", name: "Trivy", installed: false, manifestVersion: "0.58.1", needsUpdate: false },
+      ]);
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({
+        action: "install_optional_deps",
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Third-Party Installation Not Enabled");
+      expect(result.content[0].text).toContain("DEFENSE_MCP_THIRD_PARTY_INSTALL=true");
+      expect(result.content[0].text).toContain("Missing Optional Tools");
+      expect(mockInstallThirdPartyTool).not.toHaveBeenCalled();
+    });
+
+    it("should return dry-run plan when dry_run=true", async () => {
+      mockIsThirdPartyInstallEnabled.mockReturnValue(true);
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "falco", name: "Falco", installed: true, currentVersion: "0.39.2", manifestVersion: "0.39.2", needsUpdate: false },
+        { binary: "trivy", name: "Trivy", installed: false, manifestVersion: "0.58.1", needsUpdate: false },
+        { binary: "grype", name: "Grype", installed: false, manifestVersion: "0.86.1", needsUpdate: false },
+      ]);
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({
+        action: "install_optional_deps",
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("DRY RUN");
+      expect(result.content[0].text).toContain("trivy");
+      expect(result.content[0].text).toContain("grype");
+      expect(result.content[0].text).toContain("Tools to install: 2");
+      expect(mockInstallThirdPartyTool).not.toHaveBeenCalled();
+    });
+
+    it("should call installThirdPartyTool when dry_run=false and env var set", async () => {
+      mockIsThirdPartyInstallEnabled.mockReturnValue(true);
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "trivy", name: "Trivy", installed: false, manifestVersion: "0.58.1", needsUpdate: false },
+      ]);
+      mockInstallThirdPartyTool.mockResolvedValue({
+        binary: "trivy",
+        success: true,
+        message: "Trivy v0.58.1 installed to /usr/local/bin/trivy (SHA256 verified)",
+      });
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({
+        action: "install_optional_deps",
+        dry_run: false,
+        force: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("LIVE");
+      expect(result.content[0].text).toContain("Success: 1");
+      expect(mockInstallThirdPartyTool).toHaveBeenCalledWith("trivy", { force: true });
+    });
+
+    it("should handle installation failures gracefully", async () => {
+      mockIsThirdPartyInstallEnabled.mockReturnValue(true);
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "trivy", name: "Trivy", installed: false, manifestVersion: "0.58.1", needsUpdate: false },
+      ]);
+      mockInstallThirdPartyTool.mockResolvedValue({
+        binary: "trivy",
+        success: false,
+        message: "SHA256 MISMATCH for Trivy!",
+      });
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({
+        action: "install_optional_deps",
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Failed: 1");
+      expect(result.content[0].text).toContain("SHA256 MISMATCH");
+    });
+
+    it("should install only specified tool_name", async () => {
+      mockIsThirdPartyInstallEnabled.mockReturnValue(true);
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "falco", name: "Falco", installed: false, manifestVersion: "0.39.2", needsUpdate: false },
+        { binary: "trivy", name: "Trivy", installed: false, manifestVersion: "0.58.1", needsUpdate: false },
+      ]);
+      mockInstallThirdPartyTool.mockResolvedValue({
+        binary: "trivy",
+        success: true,
+        message: "Trivy v0.58.1 installed",
+      });
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({
+        action: "install_optional_deps",
+        dry_run: false,
+        tool_name: "trivy",
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Success: 1");
+      expect(mockInstallThirdPartyTool).toHaveBeenCalledTimes(1);
+      expect(mockInstallThirdPartyTool).toHaveBeenCalledWith("trivy", { force: false });
+    });
+
+    it("should skip already-installed tools when force=false", async () => {
+      mockIsThirdPartyInstallEnabled.mockReturnValue(true);
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "falco", name: "Falco", installed: true, currentVersion: "0.39.2", manifestVersion: "0.39.2", needsUpdate: false },
+      ]);
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({
+        action: "install_optional_deps",
+        dry_run: false,
+        force: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Skipped: 1");
+      expect(result.content[0].text).toContain("already installed");
+      expect(mockInstallThirdPartyTool).not.toHaveBeenCalled();
+    });
+
+    it("should include confirmation notice when force=false and dry_run=false", async () => {
+      mockIsThirdPartyInstallEnabled.mockReturnValue(true);
+      mockListThirdPartyTools.mockResolvedValue([
+        { binary: "trivy", name: "Trivy", installed: false, manifestVersion: "0.58.1", needsUpdate: false },
+      ]);
+      mockInstallThirdPartyTool.mockResolvedValue({
+        binary: "trivy",
+        success: true,
+        message: "Trivy v0.58.1 installed",
+      });
+
+      const handler = tools.get("defense_mgmt")!.handler;
+      const result = await handler({
+        action: "install_optional_deps",
+        dry_run: false,
+        force: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("caller is responsible for confirming intent");
     });
   });
 });

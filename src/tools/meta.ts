@@ -5,7 +5,8 @@
  * workflow_run, change_history, posture_score, posture_trend, posture_dashboard,
  * scheduled_create, scheduled_list, scheduled_remove, scheduled_history,
  * remediate_plan, remediate_apply, remediate_rollback, remediate_status,
- * report_generate, report_list, report_formats)
+ * report_generate, report_list, report_formats,
+ * check_optional_deps, install_optional_deps)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -22,10 +23,19 @@ import { logChange, createChangeEntry, getChangelog } from "../core/changelog.js
 import {
   checkAllTools,
   installMissing,
+  getInstallHint,
+  getAlternativesMap,
   type ToolCategory,
   type ToolCheckResult,
 } from "../core/installer.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
+import {
+  listThirdPartyTools,
+  installThirdPartyTool,
+  getVerifiedInstallInstructions,
+  isThirdPartyInstallEnabled,
+} from "../core/third-party-installer.js";
+import { THIRD_PARTY_MANIFEST } from "../core/third-party-manifest.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -949,16 +959,21 @@ export function registerMetaTools(server: McpServer): void {
         "report_generate",
         "report_list",
         "report_formats",
+        "check_optional_deps",
+        "install_optional_deps",
       ]).describe(
         "Action to perform. check_tools=check tool availability; workflow_suggest/run=security workflows; " +
         "change_history=audit trail; posture_score/trend/dashboard=security posture; " +
         "scheduled_create/list/remove/history=scheduled audits; " +
         "remediate_plan/apply/rollback/status=auto-remediation; " +
-        "report_generate/list/formats=security reports"
+        "report_generate/list/formats=security reports; " +
+        "check_optional_deps=status of optional third-party tools; " +
+        "install_optional_deps=install missing optional tools"
       ),
       // check_tools params
       category: z.string().optional().describe("Filter by category: hardening, firewall, monitoring, assessment, network, access, encryption, container (check_tools)"),
       install_missing: z.boolean().optional().default(false).describe("Attempt to install missing tools (check_tools)"),
+      gate: z.boolean().optional().default(false).describe("Audit gate mode: returns isError + haltWorkflow if required tools are missing (check_tools)"),
       // workflow params
       objective: z.enum(["initial_hardening", "incident_response", "compliance_audit", "malware_investigation", "network_monitoring", "full_assessment"]).optional().describe("Security objective (workflow_suggest)"),
       system_type: z.enum(["server", "desktop", "container", "cloud"]).optional().default("server").describe("System type (workflow_suggest)"),
@@ -978,6 +993,9 @@ export function registerMetaTools(server: McpServer): void {
       severity_filter: z.enum(["critical", "high", "medium", "low"]).optional().default("medium").describe("Minimum severity level to include (remediate_plan/apply)"),
       session_id: z.string().optional().describe("Remediation session ID (remediate_rollback/status)"),
       output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format (remediate_*)"),
+      // optional deps params
+      tool_name: z.string().optional().describe("Specific tool binary name to install (install_optional_deps). If omitted, installs all missing."),
+      force: z.boolean().optional().default(false).describe("Force reinstall even if already installed (install_optional_deps)"),
       // report params
       report_type: z.enum(["executive_summary", "technical_detail", "compliance_evidence", "vulnerability_report", "hardening_status"]).optional().default("technical_detail").describe("Type of report to generate (report_generate)"),
       format: z.enum(["markdown", "html", "json", "csv"]).optional().default("markdown").describe("Output format for the report (report_generate)"),
@@ -993,7 +1011,7 @@ export function registerMetaTools(server: McpServer): void {
 
         // ── check_tools ────────────────────────────────────────────────────
         case "check_tools": {
-          const { category, install_missing, dry_run } = params;
+          const { category, install_missing, dry_run, gate } = params;
           try {
             const sections: string[] = [];
             sections.push("🔧 Defensive Tool Availability Check");
@@ -1051,6 +1069,97 @@ export function registerMetaTools(server: McpServer): void {
                 }
                 logChange(createChangeEntry({ tool: "defense_mgmt", action: "install_missing", target: filterCategory || "all", after: `Attempted to install ${installResults.length} tools`, dryRun: false, success: installResults.every((r) => r.success) }));
               }
+            }
+
+            // ── Gate mode: block audit if required tools are missing ──────
+            if (gate) {
+              const allMissing = results.filter(r => !r.installed);
+              const altMap = getAlternativesMap();
+
+              // A required tool is truly missing only if none of its alternatives are installed
+              const requiredMissing = allMissing.filter(r => {
+                if (!r.tool.required) return false;
+                const alternatives = altMap.get(r.tool.name.toLowerCase()) || [];
+                return !alternatives.some(alt =>
+                  results.some(res => res.tool.binary === alt.binary && res.installed)
+                );
+              });
+              const optionalMissing = allMissing.filter(r => !r.tool.required);
+
+              if (requiredMissing.length > 0) {
+                sections.push("");
+                sections.push("🚫 AUDIT GATE: BLOCKED");
+                sections.push("=".repeat(50));
+                sections.push(`${requiredMissing.length} required tool(s) missing. Audit cannot proceed.\n`);
+
+                sections.push("Required (must fix):");
+                for (const r of requiredMissing) {
+                  const hint = await getInstallHint(r.tool);
+                  sections.push(`  - ${r.tool.name} (${r.tool.binary})`);
+                  if (hint) sections.push(`    Install: ${hint}`);
+                }
+
+                if (optionalMissing.length > 0) {
+                  sections.push("\nOptional (recommended):");
+                  for (const r of optionalMissing) {
+                    const hint = await getInstallHint(r.tool);
+                    sections.push(`  - ${r.tool.name} (${r.tool.binary})`);
+                    if (hint) sections.push(`    Install: ${hint}`);
+                  }
+                }
+
+                sections.push("\nTo install all missing: call defense_mgmt action=check_tools install_missing=true dry_run=false");
+                sections.push("Then re-run: defense_mgmt action=check_tools gate=true");
+
+                return {
+                  content: [createTextContent(sections.join("\n"))],
+                  isError: true,
+                  _meta: {
+                    haltWorkflow: true,
+                    gateResult: "blocked",
+                    missingRequired: requiredMissing.map(r => ({ name: r.tool.name, binary: r.tool.binary, category: r.tool.category })),
+                    missingOptional: optionalMissing.map(r => ({ name: r.tool.name, binary: r.tool.binary, category: r.tool.category })),
+                    requiredMissingCount: requiredMissing.length,
+                    optionalMissingCount: optionalMissing.length,
+                  },
+                };
+              }
+
+              if (optionalMissing.length > 0) {
+                sections.push("");
+                sections.push("✅ AUDIT GATE: PASSED (with warnings)");
+                sections.push(`${optionalMissing.length} optional tool(s) missing — audit can proceed but some checks may be skipped.`);
+                for (const r of optionalMissing) {
+                  const hint = await getInstallHint(r.tool);
+                  sections.push(`  - ${r.tool.name} (${r.tool.binary})${hint ? ` — Install: ${hint}` : ""}`);
+                }
+
+                return {
+                  content: [createTextContent(sections.join("\n"))],
+                  _meta: {
+                    haltWorkflow: false,
+                    gateResult: "passed_with_warnings",
+                    missingRequired: [],
+                    missingOptional: optionalMissing.map(r => ({ name: r.tool.name, binary: r.tool.binary, category: r.tool.category })),
+                    requiredMissingCount: 0,
+                    optionalMissingCount: optionalMissing.length,
+                  },
+                };
+              }
+
+              // All tools present
+              sections.push("\n✅ AUDIT GATE: PASSED — all tools available.");
+              return {
+                content: [createTextContent(sections.join("\n"))],
+                _meta: {
+                  haltWorkflow: false,
+                  gateResult: "passed",
+                  missingRequired: [],
+                  missingOptional: [],
+                  requiredMissingCount: 0,
+                  optionalMissingCount: 0,
+                },
+              };
             }
 
             return { content: [createTextContent(sections.join("\n"))] };
@@ -1962,6 +2071,232 @@ export function registerMetaTools(server: McpServer): void {
         // ── report_formats ─────────────────────────────────────────────────
         case "report_formats": {
           return { content: [formatToolOutput({ supportedFormats: SUPPORTED_FORMATS, reportTypes: REPORT_TYPES, availableSections: ALL_SECTIONS })] };
+        }
+
+        // ── check_optional_deps ─────────────────────────────────────────────
+        case "check_optional_deps": {
+          try {
+            const statuses = await listThirdPartyTools();
+            const sections: string[] = [];
+            sections.push("📦 Optional Third-Party Tool Status");
+            sections.push("=".repeat(50));
+            sections.push("");
+
+            // Table header
+            sections.push(
+              "  " +
+              "Binary".padEnd(18) +
+              "Installed".padEnd(12) +
+              "Current".padEnd(12) +
+              "Target".padEnd(12) +
+              "Method".padEnd(16) +
+              "Verification"
+            );
+            sections.push("  " + "─".repeat(80));
+
+            let installedCount = 0;
+            let missingCount = 0;
+
+            for (const status of statuses) {
+              const entry = THIRD_PARTY_MANIFEST.find(e => e.binary === status.binary);
+              const installedStr = status.installed ? "✅ yes" : "❌ no";
+              const currentVer = status.currentVersion ?? "—";
+              const targetVer = status.manifestVersion;
+              const method = entry?.installMethod ?? "unknown";
+              const verification = entry?.verification ?? "unknown";
+
+              if (status.installed) installedCount++;
+              else missingCount++;
+
+              sections.push(
+                "  " +
+                status.binary.padEnd(18) +
+                installedStr.padEnd(12) +
+                currentVer.padEnd(12) +
+                targetVer.padEnd(12) +
+                method.padEnd(16) +
+                verification
+              );
+            }
+
+            sections.push("");
+            sections.push(`── Summary ──`);
+            sections.push(`  Installed: ${installedCount} | Missing: ${missingCount} | Total: ${statuses.length}`);
+
+            if (missingCount > 0) {
+              sections.push("");
+              sections.push("── Install Hints for Missing Tools ──");
+              for (const status of statuses) {
+                if (!status.installed) {
+                  const instructions = getVerifiedInstallInstructions(status.binary);
+                  const firstLine = instructions.split("\n").find(l => l.startsWith("##")) ?? `Install ${status.binary}`;
+                  sections.push(`  • ${status.binary}: ${firstLine}`);
+                }
+              }
+              sections.push("");
+              sections.push("  💡 Run: defense_mgmt → install_optional_deps (dry_run=true) to see full install plan");
+            }
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Optional deps check failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── install_optional_deps ───────────────────────────────────────────
+        case "install_optional_deps": {
+          try {
+            const effectiveDryRun = params.dry_run ?? getConfig().dryRun ?? true;
+            const toolName = params.tool_name as string | undefined;
+            const forceInstall = (params.force as boolean | undefined) ?? false;
+
+            // Gate 1: Check DEFENSE_MCP_THIRD_PARTY_INSTALL env var
+            if (!isThirdPartyInstallEnabled()) {
+              const sections: string[] = [];
+              sections.push("🔒 Third-Party Installation Not Enabled");
+              sections.push("=".repeat(50));
+              sections.push("");
+              sections.push("SECURITY: Third-party tool installation requires explicit opt-in.");
+              sections.push("Set the following environment variable in your MCP server configuration:");
+              sections.push("");
+              sections.push("  DEFENSE_MCP_THIRD_PARTY_INSTALL=true");
+              sections.push("");
+              sections.push("This is required because these tools are downloaded from external sources");
+              sections.push("and installed with elevated privileges. All downloads are cryptographically");
+              sections.push("verified (SHA256/GPG) before installation.");
+              sections.push("");
+
+              // Show missing tools with install instructions
+              const statuses = await listThirdPartyTools();
+              const missing = statuses.filter(s => !s.installed);
+              if (missing.length > 0) {
+                sections.push("── Missing Optional Tools ──");
+                for (const status of missing) {
+                  sections.push(`\n  📦 ${status.name} (v${status.manifestVersion})`);
+                  const instructions = getVerifiedInstallInstructions(status.binary);
+                  // Show first few lines of instructions
+                  const instrLines = instructions.split("\n").slice(0, 3);
+                  for (const line of instrLines) {
+                    sections.push(`     ${line}`);
+                  }
+                }
+              } else {
+                sections.push("  ✅ All optional tools are already installed.");
+              }
+
+              return { content: [createTextContent(sections.join("\n"))] };
+            }
+
+            // Gate 2: Dry-run mode — show plan without executing
+            if (effectiveDryRun) {
+              const statuses = await listThirdPartyTools();
+              const sections: string[] = [];
+              sections.push("📋 Third-Party Tool Installation Plan [DRY RUN]");
+              sections.push("=".repeat(50));
+              sections.push("");
+
+              let planCount = 0;
+              for (const status of statuses) {
+                // If tool_name specified, only show that tool
+                if (toolName && status.binary !== toolName) continue;
+
+                if (!status.installed || forceInstall) {
+                  const entry = THIRD_PARTY_MANIFEST.find(e => e.binary === status.binary);
+                  planCount++;
+                  sections.push(`  ${planCount}. ${status.name} (${status.binary})`);
+                  sections.push(`     Version: ${status.manifestVersion}`);
+                  sections.push(`     Method:  ${entry?.installMethod ?? "unknown"}`);
+                  sections.push(`     Verify:  ${entry?.verification ?? "unknown"}`);
+                  if (status.installed && forceInstall) {
+                    sections.push(`     Note:    Currently installed (v${status.currentVersion ?? "unknown"}) — force reinstall`);
+                  }
+                  sections.push("");
+                }
+              }
+
+              if (planCount === 0) {
+                sections.push("  ✅ All optional tools are already installed. Nothing to do.");
+                if (toolName) {
+                  const found = statuses.find(s => s.binary === toolName);
+                  if (!found) {
+                    sections.push(`  ⚠️  Tool '${toolName}' is not in the third-party manifest.`);
+                  }
+                }
+              } else {
+                sections.push(`── Plan Summary ──`);
+                sections.push(`  Tools to install: ${planCount}`);
+                sections.push(`  Set dry_run=false to execute installation.`);
+              }
+
+              return { content: [createTextContent(sections.join("\n"))] };
+            }
+
+            // Gate 3: Live installation (dry_run=false AND DEFENSE_MCP_THIRD_PARTY_INSTALL=true)
+            const statuses = await listThirdPartyTools();
+            const sections: string[] = [];
+            sections.push("🔧 Third-Party Tool Installation [LIVE]");
+            sections.push("=".repeat(50));
+            sections.push("");
+
+            if (!forceInstall) {
+              sections.push("⚠️  Note: The caller is responsible for confirming intent.");
+              sections.push("   Use force=true to skip this notice for automation.");
+              sections.push("");
+            }
+
+            let successCount = 0;
+            let failCount = 0;
+            let skipCount = 0;
+
+            for (const status of statuses) {
+              // If tool_name specified, only install that tool
+              if (toolName && status.binary !== toolName) continue;
+
+              if (status.installed && !forceInstall) {
+                skipCount++;
+                sections.push(`  ⏭️  ${status.name} (${status.binary}) — already installed (v${status.currentVersion ?? "unknown"})`);
+                continue;
+              }
+
+              sections.push(`  ⏳ Installing ${status.name} v${status.manifestVersion}...`);
+              const result = await installThirdPartyTool(status.binary, { force: forceInstall });
+
+              if (result.success) {
+                successCount++;
+                sections.push(`  ✅ ${result.message}`);
+              } else {
+                failCount++;
+                sections.push(`  ❌ ${result.message}`);
+              }
+            }
+
+            if (toolName) {
+              const found = statuses.find(s => s.binary === toolName);
+              if (!found) {
+                sections.push(`  ⚠️  Tool '${toolName}' is not in the third-party manifest.`);
+                sections.push(`  Available tools: ${statuses.map(s => s.binary).join(", ")}`);
+              }
+            }
+
+            sections.push("");
+            sections.push("── Installation Summary ──");
+            sections.push(`  Success: ${successCount} | Failed: ${failCount} | Skipped: ${skipCount}`);
+
+            logChange(createChangeEntry({
+              tool: "defense_mgmt",
+              action: "install_optional_deps",
+              target: toolName ?? "all",
+              after: `success=${successCount} failed=${failCount} skipped=${skipCount}`,
+              dryRun: false,
+              success: failCount === 0,
+            }));
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Optional deps installation failed: ${msg}`)], isError: true };
+          }
         }
 
         default:

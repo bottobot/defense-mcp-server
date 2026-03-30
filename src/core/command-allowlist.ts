@@ -18,7 +18,7 @@
  * @module command-allowlist
  */
 
-import { existsSync, lstatSync, type Stats } from "node:fs";
+import { existsSync, lstatSync, statSync, realpathSync, type Stats } from "node:fs";
 // INTENTIONAL EXCEPTION: This module uses execFileSync/execFile directly from node:child_process
 // because the command allowlist must be initialized before spawn-safe.ts can function.
 // spawn-safe.ts depends on this module for allowlist resolution, so routing through
@@ -125,6 +125,11 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   { binary: "curl",      candidates: ["/usr/bin/curl", "/bin/curl"] },
   { binary: "wget",      candidates: ["/usr/bin/wget", "/bin/wget"] },
 
+  // ── Login history ─────────────────────────────────────────────────────
+  { binary: "last",           candidates: ["/usr/bin/last", "/bin/last"] },
+  { binary: "lastb",          candidates: ["/usr/bin/lastb", "/bin/lastb"] },
+  { binary: "w",              candidates: ["/usr/bin/w", "/bin/w"] },
+
   // ── Logging / audit ────────────────────────────────────────────────────
   { binary: "journalctl",     candidates: ["/usr/bin/journalctl", "/bin/journalctl"] },
   { binary: "dmesg",          candidates: ["/usr/bin/dmesg", "/bin/dmesg"] },
@@ -132,6 +137,7 @@ const ALLOWLIST_DEFINITIONS: AllowlistEntry[] = [
   { binary: "ausearch",       candidates: ["/usr/sbin/ausearch", "/sbin/ausearch"] },
   { binary: "aureport",       candidates: ["/usr/sbin/aureport", "/sbin/aureport"] },
   { binary: "fail2ban-client", candidates: ["/usr/bin/fail2ban-client", "/usr/local/bin/fail2ban-client"] },
+  { binary: "rsyslogd",       candidates: ["/usr/sbin/rsyslogd", "/sbin/rsyslogd"] },
   { binary: "logrotate",      candidates: ["/usr/sbin/logrotate", "/usr/bin/logrotate", "/sbin/logrotate"] },
 
   // ── IDS / rootkit detection ────────────────────────────────────────────
@@ -447,9 +453,15 @@ export function initializeAllowlist(): void {
       if (existsSync(candidate)) {
         entry.resolvedPath = candidate;
         // SECURITY (CORE-007): Record inode at startup for TOCTOU detection
+        // For symlinks (e.g. Debian alternatives), record inode of the final target
         try {
-          const stats = lstatSync(candidate);
-          entry.resolvedInode = stats.ino;
+          const lstats = lstatSync(candidate);
+          if (lstats.isSymbolicLink()) {
+            const realStats = statSync(realpathSync(candidate));
+            entry.resolvedInode = realStats.ino;
+          } else {
+            entry.resolvedInode = lstats.ino;
+          }
         } catch {
           // Best effort — inode recording is not critical
         }
@@ -675,22 +687,36 @@ export function setRuntimePathVerification(enabled: boolean): void {
  */
 function verifyBinaryPathAtRuntime(binaryPath: string, entry: AllowlistEntry): void {
   try {
-    const stats = lstatSync(binaryPath);
+    const lstats = lstatSync(binaryPath);
 
-    // Must still be a regular file (not replaced with a symlink)
-    if (!stats.isFile()) {
+    // Follow symlinks to verify the final target (Debian alternatives use symlink chains)
+    if (lstats.isSymbolicLink()) {
+      const realPath = realpathSync(binaryPath);
+      const realStats = statSync(realPath);
+      if (!realStats.isFile()) {
+        throw new Error(
+          `SECURITY: Binary '${binaryPath}' symlink target '${realPath}' is not a regular file. Refusing to execute.`
+        );
+      }
+      // Verify inode of the real target if recorded at startup
+      if (entry.resolvedInode !== undefined && realStats.ino !== entry.resolvedInode) {
+        throw new Error(
+          `SECURITY: Binary '${binaryPath}' target inode changed since startup ` +
+          `(was ${entry.resolvedInode}, now ${realStats.ino}). Binary may have been replaced. Refusing to execute.`
+        );
+      }
+    } else if (!lstats.isFile()) {
       throw new Error(
-        `SECURITY: Binary '${binaryPath}' is no longer a regular file ` +
-        `(may have been replaced with a symlink). Refusing to execute.`
+        `SECURITY: Binary '${binaryPath}' is not a regular file or symlink. Refusing to execute.`
       );
-    }
-
-    // If we recorded an inode at startup, verify it hasn't changed
-    if (entry.resolvedInode !== undefined && stats.ino !== entry.resolvedInode) {
-      throw new Error(
-        `SECURITY: Binary '${binaryPath}' inode changed since startup ` +
-        `(was ${entry.resolvedInode}, now ${stats.ino}). Binary may have been replaced. Refusing to execute.`
-      );
+    } else {
+      // Regular file — verify inode hasn't changed
+      if (entry.resolvedInode !== undefined && lstats.ino !== entry.resolvedInode) {
+        throw new Error(
+          `SECURITY: Binary '${binaryPath}' inode changed since startup ` +
+          `(was ${entry.resolvedInode}, now ${lstats.ino}). Binary may have been replaced. Refusing to execute.`
+        );
+      }
     }
   } catch (err: unknown) {
     if (err instanceof Error && err.message.startsWith("SECURITY:")) {

@@ -112,7 +112,7 @@ describe("SudoGuard", () => {
       expect(result._meta.elevationTool).toBe("sudo_elevate");
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe("text");
-      expect(result.content[0].text).toContain("WORKFLOW HALTED");
+      expect(result.content[0].text).toContain("Sudo session required");
     });
 
     it("includes a custom reason when provided", () => {

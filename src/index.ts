@@ -245,6 +245,27 @@ async function main() {
     console.error(`[startup] Sudoers NOPASSWD check failed (non-fatal): ${err}`);
   }
 
+  // ── Phase 0.7: Check optional third-party tools ───────────────────────────
+  // Informational only — missing optional tools must NOT prevent server startup.
+  try {
+    const { listThirdPartyTools } = await import("./core/third-party-installer.js");
+    const thirdPartyStatuses = await listThirdPartyTools();
+    const missingTools = thirdPartyStatuses.filter(s => !s.installed);
+    if (missingTools.length > 0) {
+      for (const tool of missingTools) {
+        console.error(
+          `[third-party] Optional tool '${tool.binary}' (v${tool.manifestVersion}) not installed — ` +
+          `${tool.name} functionality limited`
+        );
+      }
+      console.error(
+        `[third-party] Run: defense_mgmt → install_optional_deps (dry_run=true) to see install plan`
+      );
+    }
+  } catch {
+    // Non-fatal — third-party check failure must not block startup
+  }
+
   // Wrap server with pre-flight middleware
   const wrappedServer = createPreflightServer(server);
 
