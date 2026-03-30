@@ -129,17 +129,105 @@ sudo apt-get install -y \
 
 ### Third-Party Tools
 
-These are **not available** in standard Debian/Ubuntu repos and require manual installation:
+These are **not available** in standard Debian/Ubuntu repos. The instructions below avoid piping remote scripts into a shell (`curl | sh`) — each binary is downloaded, verified, and installed as a discrete step.
 
-| Tool | Purpose | Install Command |
-|------|---------|----------------|
-| **Falco** | eBPF runtime security | `curl -fsSL https://falco.org/repo/falcosecurity-packages.asc \| sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg && echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" \| sudo tee /etc/apt/sources.list.d/falcosecurity.list && sudo apt-get update && sudo apt-get install -y falco` |
-| **Trivy** | Container image scanning | `curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \| sh -s -- -b /usr/local/bin` |
-| **Grype** | Vulnerability scanning | `curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \| sh -s -- -b /usr/local/bin` |
-| **Syft** | SBOM generation | `curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \| sh -s -- -b /usr/local/bin` |
-| **TruffleHog** | Secret scanning | `curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \| sh -s -- -b /usr/local/bin` |
-| **slsa-verifier** | Supply chain verification | Download from [GitHub releases](https://github.com/slsa-framework/slsa-verifier/releases) |
-| **cdxgen** | CycloneDX SBOM generation | `npm install -g @cyclonedx/cdxgen` |
+> **Note:** The MCP server can auto-install these tools for you when `DEFENSE_MCP_AUTO_INSTALL=true` (the default). It uses GPG fingerprint and SHA256 verification internally. The manual steps below are for pre-installation or air-gapped environments.
+
+#### Falco (eBPF runtime security)
+
+```bash
+# Import GPG key and verify fingerprint
+curl -fsSL https://falco.org/repo/falcosecurity-packages.asc -o /tmp/falco.asc
+gpg --show-keys /tmp/falco.asc  # Verify: 478B 2FBB C75F 4237 B731 DA43 6510 6822 B35B 1B1F
+sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg /tmp/falco.asc
+rm /tmp/falco.asc
+
+# Add signed repo and install
+echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" \
+  | sudo tee /etc/apt/sources.list.d/falcosecurity.list
+sudo apt-get update && sudo apt-get install -y falco
+```
+
+#### Trivy (container image scanning)
+
+```bash
+# Import GPG key and verify fingerprint
+curl -fsSL https://aquasecurity.github.io/trivy-repo/deb/public.key -o /tmp/trivy.asc
+gpg --show-keys /tmp/trivy.asc  # Verify: 2E2D 3567 4616 32C8 4BB6 CD6F E9D0 A361 6276 FA6C
+sudo gpg --dearmor -o /usr/share/keyrings/trivy-archive-keyring.gpg /tmp/trivy.asc
+rm /tmp/trivy.asc
+
+# Add signed repo and install
+echo "deb [signed-by=/usr/share/keyrings/trivy-archive-keyring.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+  | sudo tee /etc/apt/sources.list.d/trivy.list
+sudo apt-get update && sudo apt-get install -y trivy
+```
+
+#### Grype (vulnerability scanning)
+
+```bash
+VERSION=v0.110.0
+curl -fsSL -o /tmp/grype.tar.gz \
+  "https://github.com/anchore/grype/releases/download/${VERSION}/grype_${VERSION#v}_linux_amd64.tar.gz"
+curl -fsSL -o /tmp/grype.tar.gz.sha256 \
+  "https://github.com/anchore/grype/releases/download/${VERSION}/grype_${VERSION#v}_checksums.txt"
+
+# Verify checksum
+cd /tmp && grep "linux_amd64.tar.gz" grype.tar.gz.sha256 | sha256sum -c -
+tar xzf grype.tar.gz grype && sudo install grype /usr/local/bin/grype
+rm -f /tmp/grype /tmp/grype.tar.gz /tmp/grype.tar.gz.sha256
+```
+
+#### Syft (SBOM generation)
+
+```bash
+VERSION=v1.42.3
+curl -fsSL -o /tmp/syft.tar.gz \
+  "https://github.com/anchore/syft/releases/download/${VERSION}/syft_${VERSION#v}_linux_amd64.tar.gz"
+curl -fsSL -o /tmp/syft_checksums.txt \
+  "https://github.com/anchore/syft/releases/download/${VERSION}/syft_${VERSION#v}_checksums.txt"
+
+# Verify checksum
+cd /tmp && grep "linux_amd64.tar.gz" syft_checksums.txt | sha256sum -c -
+tar xzf syft.tar.gz syft && sudo install syft /usr/local/bin/syft
+rm -f /tmp/syft /tmp/syft.tar.gz /tmp/syft_checksums.txt
+```
+
+#### TruffleHog (secret scanning)
+
+```bash
+VERSION=v3.94.1
+curl -fsSL -o /tmp/trufflehog.tar.gz \
+  "https://github.com/trufflesecurity/trufflehog/releases/download/${VERSION}/trufflehog_${VERSION#v}_linux_amd64.tar.gz"
+curl -fsSL -o /tmp/trufflehog_checksums.txt \
+  "https://github.com/trufflesecurity/trufflehog/releases/download/${VERSION}/trufflehog_${VERSION#v}_checksums.txt"
+
+# Verify checksum
+cd /tmp && grep "linux_amd64.tar.gz" trufflehog_checksums.txt | sha256sum -c -
+tar xzf trufflehog.tar.gz trufflehog && sudo install trufflehog /usr/local/bin/trufflehog
+rm -f /tmp/trufflehog /tmp/trufflehog.tar.gz /tmp/trufflehog_checksums.txt
+```
+
+#### slsa-verifier (supply chain verification)
+
+```bash
+VERSION=v2.7.1
+curl -fsSL -o /tmp/slsa-verifier \
+  "https://github.com/slsa-framework/slsa-verifier/releases/download/${VERSION}/slsa-verifier-linux-amd64"
+curl -fsSL -o /tmp/slsa-verifier.sha256 \
+  "https://github.com/slsa-framework/slsa-verifier/releases/download/${VERSION}/slsa-verifier-linux-amd64.sha256"
+
+# Verify checksum
+cd /tmp && echo "$(cat slsa-verifier.sha256)  slsa-verifier" | sha256sum -c -
+sudo install slsa-verifier /usr/local/bin/slsa-verifier
+rm -f /tmp/slsa-verifier /tmp/slsa-verifier.sha256
+```
+
+#### cdxgen (CycloneDX SBOM generation)
+
+```bash
+npm install -g @cyclonedx/cdxgen
+```
 
 ### Important Notes
 
