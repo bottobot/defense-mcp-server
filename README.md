@@ -81,7 +81,7 @@ DEFENSE_MCP_AUTO_INSTALL=false node build/index.js
 ## Requirements
 
 - **Linux** (Kali, Debian, Ubuntu, RHEL, Arch, or any systemd-based distro)
-- **Node.js 18+**
+- **Node.js 20+**
 - **npm 9+**
 
 ## System Dependencies

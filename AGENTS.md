@@ -4,7 +4,7 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Project
 
-MCP (Model Context Protocol) server providing 31 action-based Linux security tools. TypeScript, ESM (`"type": "module"`), Node 18/20/22, Linux only.
+MCP (Model Context Protocol) server providing 31 action-based Linux security tools. TypeScript, ESM (`"type": "module"`), Node 20/22, Linux only.
 
 ## Critical Rules
 

@@ -23,7 +23,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        node-version: [18, 20, 22]
+        node-version: [20, 22]
 
     steps:
       # CICD-005: All actions pinned to full commit SHAs
