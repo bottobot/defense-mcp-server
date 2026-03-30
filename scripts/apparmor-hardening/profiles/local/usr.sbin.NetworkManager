@@ -1,2 +1,0 @@
-# Site-specific additions and overrides for the NetworkManager profile.
-# include if exists <local/usr.sbin.NetworkManager>
