@@ -10,8 +10,8 @@ import { executeCommand } from "../core/executor.js";
 import { createErrorContent, formatToolOutput } from "../core/parsers.js";
 import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
-import { validateFilePath, validateTarget, validatePort } from "../core/sanitizer.js";
-import { existsSync, readFileSync } from "node:fs";
+import { validateTarget, validatePort } from "../core/sanitizer.js";
+import { existsSync } from "node:fs";
 
 // ── Input validation helpers (TOOL-003 remediation) ────────────────────────
 
@@ -20,15 +20,6 @@ const SERVICE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
 function validateServiceName(name: string): string {
   if (!name || !SERVICE_NAME_RE.test(name)) {
     throw new Error(`Invalid service name: '${name}'. Only [a-zA-Z0-9._-] allowed.`);
-  }
-  return name;
-}
-
-/** Validate an interface name */
-const INTERFACE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
-function validateInterfaceName(name: string): string {
-  if (!name || !INTERFACE_NAME_RE.test(name)) {
-    throw new Error(`Invalid interface name: '${name}'. Only [a-zA-Z0-9._-] allowed.`);
   }
   return name;
 }

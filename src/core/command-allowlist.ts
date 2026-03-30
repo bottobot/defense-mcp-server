@@ -18,7 +18,7 @@
  * @module command-allowlist
  */
 
-import { existsSync, lstatSync, statSync, realpathSync, type Stats } from "node:fs";
+import { existsSync, lstatSync, statSync, realpathSync } from "node:fs";
 // INTENTIONAL EXCEPTION: This module uses execFileSync/execFile directly from node:child_process
 // because the command allowlist must be initialized before spawn-safe.ts can function.
 // spawn-safe.ts depends on this module for allowlist resolution, so routing through
@@ -544,9 +544,20 @@ export function resolveCommand(command: string): string {
   // Lazy resolution: if initializeAllowlist() hasn't run or if the binary
   // was installed after startup, try resolving now
   for (const candidate of entry.candidates) {
-    if (existsSync(candidate)) {
+    try {
+      // Use lstatSync directly to avoid TOCTOU between existsSync and resolve
+      const lstats = lstatSync(candidate);
       entry.resolvedPath = candidate;
+      // SECURITY (CORE-007): Record inode during lazy resolution too
+      if (lstats.isSymbolicLink()) {
+        const realStats = statSync(realpathSync(candidate));
+        entry.resolvedInode = realStats.ino;
+      } else {
+        entry.resolvedInode = lstats.ino;
+      }
       return candidate;
+    } catch {
+      // Candidate doesn't exist — try next
     }
   }
 

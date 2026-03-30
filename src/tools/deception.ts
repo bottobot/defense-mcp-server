@@ -11,6 +11,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import * as crypto from "node:crypto";
 import { spawnSafe } from "../core/spawn-safe.js";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 import {
@@ -115,11 +116,11 @@ async function runCommand(
 }
 
 /**
- * Generate a unique canary ID based on timestamp and random suffix.
+ * Generate a unique canary ID based on timestamp and cryptographic random suffix.
  */
 function generateCanaryId(): string {
   const ts = Date.now();
-  const rand = Math.random().toString(36).substring(2, 8);
+  const rand = crypto.randomUUID().replace(/-/g, "").substring(0, 8);
   return `canary-${ts}-${rand}`;
 }
 

@@ -19,7 +19,7 @@ import {
   backupFile,
   restoreFile,
 } from "../core/changelog.js";
-import { validateFilePath, validateToolPath } from "../core/sanitizer.js";
+import { validateFilePath } from "../core/sanitizer.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";

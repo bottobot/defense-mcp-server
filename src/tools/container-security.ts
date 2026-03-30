@@ -23,7 +23,7 @@ import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
 import { sanitizeArgs } from "../core/sanitizer.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 
 // ── TOOL-011 remediation: safe directory for seccomp profiles ──────────────
@@ -586,7 +586,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
 
         // ── apparmor_apply_container ────────────────────────────────
         case "apparmor_apply_container": {
-          const { profileName, containerName, allowNetwork, allowWrite, dry_run } = params;
+          const { profileName, containerName: _containerName, allowNetwork, allowWrite, dry_run } = params;
           try {
             if (!profileName) return { content: [createErrorContent("profileName is required for apparmor_apply_container action")], isError: true };
 

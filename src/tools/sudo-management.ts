@@ -868,7 +868,8 @@ async function openGuiPasswordDialog(tool: GuiPasswordTool): Promise<string | nu
   // Create a secure temp directory
   let tmpDir: string;
   try {
-    tmpDir = fs.mkdtempSync("/tmp/defense-sudo-gui-");
+    const os = await import("node:os");
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "defense-sudo-gui-"));
     fs.chmodSync(tmpDir, 0o700);
   } catch {
     console.error("[sudo-gui] Failed to create temp dir");
@@ -939,22 +940,16 @@ async function openGuiPasswordDialog(tool: GuiPasswordTool): Promise<string | nu
         if (fs.existsSync(doneFile)) {
           clearInterval(interval);
 
-          // Read password if it was written
-          if (fs.existsSync(pwFile)) {
-            try {
-              const pw = fs.readFileSync(pwFile, "utf-8");
-              // Zero the file on disk immediately
-              const len = Buffer.byteLength(pw, "utf-8");
-              fs.writeFileSync(pwFile, crypto.randomBytes(len));
-              fs.unlinkSync(pwFile);
-              console.error("[sudo-gui] Password captured from GUI dialog");
-              resolve(pw || null);
-            } catch (err) {
-              console.error(`[sudo-gui] Read error: ${err instanceof Error ? err.message : String(err)}`);
-              resolve(null);
-            }
-          } else {
-            console.error("[sudo-gui] Dialog cancelled (no password file)");
+          // Read password atomically — skip existsSync to avoid TOCTOU
+          try {
+            const pw = fs.readFileSync(pwFile, "utf-8");
+            // Zero the file on disk immediately
+            const len = Buffer.byteLength(pw, "utf-8");
+            fs.writeFileSync(pwFile, crypto.randomBytes(len));
+            fs.unlinkSync(pwFile);
+            resolve(pw || null);
+          } catch {
+            // No password file means dialog was cancelled or read failed
             resolve(null);
           }
         }

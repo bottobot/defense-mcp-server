@@ -32,7 +32,6 @@ import {
   isBinaryInstalled,
   clearDependencyCache,
 } from "./dependency-validator.js";
-import { getConfig } from "./config.js";
 import { getToolRequirementForBinary } from "./tool-dependencies.js";
 import {
   SafeguardRegistry,

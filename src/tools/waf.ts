@@ -471,7 +471,7 @@ async function handleRateLimitConfig(
     if (webServer === "nginx") {
       // Check current nginx rate limiting configuration
       const nginxConf = await runSudoCommand("cat", ["/etc/nginx/nginx.conf"]);
-      const sitesResult = await runSudoCommand("ls", ["/etc/nginx/sites-enabled/"]);
+      await runSudoCommand("ls", ["/etc/nginx/sites-enabled/"]);
 
       sections.push("\n── Current Rate Limiting (nginx) ──");
 

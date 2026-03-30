@@ -9,6 +9,9 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { executeCommand } from "../core/executor.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
@@ -22,7 +25,7 @@ import {
   createChangeEntry,
   backupFile,
 } from "../core/changelog.js";
-import { sanitizeArgs } from "../core/sanitizer.js";
+
 import {
   parsePamConfig,
   serializePamConfig,
@@ -1918,7 +1921,7 @@ export function registerAccessControlTools(server: McpServer): void {
               }
 
               const filePath = `/etc/sudoers.d/${sudoFilename}`;
-              const tempPath = "/tmp/.defense-mcp-sudoers-validate";
+              const tempPath = join(tmpdir(), `.defense-mcp-sudoers-validate-${randomUUID()}`);
 
               // Write content to temp file for validation
               await executeCommand({

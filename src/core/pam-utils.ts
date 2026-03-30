@@ -14,7 +14,6 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdtempSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomBytes } from "node:crypto";
 import { executeCommand } from "./executor.js";
 import { BackupManager, type BackupEntry } from "./backup-manager.js";
 import { getConfig } from "./config.js";

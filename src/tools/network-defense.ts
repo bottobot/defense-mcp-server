@@ -18,29 +18,13 @@ import {
   formatToolOutput,
 } from "../core/parsers.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
-import { validateInterface, sanitizeArgs, validateTarget as sanitizerValidateTarget, validateToolPath } from "../core/sanitizer.js";
+import { validateInterface, sanitizeArgs, validateToolPath } from "../core/sanitizer.js";
 import { validateBpfFilter } from "./ebpf-security.js";
 import * as net from "node:net";
 import { spawnSafe } from "../core/spawn-safe.js";
 import type { ChildProcess } from "node:child_process";
 
 // ── TOOL-022 remediation: strict network parameter validation helpers ───────
-
-/** Allowed protocol names for network operations */
-const ALLOWED_PROTOCOLS = new Set(["tcp", "udp", "icmp", "sctp"]);
-
-/** Validate an IP address strictly using net.isIP() */
-function validateIPAddress(ip: string, label = "IP address"): string {
-  const trimmed = ip.trim();
-  // Could be CIDR
-  if (trimmed.includes("/")) {
-    return validateCIDR(trimmed, label);
-  }
-  if (net.isIP(trimmed) === 0) {
-    throw new Error(`${label} is not a valid IP address: '${trimmed}'`);
-  }
-  return trimmed;
-}
 
 /** Validate a CIDR range (e.g., 192.168.1.0/24) */
 function validateCIDR(cidr: string, label = "CIDR range"): string {
@@ -61,23 +45,6 @@ function validateCIDR(cidr: string, label = "CIDR range"): string {
     throw new Error(`${label} has invalid prefix length: /${prefix} (must be 0-${maxPrefix})`);
   }
   return trimmed;
-}
-
-/** Validate port number is in range 1-65535 */
-function validatePortNumber(port: number, label = "Port"): number {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`${label} must be an integer between 1 and 65535, got: ${port}`);
-  }
-  return port;
-}
-
-/** Validate protocol name against whitelist */
-function validateProtocol(proto: string, label = "Protocol"): string {
-  const lower = proto.trim().toLowerCase();
-  if (!ALLOWED_PROTOCOLS.has(lower)) {
-    throw new Error(`${label} '${proto}' is not allowed. Allowed: ${[...ALLOWED_PROTOCOLS].join(", ")}`);
-  }
-  return lower;
 }
 
 // ── TOOL-022: Allowed directories for log/output paths ─────────────────────
@@ -404,7 +371,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
 
         // ── security_scan_detect ─────────────────────────────────────
         case "security_scan_detect": {
-          const { log_file, threshold, timeframe } = params;
+          const { log_file: _log_file, threshold, timeframe } = params;
           try {
             const sinceStr = `${String(timeframe)} seconds ago`;
             sanitizeArgs(["--since", sinceStr, "--no-pager"]);

@@ -15,7 +15,6 @@ import { getConfig } from "./config.js";
 import {
   checkTool,
   installTool,
-  DEFENSIVE_TOOLS,
   type ToolRequirement,
   type InstallResult,
 } from "./installer.js";
@@ -23,9 +22,7 @@ import {
   TOOL_DEPENDENCIES,
   getDependenciesForTool,
   getToolRequirementForBinary,
-  getAllRequiredBinaries,
   getCriticalDependencies,
-  type ToolDependency,
 } from "./tool-dependencies.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────

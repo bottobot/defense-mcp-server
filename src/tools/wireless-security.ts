@@ -313,7 +313,7 @@ interface WifiAuditResult {
   recommendations: string[];
 }
 
-async function wifiAudit(iface?: string): Promise<WifiAuditResult> {
+async function wifiAudit(_iface?: string): Promise<WifiAuditResult> {
   const result: WifiAuditResult = {
     interfacesFound: [],
     interfaceCount: 0,

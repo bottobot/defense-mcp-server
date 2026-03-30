@@ -1,6 +1,6 @@
 # Defense MCP Server
 
-A Model Context Protocol (MCP) server that gives AI assistants access to **31 defensive security tools** (with 150+ actions) on Linux. Connect it to Claude Desktop, Cursor, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
+A Model Context Protocol (MCP) server that gives AI assistants access to **31 defensive security tools** (with 250+ actions) on Linux. Connect it to Claude Desktop, Cursor, or any MCP-compatible client to harden systems, manage firewalls, scan for vulnerabilities, and enforce compliance — all through natural language conversation.
 
 ## Why I Made This
 Basically I'm a total noob when it comes to really serious system hardening so I thought I'd test the latest LLM models and see how far I could get. Turns out they're pretty helpful! I got tired of hardening my new systems by hand every time I spun up a new one so I made this MCP server to make it pretty easy. I jam packed as many security tools as I could into this thing so be prepared to burn tokens using it. Hopefully it helps you about half as much as its helped me. 
@@ -269,7 +269,7 @@ npm run audit:security
 
 ## Test Coverage
 
-- **1,801+ tests** across 60+ test files
+- **2,048+ tests** across 62 test files
 - Every source module (core + tools) has a corresponding test file
 - Coverage enforced in CI pipeline
 

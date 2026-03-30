@@ -11,6 +11,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import * as crypto from "node:crypto";
 import { executeCommand } from "../core/executor.js";
 import { resolveCommand, isAllowlisted } from "../core/command-allowlist.js";
 import { getConfig, getToolTimeout } from "../core/config.js";
@@ -236,7 +237,7 @@ const WORKFLOWS: Record<string, WorkflowStep[]> = {
       args: [
         "tar",
         "-czf",
-        "/tmp/incident-config-backup.tar.gz",
+        join(homedir(), ".defense-mcp", "incident-config-backup.tar.gz"),
         "/etc/ssh/sshd_config",
         "/etc/passwd",
         "/etc/shadow",
@@ -545,7 +546,7 @@ const REMEDIATION_ALLOWLIST = new Set(["sysctl", "sed", "iptables"]);
 
 function generateSessionId(): string {
   const ts = Date.now();
-  const rand = Math.random().toString(36).substring(2, 8);
+  const rand = crypto.randomUUID().replace(/-/g, "").substring(0, 8);
   return `rem-${ts}-${rand}`;
 }
 
@@ -1385,12 +1386,10 @@ export function registerMetaTools(server: McpServer): void {
             fwChecks.push({ name: "iptables rules present", passed: hasIptRules, detail: `${iptResult.exitCode === 0 ? iptResult.stdout.split("\n").length : 0} lines` });
 
             // Multi-layer firewall detection: UFW → nftables fallback
-            let fwDetected = false;
             const ufwResult = await executeCommand({ toolName: "defense_mgmt", command: "sudo", args: ["ufw", "status"], timeout: 5000 });
             if (ufwResult.exitCode === 0) {
               const ufwActive = ufwResult.stdout.includes("active");
               fwChecks.push({ name: "UFW active", passed: ufwActive, detail: ufwResult.stdout.slice(0, 100) });
-              fwDetected = ufwActive;
             } else {
               // UFW command failed — check if nftables has active rules (UFW chains or native)
               const nftResult = await executeCommand({ toolName: "defense_mgmt", command: "sudo", args: ["nft", "list", "ruleset"], timeout: 10000 });
@@ -1399,10 +1398,8 @@ export function registerMetaTools(server: McpServer): void {
                 const hasNftRules = nftResult.stdout.trim().length > 50;
                 if (hasUfwChains) {
                   fwChecks.push({ name: "UFW active", passed: true, detail: "Active via nftables backend (ufw chains detected)" });
-                  fwDetected = true;
                 } else if (hasNftRules) {
                   fwChecks.push({ name: "nftables active", passed: true, detail: "Native nftables ruleset loaded" });
-                  fwDetected = true;
                 } else {
                   fwChecks.push({ name: "UFW active", passed: false, detail: "No firewall rules detected" });
                 }

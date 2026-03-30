@@ -23,9 +23,7 @@ import {
 } from "../core/changelog.js";
 import {
   validateIptablesChain,
-  validateFilePath,
   validateTarget,
-  validatePortRange,
   sanitizeArgs,
   validateToolPath,
 } from "../core/sanitizer.js";
@@ -48,15 +46,6 @@ function validatePortSpec(port: string): string {
     }
   }
   return port;
-}
-
-/** Validate an interface name */
-const IFACE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
-function validateInterfaceName(name: string): string {
-  if (!name || !IFACE_NAME_RE.test(name)) {
-    throw new Error(`Invalid interface name: '${name}'. Only [a-zA-Z0-9._-] allowed.`);
-  }
-  return name;
 }
 
 /** Allowed match module names for iptables -m */
@@ -229,7 +218,6 @@ export function registerFirewallTools(server: McpServer): void {
         // ── iptables_list ─────────────────────────────────────────────
         case "iptables_list": {
           const table = params.table ?? "filter";
-          const dry_run = params.dry_run;
           try {
             const args = ["-t", table, "-L"];
 
@@ -570,7 +558,6 @@ export function registerFirewallTools(server: McpServer): void {
 
         // ── iptables_set_policy ───────────────────────────────────────
         case "iptables_set_policy": {
-          const table = params.table ?? "filter";
           const dry_run = params.dry_run;
           try {
             if (!params.chain) {
@@ -834,7 +821,6 @@ export function registerFirewallTools(server: McpServer): void {
 
         // ── iptables_create_chain ─────────────────────────────────────
         case "iptables_create_chain": {
-          const table = params.table ?? "filter";
           const dry_run = params.dry_run;
           try {
             if (!params.chain_name) {

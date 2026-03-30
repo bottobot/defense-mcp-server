@@ -863,9 +863,6 @@ export function registerThreatIntelTools(server: McpServer): void {
 
                 if (newEntries.length > 0) {
                   // Write new entries via tee
-                  const appendContent = "\n# ── Defense Threat Intel Blocklist ──\n" +
-                    newEntries.join("\n") + "\n";
-
                   const teeResult = await runCommand(
                     "sudo", ["tee", "-a", "/etc/hosts"],
                     10_000,

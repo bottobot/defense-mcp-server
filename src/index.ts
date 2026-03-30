@@ -20,7 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 // ── Core: Pre-flight validation system ───────────────────────────────────────
-import { createPreflightServer, invalidatePreflightCaches } from './core/tool-wrapper.js';
+import { createPreflightServer } from './core/tool-wrapper.js';
 import { initializeRegistry } from './core/tool-registry.js';
 
 // ── Core: Lifecycle management ───────────────────────────────────────────────

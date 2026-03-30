@@ -17,10 +17,9 @@ import {
   createErrorContent,
   formatToolOutput,
 } from "../core/parsers.js";
-import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
+import { logChange, createChangeEntry } from "../core/changelog.js";
 import {
   validateTarget,
-  validateFilePath,
   sanitizeArgs,
   validateCertPath,
 } from "../core/sanitizer.js";
@@ -41,30 +40,8 @@ function assertNoTraversal(p: string): void {
 
 // ── TOOL-023 remediation: encryption parameter validation ──────────────────
 
-/** Allowed encryption algorithms (explicit allowlist) */
-const ALLOWED_ALGORITHMS = new Set([
-  "aes-256-gcm",
-  "aes-256-cbc",
-  "aes-128-gcm",
-  "aes-128-cbc",
-  "chacha20-poly1305",
-]);
-
 /** Allowed directories for key file paths */
 const ALLOWED_KEY_DIRS = ["/etc/ssl", "/etc/pki", "/home", "/root", "/tmp", "/var/lib", "/opt"];
-
-/**
- * Validate an encryption algorithm against the explicit allowlist.
- */
-function validateAlgorithm(algorithm: string): string {
-  const lower = algorithm.trim().toLowerCase();
-  if (!ALLOWED_ALGORITHMS.has(lower)) {
-    throw new Error(
-      `Algorithm '${algorithm}' is not allowed. Allowed algorithms: ${[...ALLOWED_ALGORITHMS].join(", ")}`
-    );
-  }
-  return lower;
-}
 
 /**
  * Validate a key file path for traversal and containment within allowed directories.

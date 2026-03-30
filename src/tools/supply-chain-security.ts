@@ -7,45 +7,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { executeCommand } from "../core/executor.js";
-import { getConfig, getToolTimeout } from "../core/config.js";
-import { createTextContent, createErrorContent, formatToolOutput } from "../core/parsers.js";
+import { getToolTimeout } from "../core/config.js";
+import { createErrorContent, formatToolOutput } from "../core/parsers.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
-import { validateFilePath } from "../core/sanitizer.js";
 import { detectDistro } from "../core/distro.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
 
 // ── TOOL-025 remediation: supply chain input validation ────────────────────
-
-/** npm package name validation regex (scoped and unscoped) */
-const NPM_PACKAGE_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
-
-/** Maximum npm package name length */
-const NPM_PACKAGE_NAME_MAX_LENGTH = 214;
-
-/**
- * Validate a package name against npm naming rules.
- */
-function validatePackageNameNpm(name: string): string {
-  if (!name || typeof name !== "string") {
-    throw new Error("Package name must be a non-empty string");
-  }
-
-  const trimmed = name.trim();
-
-  if (trimmed.length > NPM_PACKAGE_NAME_MAX_LENGTH) {
-    throw new Error(
-      `Package name too long (${trimmed.length} chars). Maximum is ${NPM_PACKAGE_NAME_MAX_LENGTH} characters.`
-    );
-  }
-
-  if (!NPM_PACKAGE_NAME_RE.test(trimmed)) {
-    throw new Error(
-      `Invalid package name: '${trimmed}'. Must match npm naming rules: lowercase, alphanumeric, hyphens, dots, underscores, tildes. Scoped packages must start with @.`
-    );
-  }
-
-  return trimmed;
-}
 
 /**
  * Validate a registry URL.

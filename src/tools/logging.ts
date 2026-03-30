@@ -26,7 +26,6 @@ import {
 import { logChange, createChangeEntry, backupFile } from "../core/changelog.js";
 import {
   sanitizeArgs,
-  validateFilePath,
   validateAuditdKey,
   validateTarget,
   validateToolPath,

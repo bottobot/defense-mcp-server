@@ -4,7 +4,6 @@ import {
   detectDistro,
   getInstallCommand,
   getUpdateCommand,
-  type PackageManager,
 } from "./distro.js";
 import { getConfig } from "./config.js";
 import { resolveCommand } from "./command-allowlist.js";

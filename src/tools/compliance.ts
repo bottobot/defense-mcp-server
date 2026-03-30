@@ -25,13 +25,12 @@ import {
 } from "../core/progress.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
-import { sanitizeArgs, validateFilePath } from "../core/sanitizer.js";
-import { existsSync, readFileSync } from "node:fs";
+import { sanitizeArgs } from "../core/sanitizer.js";
+import { readFileSync } from "node:fs";
 import {
   loadPolicy,
   evaluatePolicy,
   getBuiltinPolicies,
-  type PolicyEvaluationSummary,
 } from "../core/policy-engine.js";
 
 // ── CIS Benchmark Check Helpers ────────────────────────────────────────────

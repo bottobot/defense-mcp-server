@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join, basename } from "node:path";
+import { dirname, basename } from "node:path";
 import { z } from "zod";
 import { executeCommand } from "./executor.js";
 import { getConfig } from "./config.js";

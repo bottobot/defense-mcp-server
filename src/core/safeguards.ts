@@ -20,7 +20,6 @@ import { executeCommand } from "./executor.js";
 // ── Zod schemas ──────────────────────────────────────────────────────────────
 
 const OperationSchema = z.string().min(1).max(256);
-const ParamsSchema = z.record(z.string(), z.unknown());
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -252,7 +251,7 @@ export class SafeguardRegistry {
     try {
       // SECURITY (CORE-010): Use environment-aware path instead of hardcoded /home/robert/...
       const mcpConfigPath = path.join(os.homedir(), "defense-mcp-workspace", ".mcp.json");
-      if (fs.existsSync(mcpConfigPath)) {
+      try {
         const raw = fs.readFileSync(mcpConfigPath, "utf-8");
         const config = JSON.parse(raw);
         const servers = config.mcpServers ?? config.servers ?? {};
@@ -261,6 +260,8 @@ export class SafeguardRegistry {
           details.push(`${names.length} MCP server(s) configured: ${names.join(", ")}`);
           detected = true;
         }
+      } catch {
+        // File doesn't exist or isn't readable — skip
       }
 
       // Check for node processes
@@ -371,8 +372,6 @@ export class SafeguardRegistry {
         ]);
         this.detectionCache = { result: { vscode, docker, mcp, dbs, web }, timestamp: now };
       }
-
-      const detections = [vscode, docker, mcp, dbs, web];
 
       // Check Docker impact
       if (docker.detected && matchesAny(operation, DOCKER_OPERATIONS)) {

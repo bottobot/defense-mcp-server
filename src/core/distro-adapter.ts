@@ -30,12 +30,9 @@ import {
   getServiceManager,
   getFirewallBackend,
   type DistroInfo,
-  type DistroFamily,
-  type PackageManagerName,
   type PackageManagerCommands,
   type ServiceManagerCommands,
   type FirewallBackendCommands,
-  type InitSystem,
 } from "./distro.js";
 
 // ── Path Maps ────────────────────────────────────────────────────────────────

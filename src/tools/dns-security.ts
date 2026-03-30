@@ -13,7 +13,6 @@ import { z } from "zod";
 import { spawnSafe } from "../core/spawn-safe.js";
 import { secureWriteFileSync, secureCopyFileSync } from "../core/secure-fs.js";
 import {
-  createTextContent,
   createErrorContent,
   formatToolOutput,
 } from "../core/parsers.js";

@@ -6,10 +6,8 @@
  */
 
 import {
-  existsSync,
   readFileSync,
   unlinkSync,
-  readdirSync,
   statSync,
   lstatSync,
 } from "node:fs";
@@ -72,21 +70,19 @@ export function validateBackupPath(filePath: string, baseDir: string): void {
     );
   }
 
-  // 4. Reject symlinks (if the path exists)
-  if (existsSync(filePath)) {
-    try {
-      const lstats = lstatSync(filePath);
-      if (lstats.isSymbolicLink()) {
-        throw new Error(
-          `SECURITY: Backup path '${filePath}' is a symlink. Refusing to use.`
-        );
-      }
-    } catch (err: unknown) {
-      if (err instanceof Error && err.message.startsWith("SECURITY:")) {
-        throw err;
-      }
-      // lstat failure on existing path is suspicious but non-fatal for validation
+  // 4. Reject symlinks — use lstatSync directly to avoid TOCTOU
+  try {
+    const lstats = lstatSync(filePath);
+    if (lstats.isSymbolicLink()) {
+      throw new Error(
+        `SECURITY: Backup path '${filePath}' is a symlink. Refusing to use.`
+      );
     }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith("SECURITY:")) {
+      throw err;
+    }
+    // ENOENT (path doesn't exist yet) is fine for validation; other errors are non-fatal
   }
 }
 
@@ -109,16 +105,15 @@ export class BackupManager {
   /** Read manifest from disk with migration from old format. */
   private readManifest(): BackupManifest {
     try {
-      if (existsSync(this.manifestPath)) {
-        const raw = readFileSync(this.manifestPath, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.backups)) {
-          // Migrate: ensure version field is present (old format may lack it)
-          return { version: 1, backups: parsed.backups };
-        }
+      // Read directly — avoids TOCTOU between existsSync and readFileSync
+      const raw = readFileSync(this.manifestPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.backups)) {
+        // Migrate: ensure version field is present (old format may lack it)
+        return { version: 1, backups: parsed.backups };
       }
     } catch {
-      // Corrupt or missing manifest — start fresh
+      // Missing, unreadable, or corrupt manifest — start fresh
     }
     return { version: 1, backups: [] };
   }
@@ -137,10 +132,6 @@ export class BackupManager {
     const validated = FilePathSchema.parse(filePath);
     this.ensureDir();
 
-    if (!existsSync(validated)) {
-      throw new Error(`Source file does not exist: ${validated}`);
-    }
-
     const id = randomUUID();
     const now = new Date();
     const ts = now.toISOString().replace(/[:.]/g, "-");
@@ -151,7 +142,15 @@ export class BackupManager {
     // SECURITY (CORE-015): Validate the backup destination path
     validateBackupPath(backupPath, this.backupDir);
 
-    secureCopyFileSync(validated, backupPath);
+    // Copy atomically — no prior existsSync to avoid TOCTOU
+    try {
+      secureCopyFileSync(validated, backupPath);
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Source file does not exist: ${validated}`);
+      }
+      throw err;
+    }
 
     const stat = statSync(backupPath);
     const entry: BackupEntry = {
@@ -191,15 +190,19 @@ export class BackupManager {
       throw new Error(`Backup not found: ${validated}`);
     }
 
-    if (!existsSync(entry.backupPath)) {
-      throw new Error(`Backup file missing on disk: ${entry.backupPath}`);
-    }
-
     // SECURITY (CORE-015): Validate the backup source path before restore
     validateBackupPath(entry.backupPath, this.backupDir);
 
     secureMkdirSync(dirname(entry.originalPath));
-    secureCopyFileSync(entry.backupPath, entry.originalPath);
+    // Copy atomically — no prior existsSync to avoid TOCTOU
+    try {
+      secureCopyFileSync(entry.backupPath, entry.originalPath);
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Backup file missing on disk: ${entry.backupPath}`);
+      }
+      throw err;
+    }
     console.error(`[backup-manager] Restored ${entry.backupPath} → ${entry.originalPath}`);
   }
 
@@ -234,11 +237,13 @@ export class BackupManager {
 
     for (const entry of remove) {
       try {
-        if (existsSync(entry.backupPath)) {
-          unlinkSync(entry.backupPath);
-        }
+        // Unlink directly — no prior existsSync to avoid TOCTOU
+        unlinkSync(entry.backupPath);
       } catch (err) {
-        console.error(`[backup-manager] Failed to delete ${entry.backupPath}: ${err instanceof Error ? err.message : String(err)}`);
+        // ENOENT is fine (already gone); log other errors
+        if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+          console.error(`[backup-manager] Failed to delete ${entry.backupPath}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     }
 

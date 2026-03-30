@@ -448,8 +448,8 @@ function buildFirewallBackend(fbName: FirewallBackendName): FirewallBackendComma
     };
     case "pf": return {
       name: fbName,
-      allowCmd: (port, proto = "tcp") => ["pfctl", "-e", "-f", "-"],
-      denyCmd: (port, proto = "tcp") => ["pfctl", "-e", "-f", "-"],
+      allowCmd: (_port, _proto = "tcp") => ["pfctl", "-e", "-f", "-"],
+      denyCmd: (_port, _proto = "tcp") => ["pfctl", "-e", "-f", "-"],
       listCmd: () => ["pfctl", "-sr"],
       flushCmd: () => ["pfctl", "-F", "all"],
     };

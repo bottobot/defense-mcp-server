@@ -777,7 +777,7 @@ export function registerIntegrityTools(server: McpServer): void {
             // Create baseline mode
             if (create_baseline) {
               const baselineOutput =
-                baseline_path ?? "/tmp/file-integrity-baseline.sha256";
+                baseline_path ?? join(homedir(), ".defense-mcp", "file-integrity-baseline.sha256");
               // TOOL-016: Validate baseline output path
               validateToolPath(
                 baselineOutput,

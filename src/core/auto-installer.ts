@@ -726,7 +726,6 @@ export class AutoInstaller {
     const result = execWithSudo(installArgs, { useSudo, timeoutMs: 300_000 });
 
     if (!result.success) {
-      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
       console.error(
         `[auto-installer] ✗ Failed to install '${binary}' (package: ${packageName}): ${result.stderr.slice(0, 200)}`,
       );
@@ -858,7 +857,6 @@ export class AutoInstaller {
     }
 
     if (!result.success) {
-      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
       console.error(
         `[auto-installer] ✗ Failed to install Python module '${module}': ${result.stderr.slice(0, 200)}`,
       );
@@ -1095,7 +1093,6 @@ export class AutoInstaller {
     }
 
     if (!installed) {
-      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
       console.error(
         `[auto-installer] ✗ Failed to install library '${lib}': ${lastError}`,
       );

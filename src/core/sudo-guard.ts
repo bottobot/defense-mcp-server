@@ -35,7 +35,7 @@
  */
 
 import { SudoSession } from "./sudo-session.js";
-import { statSync, lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { logger } from "./logger.js";
 
 // ── Permission Error Detection ───────────────────────────────────────────────
@@ -109,13 +109,6 @@ const PERMISSION_ERROR_PATTERNS: RegExp[] = [
  * Note: exit code alone is not sufficient — must be combined with pattern
  * matching for reliable detection.
  */
-const PERMISSION_EXIT_CODES = new Set<number>([
-  1,   // General error (common for sudo failures)
-  126, // Command invoked cannot execute (permission issue)
-  4,   // iptables: resource problem (often permission)
-  77,  // BSD/systemd: noperm
-]);
-
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /**

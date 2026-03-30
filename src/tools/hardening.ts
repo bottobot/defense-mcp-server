@@ -23,7 +23,6 @@ import {
 } from "../core/changelog.js";
 import {
   validateServiceName,
-  validateFilePath,
   sanitizeArgs,
   validateSysctlKey,
 } from "../core/sanitizer.js";

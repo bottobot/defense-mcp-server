@@ -10,8 +10,7 @@ import { executeCommand } from "../core/executor.js";
 import { createErrorContent, formatToolOutput } from "../core/parsers.js";
 import { logChange, createChangeEntry } from "../core/changelog.js";
 import { SafeguardRegistry } from "../core/safeguards.js";
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 
 // ── TOOL-018 remediation: BPF filter expression validation ─────────────────

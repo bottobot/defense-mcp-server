@@ -1,4 +1,4 @@
-import { resolve, normalize, sep } from "node:path";
+import { resolve, normalize } from "node:path";
 import { realpathSync } from "node:fs";
 import { getConfig, type DefenseConfig } from "./config.js";
 
@@ -23,7 +23,7 @@ const PATH_TRAVERSAL_RE = /(^|[\/\\])\.\.([\/\\]|$)/;
  * Validates a target string as hostname, IPv4, IPv6, or CIDR notation.
  * Throws on invalid input.
  */
-export function validateTarget(target: string, config?: DefenseConfig): string {
+export function validateTarget(target: string, _config?: DefenseConfig): string {
   if (!target || typeof target !== "string") {
     throw new Error("Target must be a non-empty string");
   }
