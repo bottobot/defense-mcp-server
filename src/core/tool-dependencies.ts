@@ -64,7 +64,11 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
   // ── Firewall (1) ──────────────────────────────────────────────────────────
   {
     toolName: "firewall",
-    requiredBinaries: ["iptables", "ip6tables", "ufw", "nft"],
+    requiredBinaries: ["iptables", "ip6tables", "nft"],
+    optionalBinaries: [
+      "ufw",               // NOTE: ufw conflicts with iptables-persistent on Debian — cannot coexist
+      "netfilter-persistent",
+    ],
     critical: true,
   },
 
@@ -84,6 +88,8 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
   {
     toolName: "access_control",
     requiredBinaries: ["pam-auth-update"],
+    // NOTE: pam_pwquality is a PAM .so module (libpam-pwquality), NOT a standalone
+    // binary — it cannot be checked via binary existence. Check the package instead.
     optionalBinaries: ["ssh", "sshd"],
     critical: true,
   },
@@ -105,7 +111,7 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
   // ── Logging (1) ───────────────────────────────────────────────────────────
   {
     toolName: "log_management",
-    requiredBinaries: ["auditctl", "ausearch", "aureport", "journalctl", "fail2ban-client", "rsyslog"],
+    requiredBinaries: ["auditctl", "ausearch", "aureport", "journalctl", "fail2ban-client", "rsyslogd"],
     critical: true,
   },
 
@@ -119,7 +125,8 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
   // ── Container (2) ─────────────────────────────────────────────────────────
   {
     toolName: "container_docker",
-    requiredBinaries: ["docker", "trivy"],
+    requiredBinaries: ["docker"],
+    optionalBinaries: ["trivy"],  // NOTE: trivy is third-party, not in standard Debian repos
   },
   {
     toolName: "container_isolation",
@@ -129,7 +136,8 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
   // ── eBPF (1) ──────────────────────────────────────────────────────────────
   {
     toolName: "ebpf",
-    requiredBinaries: ["bpftool", "falco"],
+    requiredBinaries: ["bpftool"],
+    optionalBinaries: ["falco"],  // NOTE: falco is third-party, requires Falco Security apt repo
   },
 
   // ── Crypto (1) ────────────────────────────────────────────────────────────
@@ -149,8 +157,8 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
   // ── Patch Management (1) ──────────────────────────────────────────────────
   {
     toolName: "patch",
-    requiredBinaries: ["apt-get", "apt", "dpkg", "rpm"],
-    optionalBinaries: ["debsums", "livepatch"],
+    requiredBinaries: ["apt-get", "apt", "dpkg"],
+    optionalBinaries: ["debsums", "livepatch", "rpm"],
   },
 
   // ── Secrets (1) ───────────────────────────────────────────────────────────
@@ -217,7 +225,14 @@ export const TOOL_DEPENDENCIES: ToolDependency[] = [
   {
     toolName: "supply_chain",
     requiredBinaries: [],
-    optionalBinaries: ["syft", "cdxgen", "dpkg", "debsums", "cosign", "slsa-verifier"],
+    optionalBinaries: [
+      "syft",            // NOTE: third-party, not in standard Debian repos
+      "cdxgen",          // NOTE: third-party, install via npm: npm install -g @cyclonedx/cdxgen
+      "dpkg",
+      "debsums",
+      "cosign",          // Available in Debian Trixie repos
+      "slsa-verifier",   // NOTE: third-party, download from GitHub releases
+    ],
   },
   {
     toolName: "threat_intel",

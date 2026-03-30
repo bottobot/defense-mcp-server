@@ -28,6 +28,8 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 |-----------|-------------|---------|--------|------|
 | `firewall` | All firewall management (iptables, UFW, nftables, policy audit, persistence) | `iptables_list`, `iptables_add`, `iptables_delete`, `iptables_set_policy`, `iptables_create_chain`, `ufw_status`, `ufw_add`, `ufw_delete`, `persist_save`, `persist_restore`, `persist_enable`, `persist_status`, `nftables_list`, `policy_audit` | Y | conditional |
 
+> **⚠️ UFW vs nftables**: UFW conflicts with `iptables-persistent` on Debian — they cannot coexist. For modern Debian Trixie+ systems, prefer `nftables` (`nft` command) for firewall management. UFW actions are still supported but optional.
+
 **Actions:**
 - `iptables_list` — List current iptables rules and chains
 - `iptables_add` — Add an iptables rule
@@ -207,12 +209,17 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 |-----------|-------------|---------|--------|------|
 | `container_docker` | Docker security (audit, CIS benchmark, seccomp, daemon, image scanning) | `audit`, `bench`, `seccomp`, `daemon`, `image_scan` | Y | conditional |
 
+> **Prerequisites**: The `image_scan` action requires **Trivy**, which is NOT in standard Debian repos. Install via:
+> ```bash
+> curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+> ```
+
 **Actions:**
 - `audit` — Audit Docker configuration and running containers for security issues
 - `bench` — Run Docker Bench for Security (CIS Docker Benchmark)
 - `seccomp` — Audit or generate seccomp profiles for containers
 - `daemon` — Audit Docker daemon configuration (`/etc/docker/daemon.json`)
-- `image_scan` — Scan a container image for known vulnerabilities
+- `image_scan` — Scan a container image for known vulnerabilities (requires Trivy)
 
 ---
 
@@ -247,11 +254,20 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 |-----------|-------------|---------|--------|------|
 | `ebpf` | eBPF and runtime security (program listing, Falco) | `list_programs`, `falco_status`, `falco_deploy_rules`, `falco_events` | Y | conditional |
 
+> **Prerequisites**:
+> - `list_programs` requires **bpftool** — install via `sudo apt-get install bpftool` (Debian Trixie; NOT `linux-tools-generic`).
+> - `falco_*` actions require **Falco**, which is NOT in standard Debian repos. Install via the Falco Security apt repository:
+>   ```bash
+>   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+>   echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" | sudo tee /etc/apt/sources.list.d/falcosecurity.list
+>   sudo apt-get update && sudo apt-get install -y falco
+>   ```
+
 **Actions:**
-- `list_programs` — List loaded eBPF programs and pinned maps
-- `falco_status` — Check Falco runtime security status
-- `falco_deploy_rules` — Deploy or update Falco detection rules
-- `falco_events` — Query recent Falco security events
+- `list_programs` — List loaded eBPF programs and pinned maps (requires bpftool)
+- `falco_status` — Check Falco runtime security status (requires Falco)
+- `falco_deploy_rules` — Deploy or update Falco detection rules (requires Falco)
+- `falco_events` — Query recent Falco security events (requires Falco)
 
 ---
 
@@ -329,11 +345,13 @@ Complete reference for all 31 tools registered in the defense-mcp-server v0.7.0.
 |-----------|-------------|---------|--------|------|
 | `secrets` | Secrets detection (filesystem scan, env audit, SSH key sprawl, git history) | `scan`, `env_audit`, `ssh_key_sprawl`, `git_history_scan` | N | never |
 
+> **Optional Prerequisites**: The `git_history_scan` action can use **Gitleaks** (available in Debian Trixie repos: `sudo apt-get install gitleaks`) or **TruffleHog** (third-party: `curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin`) for enhanced scanning. Basic scanning works without these tools.
+
 **Actions:**
 - `scan` — Scan filesystem paths for hardcoded secrets (tokens, passwords, API keys)
 - `env_audit` — Audit environment variables and .env file exposure
 - `ssh_key_sprawl` — Detect SSH key sprawl across user home directories
-- `git_history_scan` — Scan git repository history for leaked secrets
+- `git_history_scan` — Scan git repository history for leaked secrets (enhanced with Gitleaks/TruffleHog)
 
 ---
 
@@ -647,10 +665,17 @@ These tools were not consolidated; their names and actions are unchanged from v0
 
 ### `supply_chain`
 
+> **Prerequisites**: This tool's actions depend on third-party binaries not in standard Debian repos:
+> - `sbom` action: requires **Syft** (`curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin`) or **cdxgen** (`npm install -g @cyclonedx/cdxgen`)
+> - `sign` action: requires **Cosign** (available in Debian Trixie repos: `sudo apt-get install cosign`)
+> - `verify_slsa` action: requires **slsa-verifier** (download from [GitHub releases](https://github.com/slsa-framework/slsa-verifier/releases))
+>
+> **Note**: Snort has been **removed from Debian Trixie** repositories. For IDS functionality, use **Suricata** (`sudo apt-get install suricata`).
+
 **Actions:**
-- `sbom` — Generate a Software Bill of Materials for installed packages
-- `sign` — Sign an artifact using GPG or sigstore
-- `verify_slsa` — Verify SLSA (Supply-chain Levels for Software Artifacts) provenance
+- `sbom` — Generate a Software Bill of Materials for installed packages (requires Syft or cdxgen)
+- `sign` — Sign an artifact using GPG or sigstore (requires Cosign for sigstore)
+- `verify_slsa` — Verify SLSA (Supply-chain Levels for Software Artifacts) provenance (requires slsa-verifier)
 
 **Example:**
 ```json

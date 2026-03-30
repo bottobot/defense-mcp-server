@@ -1164,10 +1164,22 @@ export function registerComplianceTools(server: McpServer): void {
 
         // ── cron_restrict ────────────────────────────────────────────
         case "cron_restrict": {
-          const { allowed_users, dry_run } = params;
+          const { dry_run } = params;
+          let { allowed_users } = params;
           try {
             const usernamePattern = /^[a-z_][a-z0-9_-]{0,31}$/;
             const changes: string[] = [];
+
+            // SAFETY: Auto-include the current user to prevent self-lockout.
+            // If the current user is not in allowed_users, they would lose the
+            // ability to manage cron jobs (including scheduled audits created by
+            // defense_mgmt → scheduled_create). This is a common misconfiguration
+            // since the default is ["root"] only.
+            const currentUser = process.env.USER || process.env.LOGNAME;
+            if (currentUser && currentUser !== "root" && !allowed_users.includes(currentUser)) {
+              allowed_users = [...allowed_users, currentUser];
+              changes.push(`⚠️ Auto-included current user '${currentUser}' in allowed_users to prevent self-lockout`);
+            }
 
             // Validate usernames
             for (const user of allowed_users) {

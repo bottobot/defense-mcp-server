@@ -191,7 +191,7 @@ export function registerBackupTools(server: McpServer): void {
               { name: "services", enabled: include_services, commands: [{ label: "systemctl-units", cmd: "systemctl", args: ["list-unit-files", "--type=service", "--no-pager"] }] },
               { name: "network", enabled: include_network, commands: [{ label: "ip-addr", cmd: "ip", args: ["addr", "show"] }, { label: "ip-route", cmd: "ip", args: ["route", "show"] }, { label: "ss-listening", cmd: "ss", args: ["-tulnp"] }] },
               { name: "firewall", enabled: include_firewall, commands: [{ label: "iptables-save", cmd: "sudo", args: ["iptables-save"] }, { label: "ufw-status", cmd: "sudo", args: ["ufw", "status", "verbose"] }] },
-              { name: "users", enabled: include_users, commands: [{ label: "passwd", cmd: "cat", args: ["/etc/passwd"] }, { label: "group", cmd: "cat", args: ["/etc/group"] }, { label: "lastlog", cmd: "lastlog", args: [] }] },
+              { name: "users", enabled: include_users, commands: [{ label: "passwd", cmd: "cat", args: ["/etc/passwd"] }, { label: "group", cmd: "cat", args: ["/etc/group"] }, { label: "last-logins", cmd: "last", args: ["-50"] }] },
             ];
 
             const enabledSteps = captureSteps.filter((s) => s.enabled);

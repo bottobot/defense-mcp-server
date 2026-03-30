@@ -84,6 +84,42 @@ DEFENSE_MCP_AUTO_INSTALL=false node build/index.js
 - **Node.js 18+**
 - **npm 9+**
 
+## System Dependencies
+
+Most tools will be auto-installed on first use, but you can pre-install everything for faster startup:
+
+### Standard Packages (apt)
+
+```bash
+sudo apt-get install -y \
+  aide rkhunter chkrootkit clamav clamav-daemon lynis auditd \
+  nmap tcpdump nftables fail2ban apparmor apparmor-utils \
+  libpam-pwquality suricata bpftool gitleaks cosign checksec \
+  wireguard-tools debsums acct uidmap inotify-tools sysstat \
+  htop strace logrotate openssl gnupg cryptsetup curl lsof
+```
+
+### Third-Party Tools
+
+These are **not available** in standard Debian/Ubuntu repos and require manual installation:
+
+| Tool | Purpose | Install Command |
+|------|---------|----------------|
+| **Falco** | eBPF runtime security | `curl -fsSL https://falco.org/repo/falcosecurity-packages.asc \| sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg && echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" \| sudo tee /etc/apt/sources.list.d/falcosecurity.list && sudo apt-get update && sudo apt-get install -y falco` |
+| **Trivy** | Container image scanning | `curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \| sh -s -- -b /usr/local/bin` |
+| **Grype** | Vulnerability scanning | `curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \| sh -s -- -b /usr/local/bin` |
+| **Syft** | SBOM generation | `curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \| sh -s -- -b /usr/local/bin` |
+| **TruffleHog** | Secret scanning | `curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \| sh -s -- -b /usr/local/bin` |
+| **slsa-verifier** | Supply chain verification | Download from [GitHub releases](https://github.com/slsa-framework/slsa-verifier/releases) |
+| **cdxgen** | CycloneDX SBOM generation | `npm install -g @cyclonedx/cdxgen` |
+
+### Important Notes
+
+- **`snort` → `suricata`**: Snort has been **removed from Debian Trixie (13+)** repositories. Suricata is the recommended IDS replacement and is available in standard repos.
+- **`ufw` vs `nftables`**: UFW **conflicts with `iptables-persistent`** — they cannot coexist on the same system. For modern Debian systems, prefer `nftables` (the `nft` command) for firewall management.
+- **`bpftool`**: On Debian Trixie, install the `bpftool` package directly (NOT `linux-tools-generic` which is Ubuntu-specific).
+- **`pam_pwquality`**: This is a PAM module (`libpam-pwquality`), not a standalone binary. Install via `apt-get install libpam-pwquality`.
+
 ## Installation
 
 ### Option A: npm (recommended)

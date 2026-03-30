@@ -37,6 +37,8 @@ import {
   checkAllTools,
   installTool,
   installMissing,
+  getInstallHint,
+  getAlternativesMap,
   DEFENSIVE_TOOLS,
   type ToolRequirement,
 } from "../../src/core/installer.js";
@@ -302,6 +304,57 @@ describe("installer", () => {
         expect(r.message).toContain("[DRY RUN]");
         expect(r.success).toBe(false);
       }
+    });
+  });
+
+  // ── getInstallHint ────────────────────────────────────────────────────
+
+  describe("getInstallHint", () => {
+    it("should return install command string for detected distro", async () => {
+      mockDetectDistro.mockResolvedValue({ name: "Debian", family: "debian", packageManager: "apt" as const, version: "13" });
+      vi.mocked(getInstallCommand).mockReturnValue(["sudo", "apt", "install", "-y", "lynis"]);
+
+      const tool: ToolRequirement = {
+        name: "Lynis", binary: "lynis", packages: { debian: "lynis", fallback: "lynis" }, category: "hardening", required: true,
+      };
+      const hint = await getInstallHint(tool);
+      expect(hint).toBe("sudo apt install -y lynis");
+    });
+
+    it("should return null when no package name for distro", async () => {
+      mockDetectDistro.mockResolvedValue({ name: "Unknown", family: "unknown", packageManager: "unknown" as const, version: "" });
+
+      const tool: ToolRequirement = {
+        name: "CustomTool", binary: "custom", packages: {}, category: "assessment", required: false,
+      };
+      const hint = await getInstallHint(tool);
+      expect(hint).toBeNull();
+    });
+  });
+
+  // ── getAlternativesMap ────────────────────────────────────────────────
+
+  describe("getAlternativesMap", () => {
+    it("should map primary tool names to their alternatives (lowercase keys)", () => {
+      const map = getAlternativesMap();
+      // nftables is alternativeFor iptables — key is lowercase
+      expect(map.has("iptables")).toBe(true);
+      const iptablesAlts = map.get("iptables")!;
+      expect(iptablesAlts.some(t => t.name === "nftables")).toBe(true);
+    });
+
+    it("should map snort to suricata alternative", () => {
+      const map = getAlternativesMap();
+      // alternativeFor uses the tool name string "snort" (not capitalized "Snort")
+      expect(map.has("snort")).toBe(true);
+      const snortAlts = map.get("snort")!;
+      expect(snortAlts.some(t => t.name === "Suricata")).toBe(true);
+    });
+
+    it("should not include tools without alternativeFor", () => {
+      const map = getAlternativesMap();
+      // Lynis has no alternativeFor — should not appear as a key
+      expect(map.has("Lynis")).toBe(false);
     });
   });
 });

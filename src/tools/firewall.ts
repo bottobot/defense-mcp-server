@@ -603,7 +603,7 @@ export function registerFirewallTools(server: McpServer): void {
             const ipv6Cmd = `sudo ip6tables -P ${chain} ${policy}`;
 
             // ── SAFETY CHECK: Prevent DROP policy without essential allow rules ──
-            if (policy === "DROP" && (chain === "INPUT" || chain === "FORWARD")) {
+            if (policy === "DROP" && (chain === "INPUT" || chain === "FORWARD" || chain === "OUTPUT")) {
               const safetyRules: Array<{ description: string; checkArgs: string[]; addArgs: string[]; addArgs6?: string[] }> = [];
 
               if (chain === "INPUT") {
@@ -628,6 +628,48 @@ export function registerFirewallTools(server: McpServer): void {
                   addArgs: ["-I", "FORWARD", "1", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
                   addArgs6: ["-I", "FORWARD", "1", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
                 });
+              } else if (chain === "OUTPUT") {
+                // SAFETY: OUTPUT DROP without egress rules will break ALL outbound
+                // traffic including DNS, apt, curl, threat intel feeds, and the MCP
+                // server's own network-dependent tools. Auto-inject essential rules.
+                safetyRules.push(
+                  {
+                    description: "Allow loopback (lo) outbound traffic",
+                    checkArgs: ["-C", "OUTPUT", "-o", "lo", "-j", "ACCEPT"],
+                    addArgs: ["-I", "OUTPUT", "1", "-o", "lo", "-j", "ACCEPT"],
+                    addArgs6: ["-I", "OUTPUT", "1", "-o", "lo", "-j", "ACCEPT"],
+                  },
+                  {
+                    description: "Allow established/related outbound connections",
+                    checkArgs: ["-C", "OUTPUT", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+                    addArgs: ["-I", "OUTPUT", "2", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+                    addArgs6: ["-I", "OUTPUT", "2", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"],
+                  },
+                  {
+                    description: "Allow DNS queries (UDP 53)",
+                    checkArgs: ["-C", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+                    addArgs: ["-I", "OUTPUT", "3", "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+                    addArgs6: ["-I", "OUTPUT", "3", "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+                  },
+                  {
+                    description: "Allow DNS queries (TCP 53)",
+                    checkArgs: ["-C", "OUTPUT", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+                    addArgs: ["-I", "OUTPUT", "4", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+                    addArgs6: ["-I", "OUTPUT", "4", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+                  },
+                  {
+                    description: "Allow HTTPS outbound (TCP 443)",
+                    checkArgs: ["-C", "OUTPUT", "-p", "tcp", "--dport", "443", "-j", "ACCEPT"],
+                    addArgs: ["-I", "OUTPUT", "5", "-p", "tcp", "--dport", "443", "-j", "ACCEPT"],
+                    addArgs6: ["-I", "OUTPUT", "5", "-p", "tcp", "--dport", "443", "-j", "ACCEPT"],
+                  },
+                  {
+                    description: "Allow HTTP outbound (TCP 80, for apt)",
+                    checkArgs: ["-C", "OUTPUT", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                    addArgs: ["-I", "OUTPUT", "6", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                    addArgs6: ["-I", "OUTPUT", "6", "-p", "tcp", "--dport", "80", "-j", "ACCEPT"],
+                  },
+                );
               }
 
               const injectedRules: string[] = [];
