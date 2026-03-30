@@ -1,9 +1,0 @@
-# Site-specific additions and overrides for the Firefox profile.
-# Add rules here to customize the Firefox AppArmor profile without
-# editing the main profile file directly.
-#
-# This file is included by the main profile via:
-#   include if exists <local/usr.bin.firefox>
-#
-# Example: Allow access to a custom download directory
-#   owner /data/downloads/** rw,

@@ -1,2 +1,0 @@
-# Site-specific additions and overrides for the wpa_supplicant profile.
-# include if exists <local/usr.sbin.wpa_supplicant>
