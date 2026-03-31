@@ -20,7 +20,7 @@ import {
   createErrorContent,
   formatToolOutput,
 } from "../core/parsers.js";
-import { logChange, createChangeEntry, getChangelog } from "../core/changelog.js";
+import { logChange, createChangeEntry, getChangelog, verifyChangelog } from "../core/changelog.js";
 import {
   checkAllTools,
   installMissing,
@@ -41,7 +41,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { spawnSafe } from "../core/spawn-safe.js";
-import { secureWriteFileSync } from "../core/secure-fs.js";
+import { secureWriteFileSync, verifySecurePermissions } from "../core/secure-fs.js";
+import { verifyAllBinaries } from "../core/command-allowlist.js";
+import { RateLimiter } from "../core/rate-limiter.js";
 import type { ChildProcess } from "node:child_process";
 
 // Suppress unused import warnings
@@ -962,6 +964,7 @@ export function registerMetaTools(server: McpServer): void {
         "report_formats",
         "check_optional_deps",
         "install_optional_deps",
+        "self_audit",
       ]).describe("Defense management action"),
       // check_tools params
       category: z.string().optional().describe("Filter by tool category"),
@@ -986,6 +989,8 @@ export function registerMetaTools(server: McpServer): void {
       severity_filter: z.enum(["critical", "high", "medium", "low"]).optional().default("medium").describe("Minimum severity to include"),
       session_id: z.string().optional().describe("Remediation session ID"),
       output_format: z.enum(["text", "json"]).optional().default("text").describe("Output format"),
+      // self_audit params
+      verbose: z.boolean().optional().default(false).describe("Include detailed findings in self-audit output"),
       // optional deps params
       tool_name: z.string().optional().describe("Tool binary name to install (omit for all missing)"),
       force: z.boolean().optional().default(false).describe("Force reinstall even if installed"),
@@ -2288,6 +2293,122 @@ export function registerMetaTools(server: McpServer): void {
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             return { content: [createErrorContent(`Optional deps installation failed: ${msg}`)], isError: true };
+          }
+        }
+
+        // ── self_audit ──────────────────────────────────────────────────
+        case "self_audit": {
+          try {
+            const verbose = (params.verbose as boolean | undefined) ?? false;
+            const sections: string[] = [];
+            sections.push("=== Defense MCP Self-Security Audit ===");
+            sections.push("");
+
+            let score = 0;
+            let totalChecks = 0;
+            let warnings = 0;
+
+            // 1. State directory permissions
+            totalChecks++;
+            const stateDir = join(homedir(), ".defense-mcp");
+            const stateDirs = [stateDir, join(stateDir, "backups"), join(stateDir, "quarantine"), join(stateDir, "policies")];
+            sections.push("1. State Directory Permissions");
+            let dirAllOk = true;
+            for (const dir of stateDirs) {
+              if (!existsSync(dir)) {
+                sections.push(`   ${dir}: MISSING (not created yet)`);
+              } else if (verifySecurePermissions(dir)) {
+                if (verbose) sections.push(`   ${dir}: OK (0700)`);
+              } else {
+                sections.push(`   ${dir}: WARN — permissions too open`);
+                dirAllOk = false;
+              }
+            }
+            if (dirAllOk) { score++; sections.push("   Status: OK"); }
+            else { warnings++; sections.push("   Status: WARNING"); }
+            sections.push("");
+
+            // 2. Changelog hash chain integrity
+            totalChecks++;
+            const clResult = verifyChangelog();
+            sections.push("2. Changelog Integrity");
+            sections.push(`   Total entries: ${clResult.totalEntries}`);
+            sections.push(`   Hashed entries: ${clResult.hashedEntries}`);
+            if (clResult.valid) {
+              sections.push("   Chain integrity: VALID");
+              score++;
+            } else {
+              sections.push(`   Chain integrity: BROKEN (${clResult.brokenLinks.length} broken link(s))`);
+              warnings++;
+              if (verbose) {
+                for (const link of clResult.brokenLinks.slice(0, 5)) {
+                  sections.push(`     - Entry ${link.index} (${link.entryId})`);
+                }
+              }
+            }
+            sections.push("");
+
+            // 3. Binary integrity
+            totalChecks++;
+            sections.push("3. Binary Integrity");
+            try {
+              const binResults = await verifyAllBinaries();
+              const verified = binResults.filter(r => r.verified).length;
+              const warnBins = binResults.filter(r => !r.verified).length;
+              const skipped = binResults.length === 0 ? 0 : 0;
+              sections.push(`   Verified: ${verified}, Warnings: ${warnBins}, Total: ${binResults.length}`);
+              if (warnBins === 0) { score++; sections.push("   Status: OK"); }
+              else { warnings++; sections.push("   Status: WARNING"); }
+            } catch {
+              sections.push("   Status: ERROR — could not verify binaries");
+              warnings++;
+            }
+            sections.push("");
+
+            // 4. Configuration security
+            totalChecks++;
+            const cfg = getConfig();
+            sections.push("4. Configuration Security");
+            const cfgChecks: Array<[string, boolean, string]> = [
+              ["dryRun", cfg.dryRun, "safe preview mode"],
+              ["requireConfirmation", cfg.requireConfirmation, "confirm before changes"],
+              ["backupEnabled", cfg.backupEnabled, "backup before modify"],
+              ["redactOutput", cfg.redactOutput, "credential redaction"],
+            ];
+            let cfgAllOk = true;
+            for (const [name, value, desc] of cfgChecks) {
+              if (value) {
+                sections.push(`   [OK]   ${name}: true (${desc})`);
+              } else {
+                sections.push(`   [WARN] ${name}: false — consider enabling in production`);
+                cfgAllOk = false;
+              }
+            }
+            if (cfg.readOnly) {
+              sections.push(`   [INFO] readOnly: true (audit-only mode)`);
+            } else if (verbose) {
+              sections.push(`   [INFO] readOnly: false`);
+            }
+            if (cfgAllOk) score++; else warnings++;
+            sections.push("");
+
+            // 5. Rate limiter status
+            totalChecks++;
+            const rl = RateLimiter.instance();
+            sections.push("5. Rate Limiter");
+            sections.push(`   Per-tool limit: ${rl.maxPerTool}/${Math.round(rl.windowMs / 1000)}s`);
+            sections.push(`   Global limit: ${rl.maxGlobal}/${Math.round(rl.windowMs / 1000)}s`);
+            sections.push("   Status: ACTIVE");
+            score++;
+            sections.push("");
+
+            // Overall score
+            sections.push(`Overall: ${score}/${totalChecks} (${warnings} warning(s))`);
+
+            return { content: [createTextContent(sections.join("\n"))] };
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { content: [createErrorContent(`Self-audit failed: ${msg}`)], isError: true };
           }
         }
 

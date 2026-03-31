@@ -6,6 +6,7 @@ import { getConfig, getToolTimeout } from "./config.js";
 import { SudoSession } from "./sudo-session.js";
 import { SudoGuard } from "./sudo-guard.js";
 import { resolveCommand, resolveSudoCommand } from "./command-allowlist.js";
+import { redactOutput } from "./output-redactor.js";
 
 // ── Askpass helper detection ─────────────────────────────────────────────────
 
@@ -400,6 +401,21 @@ export async function executeCommand(
 
       let stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       let stderr = Buffer.concat(stderrChunks).toString("utf-8");
+
+      // ── Output sanitization: redact credentials before returning to LLM ──
+      if (getConfig().redactOutput) {
+        const stdoutR = redactOutput(stdout);
+        const stderrR = redactOutput(stderr);
+        stdout = stdoutR.text;
+        stderr = stderrR.text;
+        const total = stdoutR.redactionCount + stderrR.redactionCount;
+        if (total > 0) {
+          const patterns = [...new Set([...stdoutR.matchedPatterns, ...stderrR.matchedPatterns])];
+          console.error(
+            `[output-redactor] Redacted ${total} sensitive pattern(s) from '${options.toolName}': ${patterns.join(", ")}`,
+          );
+        }
+      }
 
       if (stdoutCapped) {
         stdout += "\n[OUTPUT TRUNCATED - exceeded max buffer]";

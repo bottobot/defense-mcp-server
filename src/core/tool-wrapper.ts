@@ -29,6 +29,8 @@ import { PrivilegeManager } from "./privilege-manager.js";
 import { SudoGuard } from "./sudo-guard.js";
 import { SudoSession } from "./sudo-session.js";
 import { RateLimiter } from "./rate-limiter.js";
+import { getConfig } from "./config.js";
+import { getToolAnnotations, isReadOnlyTool } from "./tool-annotations.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -195,6 +197,19 @@ function createWrappedToolMethod(
 
     const toolName = args[0] as string;
 
+    // ── Tool filtering (read-only mode & allowlisting) ──────────────
+    const config = getConfig();
+
+    if (config.allowedTools.length > 0 && !config.allowedTools.includes(toolName)) {
+      console.error(`[tool-filter] Skipping '${toolName}' — not in DEFENSE_MCP_ALLOWED_TOOLS`);
+      return undefined;
+    }
+
+    if (config.readOnly && !isReadOnlyTool(toolName)) {
+      console.error(`[tool-filter] Skipping destructive tool '${toolName}' — read-only mode`);
+      return undefined;
+    }
+
     // ── Bypass check ─────────────────────────────────────────────────
     if (shouldBypassPreflight(toolName, ctx)) {
       return originalTool(...args);
@@ -214,6 +229,13 @@ function createWrappedToolMethod(
     // Reconstruct args with the wrapped handler in the last position
     const wrappedArgs = [...args];
     wrappedArgs[wrappedArgs.length - 1] = wrappedHandler;
+
+    // ── Auto-inject tool annotations ────────────────────────────────
+    const annotations = getToolAnnotations(toolName);
+    if (annotations) {
+      // Insert annotations before the handler (last position)
+      wrappedArgs.splice(wrappedArgs.length - 1, 0, annotations);
+    }
 
     return originalTool(...wrappedArgs);
   };

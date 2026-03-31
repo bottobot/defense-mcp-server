@@ -80,6 +80,22 @@ export interface DefenseConfig {
   commandTimeout: number;
   /** Network operation timeout in ms (default: 30s; env: DEFENSE_MCP_NETWORK_TIMEOUT) */
   networkTimeout: number;
+  /**
+   * SECURITY: Redact sensitive data (passwords, tokens, keys) from command
+   * output before returning to the LLM. Defaults to `true`.
+   * Env: DEFENSE_MCP_REDACT_OUTPUT (set to "false" to disable)
+   */
+  redactOutput: boolean;
+  /**
+   * When true, only register tools with readOnlyHint: true annotations.
+   * Env: DEFENSE_MCP_READ_ONLY (default: false)
+   */
+  readOnly: boolean;
+  /**
+   * Comma-separated list of tool names to register. Empty means all tools.
+   * Env: DEFENSE_MCP_ALLOWED_TOOLS (default: "")
+   */
+  allowedTools: string[];
 }
 
 /**
@@ -269,6 +285,12 @@ function buildConfigFromEnv(): DefenseConfig {
     networkTimeout: (() => {
       const sec = parseInt(process.env.DEFENSE_MCP_NETWORK_TIMEOUT ?? "30", 10);
       return isNaN(sec) || sec <= 0 ? 30_000 : sec * 1000;
+    })(),
+    redactOutput: process.env.DEFENSE_MCP_REDACT_OUTPUT !== "false",
+    readOnly: process.env.DEFENSE_MCP_READ_ONLY === "true",
+    allowedTools: (() => {
+      const raw = process.env.DEFENSE_MCP_ALLOWED_TOOLS ?? "";
+      return raw.split(",").map(s => s.trim()).filter(s => s.length > 0);
     })(),
   };
 
