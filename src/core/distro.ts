@@ -33,8 +33,6 @@ export type SpecificDistro =
 export type PackageManagerName =
   | "apt" | "dnf" | "yum" | "pacman" | "brew" | "apk" | "zypper" | "unknown";
 
-/** @deprecated Use PackageManagerName. Kept for backwards compatibility. */
-export type PackageManager = PackageManagerName;
 
 // ── Init System ──────────────────────────────────────────────────────────────
 
@@ -477,55 +475,6 @@ export async function getFirewallBackend(): Promise<FirewallBackendCommands> {
   if (hasIptables) return buildFirewallBackend("iptables");
   if (hasPf) return buildFirewallBackend("pf");
   return buildFirewallBackend("unknown");
-}
-
-// ── Capability detection ─────────────────────────────────────────────────────
-
-async function safeCap(fn: () => Promise<boolean>): Promise<boolean> {
-  try { return await fn(); } catch { return false; }
-}
-
-async function fileReadable(path: string): Promise<boolean> {
-  try { await readFile(path, "utf-8"); return true; } catch { return false; }
-}
-
-export async function canUseAppArmor(): Promise<boolean> {
-  return safeCap(async () => (await binaryExists("apparmor_status")) || (await fileReadable("/sys/kernel/security/apparmor")));
-}
-
-export async function canUseSELinux(): Promise<boolean> {
-  return safeCap(async () => (await binaryExists("getenforce")) || (await fileReadable("/sys/fs/selinux")));
-}
-
-export async function canUseAuditd(): Promise<boolean> {
-  return safeCap(() => binaryExists("auditctl"));
-}
-
-export async function canUseSystemd(): Promise<boolean> {
-  return safeCap(async () => existsSync("/run/systemd/system"));
-}
-
-export async function canUseIPTables(): Promise<boolean> {
-  return safeCap(() => binaryExists("iptables"));
-}
-
-export async function canUseNFTables(): Promise<boolean> {
-  return safeCap(() => binaryExists("nft"));
-}
-
-export async function canUseBPF(): Promise<boolean> {
-  return safeCap(async () => (await binaryExists("bpftool")) || existsSync("/sys/fs/bpf"));
-}
-
-export async function hasTPM(): Promise<boolean> {
-  return safeCap(async () => existsSync("/dev/tpm0") || existsSync("/dev/tpmrm0"));
-}
-
-export async function hasSecureBoot(): Promise<boolean> {
-  return safeCap(async () => {
-    const r = await executeCommand({ toolName: "_internal", command: "mokutil", args: ["--sb-state"], timeout: 5000 });
-    return r.exitCode === 0 && r.stdout.toLowerCase().includes("secureboot enabled");
-  });
 }
 
 // ── Legacy helpers (backwards compatibility) ─────────────────────────────────
