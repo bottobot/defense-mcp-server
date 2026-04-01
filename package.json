@@ -25,6 +25,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "knip": "knip",
     "lint:security": "eslint src/ --max-warnings=0",
     "audit:security": "npm audit --audit-level=high",
     "changelog:check": "git diff HEAD~1 --name-only | grep -q CHANGELOG.md || echo 'Warning: CHANGELOG.md not updated'",
