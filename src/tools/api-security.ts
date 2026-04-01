@@ -10,7 +10,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
+import { runCommand, type CommandResult } from "../core/run-command.js";
 import {
   createTextContent,
   createErrorContent,
@@ -33,67 +33,6 @@ const COMMON_API_PATHS = [
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-/**
- * Run a command via spawnSafe and collect output as a promise.
- * Handles errors gracefully — returns error info instead of throwing.
- */
-async function runCommand(
-  command: string,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawnSafe(command, args);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: msg, exitCode: -1 });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill("SIGTERM");
-        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: err.message, exitCode: -1 });
-      }
-    });
-  });
-}
 
 /**
  * Validate and normalize a target URL.
@@ -994,7 +933,7 @@ export function registerApiSecurityTools(server: McpServer): void {
             text += `Auth Type: ${authResult.authType}\n`;
             text += `Status without auth: ${authResult.statusWithoutAuth}\n`;
             text += `Status with auth: ${authResult.statusWithAuth}\n`;
-            text += `Verbose Errors: ${authResult.verboseErrors ? "YES ⚠" : "no"}\n`;
+            text += `Verbose Errors: ${authResult.verboseErrors ? "YES WARNING" : "no"}\n`;
 
             if (authResult.errorDetails.length > 0) {
               text += `\nError Details:\n`;
@@ -1191,8 +1130,8 @@ export function registerApiSecurityTools(server: McpServer): void {
               text += `Allow-Origin: ${corsResult.allowOrigin}\n`;
               text += `Allow-Credentials: ${corsResult.allowCredentials}\n`;
               text += `Allow-Methods: ${corsResult.allowMethods || "not specified"}\n`;
-              text += `Wildcard Origin: ${corsResult.wildcardOrigin ? "YES ⚠" : "no"}\n`;
-              text += `Origin Reflection: ${corsResult.originReflection ? "YES ⚠" : "no"}\n`;
+              text += `Wildcard Origin: ${corsResult.wildcardOrigin ? "YES WARNING" : "no"}\n`;
+              text += `Origin Reflection: ${corsResult.originReflection ? "YES WARNING" : "no"}\n`;
             }
 
             if (corsResult.criticalIssues.length > 0) {

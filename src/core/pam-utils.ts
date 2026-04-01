@@ -166,7 +166,7 @@ export function parsePamConfig(content: string): PamLine[] {
       result.push(rule);
     } else {
       // Unparseable line — preserve as comment to prevent data loss
-      console.error(`[pam-utils] WARNING: Could not parse PAM line, preserving as-is: ${raw}`);
+      console.error(`[pam-utils] Could not parse PAM line, preserving as-is: ${raw}`);
       result.push({ kind: "comment", text: raw });
     }
   }

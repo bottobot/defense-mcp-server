@@ -12,7 +12,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as crypto from "node:crypto";
-import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
+import { runCommand, type CommandResult } from "../core/run-command.js";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 import {
   createTextContent,
@@ -52,67 +52,6 @@ interface CanaryRegistry {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-/**
- * Run a command via spawnSafe and collect output as a promise.
- * Handles errors gracefully — returns error info instead of throwing.
- */
-async function runCommand(
-  command: string,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawnSafe(command, args);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: msg, exitCode: -1 });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill("SIGTERM");
-        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: err.message, exitCode: -1 });
-      }
-    });
-  });
-}
 
 /**
  * Generate a unique canary ID based on timestamp and cryptographic random suffix.
@@ -774,7 +713,7 @@ export function registerDeceptionTools(server: McpServer): void {
             text += `Canary ID: ${deployResult.canaryId}\n`;
             text += `Type: ${deployResult.type}\n`;
             text += `Path: ${deployResult.path}\n`;
-            text += `Monitoring: ${deployResult.monitoringSetup ? "active ✓" : "not set up ⚠"}\n`;
+            text += `Monitoring: ${deployResult.monitoringSetup ? "active OK" : "not set up WARNING"}\n`;
             text += `Details: ${deployResult.monitoringDetails}\n`;
             text += `\n${deployResult.description}\n`;
 
@@ -818,7 +757,7 @@ export function registerDeceptionTools(server: McpServer): void {
             text += `Port: ${honeyResult.port}\n`;
             text += `Listener PID: ${honeyResult.listenerPid ?? "unknown"}\n`;
             text += `Log Path: ${honeyResult.logPath}\n`;
-            text += `Iptables LOG Rule: ${honeyResult.iptablesRuleAdded ? "added ✓" : "not added ⚠"}\n`;
+            text += `Iptables LOG Rule: ${honeyResult.iptablesRuleAdded ? "added OK" : "not added WARNING"}\n`;
             text += `\n${honeyResult.description}\n`;
 
             return { content: [createTextContent(text)] };
@@ -852,7 +791,7 @@ export function registerDeceptionTools(server: McpServer): void {
             text += `Not Triggered: ${triggerResult.notTriggered.length}\n\n`;
 
             if (triggerResult.triggered.length > 0) {
-              text += "⚠ TRIGGERED CANARIES:\n";
+              text += "WARNING: TRIGGERED CANARIES:\n";
               for (const t of triggerResult.triggered) {
                 text += `\n  • ${t.id} [${t.type}] — Severity: ${t.severity}\n`;
                 if (t.path) text += `    Path: ${t.path}\n`;
@@ -917,12 +856,12 @@ export function registerDeceptionTools(server: McpServer): void {
               text += `Canary ${canaryId} not found in registry\n`;
             } else {
               text += `Canary ID: ${removeResult.canaryId}\n`;
-              text += `File/Directory Removed: ${removeResult.fileRemoved ? "yes ✓" : "no"}\n`;
+              text += `File/Directory Removed: ${removeResult.fileRemoved ? "yes OK" : "no"}\n`;
               if (removeResult.listenerKilled) {
-                text += `Listener Killed: yes ✓\n`;
+                text += `Listener Killed: yes OK\n`;
               }
               if (removeResult.iptablesRemoved) {
-                text += `Iptables Rule Removed: yes ✓\n`;
+                text += `Iptables Rule Removed: yes OK\n`;
               }
               text += `\n${removeResult.description}\n`;
             }

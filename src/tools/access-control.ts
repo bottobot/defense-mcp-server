@@ -1010,8 +1010,8 @@ export function registerAccessControlTools(server: McpServer): void {
                   ? "CRITICAL: Weak SSH algorithms detected. Apply Mozilla Modern SSH configuration immediately."
                   : warnCount > 0
                   ? "WARNING: SSH algorithms not explicitly configured. Set explicit algorithms in sshd_config."
-                  : "PASS: SSH cryptographic configuration meets modern standards.",
-              }, null, 2))],
+                  : "SSH cryptographic configuration meets modern standards.",
+              }))],
             };
           } catch (error) {
             return {
@@ -1331,7 +1331,7 @@ export function registerAccessControlTools(server: McpServer): void {
                     createTextContent(
                       `[DRY-RUN] Would write the following to ${targetFile}:\n\n` +
                         configLines.map((l) => `  ${l}`).join("\n") +
-                        (pwqSanityWarnings ? `\n\n⚠️ Sanity warnings:\n${pwqSanityWarnings}` : "")
+                        (pwqSanityWarnings ? `\n\nWARNING: Sanity warnings:\n${pwqSanityWarnings}` : "")
                     ),
                   ],
                 };
@@ -1388,7 +1388,7 @@ export function registerAccessControlTools(server: McpServer): void {
                     createTextContent(
                       `pam_pwquality configured in ${targetFile}:\n\n` +
                         configLines.map((l) => `  ${l}`).join("\n") +
-                        (pwqSanityWarnings ? `\n\n⚠️ Sanity warnings:\n${pwqSanityWarnings}` : "")
+                        (pwqSanityWarnings ? `\n\nWARNING: Sanity warnings:\n${pwqSanityWarnings}` : "")
                     ),
                   ],
                 };
@@ -1475,7 +1475,7 @@ export function registerAccessControlTools(server: McpServer): void {
                     `[DRY-RUN] Would add/update pam_faillock.so in ${targetFile}:\n\n` +
                       `  ${preLine}\n  ${authLine}\n\n` +
                       `Settings: ${JSON.stringify(merged)}` +
-                      (flSanityWarnings ? `\n\n⚠️ Sanity warnings:\n${flSanityWarnings}` : "")
+                      (flSanityWarnings ? `\n\nWARNING: Sanity warnings:\n${flSanityWarnings}` : "")
                   ),
                 ],
               };
@@ -1553,7 +1553,7 @@ export function registerAccessControlTools(server: McpServer): void {
                       `  ${preLine}\n  ${authLine}\n\n` +
                       `Settings: ${JSON.stringify(merged)}\n` +
                       `Backup: ${backupEntry.backupPath}` +
-                      (flSanityWarnings ? `\n\n⚠️ Sanity warnings:\n${flSanityWarnings}` : "")
+                      (flSanityWarnings ? `\n\nWARNING: Sanity warnings:\n${flSanityWarnings}` : "")
                   ),
                 ],
               };

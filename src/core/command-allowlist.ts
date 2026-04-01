@@ -1042,7 +1042,7 @@ export async function verifyAllBinaries(): Promise<BinaryVerificationResult[]> {
       verified++;
     } else {
       warnings++;
-      console.error(`[binary-integrity] ⚠ ${result.message}`);
+      console.error(`[binary-integrity] WARNING: ${result.message}`);
     }
   }
 

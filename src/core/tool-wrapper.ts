@@ -280,7 +280,7 @@ function createWrappedHandler(
         content: [
           {
             type: "text" as const,
-            text: `⚠ Rate limit exceeded\n\n${rateLimitResult.reason}`,
+            text: `WARNING: Rate limit exceeded\n\n${rateLimitResult.reason}`,
           },
         ],
         isError: true,
@@ -391,14 +391,14 @@ function createWrappedHandler(
       // Pre-flight itself threw — return error instead of running without dependency checking
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(
-        `[preflight] ⚠ Pre-flight failed unexpectedly for '${toolName}': ${errMsg}`,
+        `[preflight] WARNING: Pre-flight failed unexpectedly for '${toolName}': ${errMsg}`,
       );
 
       return {
         content: [
           {
             type: "text" as const,
-            text: `⚠ Pre-flight internal error for '${toolName}'\n\nThe pre-flight dependency checking system encountered an unexpected error and the tool was not executed.\n\nError: ${errMsg}\n\nPlease retry the operation or check the pre-flight configuration. If this persists, the tool's dependency manifest may need attention.`,
+            text: `WARNING: Pre-flight internal error for '${toolName}'\n\nThe pre-flight dependency checking system encountered an unexpected error and the tool was not executed.\n\nError: ${errMsg}\n\nPlease retry the operation or check the pre-flight configuration. If this persists, the tool's dependency manifest may need attention.`,
           },
         ],
         isError: true,

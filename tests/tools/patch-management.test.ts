@@ -257,7 +257,7 @@ describe("patch-management tools", () => {
 
       expect(output.summary.pass).toBeGreaterThanOrEqual(3);
       expect(output.summary.fail).toBe(0);
-      expect(output.recommendation).toContain("PASS");
+      expect(output.recommendation).toContain("properly configured");
     });
 
     it("should report not installed unattended-upgrades", async () => {

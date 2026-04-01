@@ -439,7 +439,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
               }
             }
 
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, fail: findings.filter(f => f.status === "FAIL").length }, ipv6Enabled: !disabled, findings }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, fail: findings.filter(f => f.status === "FAIL").length }, ipv6Enabled: !disabled, findings }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
@@ -632,7 +632,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             if (violations.length > 0) {
               text += `--- Violations ---\n`;
               for (const v of violations) {
-                text += `  ⚠ ${v}\n`;
+                text += `  WARNING: ${v}\n`;
               }
             }
             if (natBypasses.length > 0) {
@@ -791,7 +791,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
             if (concerns.length > 0) {
               text += `--- Security Concerns ---\n`;
               for (const c of concerns) {
-                text += `  ⚠ ${c}\n`;
+                text += `  WARNING: ${c}\n`;
               }
             }
 

@@ -556,10 +556,10 @@ describe("container-security tools", () => {
         .mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "" }); // apparmor-utils not installed
       const handler = tools.get("container_isolation")!.handler;
       const result = await handler({ action: "apparmor_status" });
-      expect(result.content[0].text).toContain("AppArmor enabled: \u2705 Yes");
-      expect(result.content[0].text).toContain("Kernel module: \u2705 Loaded");
-      expect(result.content[0].text).toContain("apparmor-profiles: \u2705 Installed");
-      expect(result.content[0].text).toContain("apparmor-utils: \u274c Not installed");
+      expect(result.content[0].text).toContain("AppArmor enabled: Yes");
+      expect(result.content[0].text).toContain("Kernel module: Loaded");
+      expect(result.content[0].text).toContain("apparmor-profiles: Installed");
+      expect(result.content[0].text).toContain("apparmor-utils: Not installed");
     });
 
     it("should report AppArmor disabled when not enabled", async () => {
@@ -573,7 +573,7 @@ describe("container-security tools", () => {
         .mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "" });
       const handler = tools.get("container_isolation")!.handler;
       const result = await handler({ action: "apparmor_status" });
-      expect(result.content[0].text).toContain("AppArmor enabled: \u274c No");
+      expect(result.content[0].text).toContain("AppArmor enabled: No");
     });
   });
 

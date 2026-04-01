@@ -104,7 +104,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    `🔓 Already elevated as '${status.username}'.\n` +
+                    `Already elevated as '${status.username}'.\n` +
                     `Session expires at: ${status.expiresAt ?? "never"}\n` +
                     `Remaining: ${status.remainingSeconds !== null ? `${status.remainingSeconds}s` : "∞"}\n\n` +
                     `Use sudo_session action=drop to end the current session before re-elevating.`
@@ -123,7 +123,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createErrorContent(
-                    `❌ Authentication rate limit exceeded.\n\n` +
+                    `Authentication rate limit exceeded.\n\n` +
                     `Too many failed attempts were detected within the last 5 minutes.\n` +
                     `Please wait until ${resetAt} before trying again.\n\n` +
                     `For security, this lockout cannot be bypassed.\n` +
@@ -148,7 +148,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               invalidatePreflightCaches();
               const status = session.getStatus();
               const lines: string[] = [
-                `🔓 Privileges elevated successfully!`,
+                `Privileges elevated successfully!`,
                 ``,
                 `  User: ${status.username}`,
                 `  Expires: ${status.expiresAt ?? "never (running as root)"}`,
@@ -172,7 +172,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createErrorContent(
-                    `❌ Authentication rate limit exceeded.\n\n` +
+                    `Authentication rate limit exceeded.\n\n` +
                     `Too many failed attempts. Please wait until ${resetAt} before retrying.\n\n` +
                     `For security, this lockout cannot be bypassed.`
                   ),
@@ -195,7 +195,7 @@ export function registerSudoManagementTools(server: McpServer): void {
             return {
               content: [
                 createErrorContent(
-                  `❌ Authentication failed: ${result.error}\n\n` +
+                  `Authentication failed: ${result.error}\n\n` +
                   `${attemptsLine}\n\n` +
                   `Please verify:\n` +
                   `  1. The password is correct\n` +
@@ -236,7 +236,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    `🔓 Already elevated as '${status.username}'.\n` +
+                    `Already elevated as '${status.username}'.\n` +
                     `Session expires at: ${status.expiresAt ?? "never"}\n` +
                     `Remaining: ${status.remainingSeconds !== null ? `${status.remainingSeconds}s` : "∞"}\n\n` +
                     `Use sudo_session action=drop to end the current session before re-elevating.`
@@ -254,7 +254,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createErrorContent(
-                    `❌ Authentication rate limit exceeded.\n\n` +
+                    `Authentication rate limit exceeded.\n\n` +
                     `Too many failed attempts. Please wait until ${resetAt} before retrying.`
                   ),
                 ],
@@ -273,7 +273,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createErrorContent(
-                    `❌ GUI elevation is not available — no graphical session detected.\n\n` +
+                    `GUI elevation is not available — no graphical session detected.\n\n` +
                     `Could not find DISPLAY or WAYLAND_DISPLAY in the current process\n` +
                     `or any desktop session process (gnome-shell, plasmashell, etc.).\n\n` +
                     `Use sudo_session action=elevate with your password instead.`
@@ -289,7 +289,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createErrorContent(
-                    `❌ No GUI password dialog tool found.\n\n` +
+                    `No GUI password dialog tool found.\n\n` +
                     `Install one of: zenity, kdialog, or ssh-askpass\n` +
                     `  sudo apt install zenity    # GNOME/GTK\n` +
                     `  sudo apt install kdialog   # KDE/Qt\n\n` +
@@ -312,7 +312,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createErrorContent(
-                    `❌ Password dialog was cancelled or timed out.\n\n` +
+                    `Password dialog was cancelled or timed out.\n\n` +
                     `No password was entered. Try again with:\n` +
                     `  sudo_session action=elevate_gui\n\n` +
                     `Or provide your password directly with:\n` +
@@ -338,7 +338,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    `🔓 Privileges elevated successfully!\n\n` +
+                    `Privileges elevated successfully!\n\n` +
                     `  User: ${status.username}\n` +
                     `  Expires: ${status.expiresAt ?? "never (running as root)"}\n` +
                     `  Timeout: ${timeout_minutes} minutes\n` +
@@ -359,7 +359,7 @@ export function registerSudoManagementTools(server: McpServer): void {
             return {
               content: [
                 createErrorContent(
-                  `❌ Authentication failed: ${result.error}\n\n` +
+                  `Authentication failed: ${result.error}\n\n` +
                   `${attemptsLine}\n\n` +
                   `The password was securely wiped. Please try again.`
                 ),
@@ -385,7 +385,7 @@ export function registerSudoManagementTools(server: McpServer): void {
             if (!status.elevated) {
               const rlLines: string[] = [];
               if (rl.limited) {
-                rlLines.push(`  ⚠️  Rate limit ACTIVE — elevation blocked`);
+                rlLines.push(`  WARNING: Rate limit ACTIVE — elevation blocked`);
                 rlLines.push(`     Unlocks at: ${rl.resetAt ? new Date(rl.resetAt).toLocaleTimeString() : "unknown"}`);
               } else {
                 rlLines.push(`  Rate limit: ${rl.attemptsRemaining} attempts remaining`);
@@ -394,7 +394,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    `🔒 Not elevated — sudo credentials are not cached.\n\n` +
+                    `Not elevated — sudo credentials are not cached.\n\n` +
                     rlLines.join("\n") + "\n\n" +
                     `Use sudo_session action=elevate to provide your password and enable\n` +
                     `transparent sudo for all defensive security tools.`
@@ -404,8 +404,8 @@ export function registerSudoManagementTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push("🔓 Sudo Session Active");
-            sections.push("═".repeat(40));
+            sections.push("Sudo Session Active");
+            sections.push("");
             sections.push(`  User: ${status.username}`);
             sections.push(`  Expires: ${status.expiresAt ?? "never (root)"}`);
             sections.push(`  Auth method: password (sudo -S)`);
@@ -416,7 +416,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               sections.push(`  Remaining: ${mins}m ${secs}s`);
 
               if (status.remainingSeconds < 120) {
-                sections.push(`\n  ⚠️ Session expiring soon! Use sudo_session action=extend to continue.`);
+                sections.push(`\n  Session expiring soon! Use sudo_session action=extend to continue.`);
               }
             } else {
               sections.push(`  Remaining: ∞ (running as root)`);
@@ -449,7 +449,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    `🔒 Privileges dropped successfully.\n\n` +
+                    `Privileges dropped successfully.\n\n` +
                     `  Previous user: ${prevStatus.username}\n` +
                     `  Password buffer: zeroed\n` +
                     `  System sudo cache: invalidated\n\n` +
@@ -462,7 +462,7 @@ export function registerSudoManagementTools(server: McpServer): void {
             return {
               content: [
                 createTextContent(
-                  `🔒 No active sudo session to drop.\n` +
+                  `No active sudo session to drop.\n` +
                   `The system is already in an unprivileged state.`
                 ),
               ],
@@ -486,7 +486,7 @@ export function registerSudoManagementTools(server: McpServer): void {
               return {
                 content: [
                   createErrorContent(
-                    `🔒 No active sudo session to extend.\n\n` +
+                    `No active sudo session to extend.\n\n` +
                     `Use sudo_session action=elevate to provide your password and start a session first.`
                   ),
                 ],
@@ -517,7 +517,7 @@ export function registerSudoManagementTools(server: McpServer): void {
             return {
               content: [
                 createTextContent(
-                  `🔓 Session extended by ${minutes} minutes.\n\n` +
+                  `Session extended by ${minutes} minutes.\n\n` +
                   `  User: ${status.username}\n` +
                   `  New expiry: ${status.expiresAt ?? "never (root)"}\n` +
                   `  Remaining: ${status.remainingSeconds !== null ? `${Math.floor(status.remainingSeconds / 60)}m ${status.remainingSeconds % 60}s` : "∞"}`
@@ -620,27 +620,27 @@ export function registerSudoManagementTools(server: McpServer): void {
 
             // Build report
             const lines: string[] = [];
-            lines.push("🔍 Pre-flight Batch Check Results");
-            lines.push("═".repeat(50));
+            lines.push("Pre-flight Batch Check Results");
+            lines.push("");
             lines.push(`Checked: ${toolNames.length} tools`);
-            lines.push(`  ✅ Ready: ${ready.length}`);
-            lines.push(`  🔒 Need sudo: ${needSudo.length}`);
-            lines.push(`  📦 Missing deps: ${needDeps.length}`);
+            lines.push(`  Ready: ${ready.length}`);
+            lines.push(`  Need sudo: ${needSudo.length}`);
+            lines.push(`  Missing deps: ${needDeps.length}`);
             if (otherFails.length > 0) {
-              lines.push(`  ❌ Other issues: ${otherFails.length}`);
+              lines.push(`  Other issues: ${otherFails.length}`);
             }
 
             // Section: Tools that need sudo elevation
             if (needSudo.length > 0) {
               lines.push("");
-              lines.push("🛑 SUDO ELEVATION REQUIRED");
-              lines.push("─".repeat(50));
+              lines.push("SUDO ELEVATION REQUIRED");
+              lines.push("");
               lines.push("The following tools need sudo privileges.");
               lines.push("Call sudo_session action=elevate with the user's password BEFORE");
               lines.push("executing any of these tools:");
               lines.push("");
               for (const r of needSudo) {
-                lines.push(`  🔒 ${r.tool}`);
+                lines.push(`  ${r.tool}`);
                 if (r.sudoReason) {
                   lines.push(`     Reason: ${r.sudoReason}`);
                 }
@@ -653,10 +653,10 @@ export function registerSudoManagementTools(server: McpServer): void {
             // Section: Missing dependencies
             if (needDeps.length > 0) {
               lines.push("");
-              lines.push("📦 MISSING DEPENDENCIES");
-              lines.push("─".repeat(50));
+              lines.push("MISSING DEPENDENCIES");
+              lines.push("");
               for (const r of needDeps) {
-                lines.push(`  ❌ ${r.tool}`);
+                lines.push(`  ${r.tool}`);
                 for (const dep of r.missingDeps) {
                   lines.push(`     Missing: ${dep}`);
                 }
@@ -669,10 +669,10 @@ export function registerSudoManagementTools(server: McpServer): void {
             // Section: Ready tools
             if (ready.length > 0) {
               lines.push("");
-              lines.push("✅ READY TO EXECUTE");
-              lines.push("─".repeat(50));
+              lines.push("READY TO EXECUTE");
+              lines.push("");
               for (const r of ready) {
-                lines.push(`  ✅ ${r.tool}`);
+                lines.push(`  ${r.tool}`);
               }
             }
 

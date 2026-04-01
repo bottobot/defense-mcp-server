@@ -125,7 +125,7 @@ describe("formatToolOutput", () => {
     const bigData = { items: Array.from({ length: 5000 }, (_, i) => ({ id: i, name: "x".repeat(50) })) };
     const result = formatToolOutput(bigData);
     // Full JSON is preserved — no mid-JSON truncation
-    expect(result.text).toBe(JSON.stringify(bigData, null, 2));
+    expect(result.text).toBe(JSON.stringify(bigData));
     expect(result.text).not.toContain("[OUTPUT TRUNCATED:");
   });
 
@@ -133,7 +133,7 @@ describe("formatToolOutput", () => {
     const normalData = { key: "value", nested: { a: 1, b: 2 } };
     const result = formatToolOutput(normalData);
     expect(result.text).not.toContain("[OUTPUT TRUNCATED:");
-    expect(result.text).toBe(JSON.stringify(normalData, null, 2));
+    expect(result.text).toBe(JSON.stringify(normalData));
   });
 });
 

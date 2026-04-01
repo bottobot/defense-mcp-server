@@ -10,7 +10,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
+import { runCommand, type CommandResult } from "../core/run-command.js";
 import {
   createTextContent,
   createErrorContent,
@@ -54,67 +54,6 @@ const OWASP_CRS_PATHS = [
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-/**
- * Run a command via spawnSafe and collect output as a promise.
- * Handles errors gracefully — returns error info instead of throwing.
- */
-async function runCommand(
-  command: string,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawnSafe(command, args);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: msg, exitCode: -1 });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill("SIGTERM");
-        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: err.message, exitCode: -1 });
-      }
-    });
-  });
-}
 
 /**
  * Run a command via sudo through spawnSafe.
@@ -140,8 +79,8 @@ async function handleModsecAudit(
     const sections: string[] = [];
     const jsonData: Record<string, unknown> = {};
 
-    sections.push("🛡️ ModSecurity WAF Audit");
-    sections.push("=".repeat(55));
+    sections.push("ModSecurity WAF Audit");
+    sections.push("");
     sections.push(`Web Server: ${webServer}`);
 
     // Check if ModSecurity is installed
@@ -165,12 +104,12 @@ async function handleModsecAudit(
         const testResult = await runCommand("test", ["-f", confPath]);
         if (testResult.exitCode === 0) {
           configFound = true;
-          sections.push(`  ⚠️ ModSecurity package not found via dpkg, but config exists: ${confPath}`);
+          sections.push(`  ModSecurity package not found via dpkg, but config exists: ${confPath}`);
           break;
         }
       }
       if (!configFound) {
-        sections.push("  ❌ ModSecurity is NOT installed");
+        sections.push("  ModSecurity is NOT installed");
         sections.push("  Install with:");
         if (webServer === "nginx") {
           sections.push("    sudo apt install libnginx-mod-security");
@@ -185,7 +124,7 @@ async function handleModsecAudit(
         return { content: [createTextContent(sections.join("\n"))] };
       }
     } else {
-      sections.push("  ✅ ModSecurity is installed");
+      sections.push("  ModSecurity is installed");
     }
 
     // Read ModSecurity configuration
@@ -213,13 +152,13 @@ async function handleModsecAudit(
       jsonData.engine_mode = engineMode;
 
       if (engineMode === "On") {
-        sections.push("  ✅ SecRuleEngine: On (active protection)");
+        sections.push("  SecRuleEngine: On (active protection)");
       } else if (engineMode === "DetectionOnly") {
-        sections.push("  ⚠️ SecRuleEngine: DetectionOnly (logging only, not blocking)");
+        sections.push("  SecRuleEngine: DetectionOnly (logging only, not blocking)");
       } else if (engineMode === "Off") {
-        sections.push("  ❌ SecRuleEngine: Off (WAF disabled!)");
+        sections.push("  SecRuleEngine: Off (WAF disabled!)");
       } else {
-        sections.push(`  ❓ SecRuleEngine: ${engineMode}`);
+        sections.push(`  SecRuleEngine: ${engineMode}`);
       }
 
       // Check audit logging
@@ -261,14 +200,14 @@ async function handleModsecAudit(
 
       jsonData.issues = issues;
       if (issues.length === 0) {
-        sections.push("  ✅ No common misconfigurations detected");
+        sections.push("  No common misconfigurations detected");
       } else {
         for (const issue of issues) {
-          sections.push(`  ⚠️ ${issue}`);
+          sections.push(`  WARNING: ${issue}`);
         }
       }
     } else {
-      sections.push("  ❌ No ModSecurity configuration file found");
+      sections.push("  No ModSecurity configuration file found");
       sections.push("  Searched paths:");
       for (const p of confPaths) {
         sections.push(`    - ${p}`);
@@ -300,8 +239,8 @@ async function handleModsecRules(
     const sections: string[] = [];
     const jsonData: Record<string, unknown> = {};
 
-    sections.push("📋 ModSecurity Rules Management");
-    sections.push("=".repeat(55));
+    sections.push("ModSecurity Rules Management");
+    sections.push("");
 
     switch (ruleAction) {
       case "list": {
@@ -322,7 +261,7 @@ async function handleModsecRules(
               .filter((f) => f && f.endsWith(".conf"));
 
             for (const file of files) {
-              sections.push(`    📄 ${file}`);
+              sections.push(`    ${file}`);
               allFiles.push(`${rulesDir}/${file}`);
             }
 
@@ -336,7 +275,7 @@ async function handleModsecRules(
         jsonData.total_files = allFiles.length;
 
         if (allFiles.length === 0) {
-          sections.push("\n  ❌ No rule files found in standard directories");
+          sections.push("\n  No rule files found in standard directories");
           sections.push("  Searched:");
           for (const d of MODSEC_RULES_DIRS) {
             sections.push(`    - ${d}`);
@@ -386,7 +325,7 @@ async function handleModsecRules(
 
         if (ruleAction === "disable") {
           if (hasRemoveDirective) {
-            sections.push(`  ℹ️ Rule ${ruleId} is already disabled`);
+            sections.push(`  INFO: Rule ${ruleId} is already disabled`);
             jsonData.status = "already_disabled";
           } else {
             // Append SecRuleRemoveById to config
@@ -395,12 +334,12 @@ async function handleModsecRules(
               `echo '${removeDirective}' >> ${activeConfPath}`,
             ]);
             if (appendResult.exitCode === 0) {
-              sections.push(`  ✅ Rule ${ruleId} disabled (added ${removeDirective})`);
+              sections.push(`  Rule ${ruleId} disabled (added ${removeDirective})`);
               sections.push(`  Config: ${activeConfPath}`);
-              sections.push(`  ⚠️ Reload ${webServer} to apply: sudo systemctl reload ${webServer}`);
+              sections.push(`  Reload ${webServer} to apply: sudo systemctl reload ${webServer}`);
               jsonData.status = "disabled";
             } else {
-              sections.push(`  ❌ Failed to disable rule: ${appendResult.stderr}`);
+              sections.push(`  Failed to disable rule: ${appendResult.stderr}`);
               jsonData.status = "error";
               jsonData.error = appendResult.stderr;
             }
@@ -408,7 +347,7 @@ async function handleModsecRules(
         } else {
           // enable — remove the SecRuleRemoveById directive
           if (!hasRemoveDirective) {
-            sections.push(`  ℹ️ Rule ${ruleId} is already enabled (no removal directive found)`);
+            sections.push(`  INFO: Rule ${ruleId} is already enabled (no removal directive found)`);
             jsonData.status = "already_enabled";
           } else {
             const sedResult = await runSudoCommand("sed", [
@@ -417,12 +356,12 @@ async function handleModsecRules(
               activeConfPath,
             ]);
             if (sedResult.exitCode === 0) {
-              sections.push(`  ✅ Rule ${ruleId} enabled (removed ${removeDirective})`);
+              sections.push(`  Rule ${ruleId} enabled (removed ${removeDirective})`);
               sections.push(`  Config: ${activeConfPath}`);
-              sections.push(`  ⚠️ Reload ${webServer} to apply: sudo systemctl reload ${webServer}`);
+              sections.push(`  Reload ${webServer} to apply: sudo systemctl reload ${webServer}`);
               jsonData.status = "enabled";
             } else {
-              sections.push(`  ❌ Failed to enable rule: ${sedResult.stderr}`);
+              sections.push(`  Failed to enable rule: ${sedResult.stderr}`);
               jsonData.status = "error";
               jsonData.error = sedResult.stderr;
             }
@@ -461,8 +400,8 @@ async function handleRateLimitConfig(
     const sections: string[] = [];
     const jsonData: Record<string, unknown> = {};
 
-    sections.push("⚡ Rate Limiting Configuration");
-    sections.push("=".repeat(55));
+    sections.push("Rate Limiting Configuration");
+    sections.push("");
     sections.push(`Web Server: ${webServer}`);
 
     jsonData.web_server = webServer;
@@ -487,22 +426,22 @@ async function handleRateLimitConfig(
         if (zoneMatches.length > 0) {
           sections.push("  Rate limit zones defined:");
           for (const zone of zoneMatches) {
-            sections.push(`    📊 ${zone.trim()}`);
+            sections.push(`    ${zone.trim()}`);
           }
         } else {
-          sections.push("  ❌ No limit_req_zone directives found");
+          sections.push("  No limit_req_zone directives found");
         }
 
         if (reqMatches.length > 0) {
           sections.push("  Rate limit enforcement:");
           for (const req of reqMatches) {
-            sections.push(`    🔒 ${req.trim()}`);
+            sections.push(`    ${req.trim()}`);
           }
         } else {
-          sections.push("  ❌ No limit_req directives found");
+          sections.push("  No limit_req directives found");
         }
       } else {
-        sections.push("  ❌ Could not read /etc/nginx/nginx.conf");
+        sections.push("  Could not read /etc/nginx/nginx.conf");
         jsonData.error = "Could not read nginx config";
       }
 
@@ -536,8 +475,8 @@ async function handleRateLimitConfig(
       jsonData.mod_ratelimit = hasRatelimit;
       jsonData.mod_evasive = hasEvasive;
 
-      sections.push(`  mod_ratelimit: ${hasRatelimit ? "✅ loaded" : "❌ not loaded"}`);
-      sections.push(`  mod_evasive: ${hasEvasive ? "✅ loaded" : "❌ not loaded"}`);
+      sections.push(`  mod_ratelimit: ${hasRatelimit ? "loaded" : "not loaded"}`);
+      sections.push(`  mod_evasive: ${hasEvasive ? "loaded" : "not loaded"}`);
 
       if (hasEvasive) {
         const evasiveConf = await runSudoCommand("cat", ["/etc/apache2/mods-enabled/evasive.conf"]);
@@ -593,8 +532,8 @@ async function handleOwaspCrsDeploy(
     const sections: string[] = [];
     const jsonData: Record<string, unknown> = {};
 
-    sections.push("🌐 OWASP Core Rule Set (CRS) Status");
-    sections.push("=".repeat(55));
+    sections.push("OWASP Core Rule Set (CRS) Status");
+    sections.push("");
 
     // Check if CRS is installed
     let crsPath = "";
@@ -610,7 +549,7 @@ async function handleOwaspCrsDeploy(
     jsonData.crs_path = crsPath || null;
 
     if (!crsPath) {
-      sections.push("\n  ❌ OWASP CRS is NOT installed");
+      sections.push("\n  OWASP CRS is NOT installed");
       sections.push("\n── Installation Instructions ──");
       sections.push("  Option 1 — Package manager:");
       sections.push("    sudo apt install modsecurity-crs");
@@ -627,7 +566,7 @@ async function handleOwaspCrsDeploy(
       return { content: [createTextContent(sections.join("\n"))] };
     }
 
-    sections.push(`\n  ✅ CRS found at: ${crsPath}`);
+    sections.push(`\n  CRS found at: ${crsPath}`);
 
     // Check version
     const changelogResult = await runCommand("head", ["-5", `${crsPath}/CHANGES`]);
@@ -667,7 +606,7 @@ async function handleOwaspCrsDeploy(
       if (confContent.exitCode === 0) {
         if (confContent.stdout.includes("modsecurity-crs") || confContent.stdout.includes("crs-setup")) {
           integrated = true;
-          sections.push(`  ✅ CRS Include directives found in ${confPath}`);
+          sections.push(`  CRS Include directives found in ${confPath}`);
           break;
         }
       }
@@ -681,13 +620,13 @@ async function handleOwaspCrsDeploy(
 
       if (mainConf.exitCode === 0 && (mainConf.stdout.includes("modsecurity-crs") || mainConf.stdout.includes("crs-setup"))) {
         integrated = true;
-        sections.push("  ✅ CRS Include directives found in main config");
+        sections.push("  CRS Include directives found in main config");
       }
     }
 
     jsonData.integrated = integrated;
     if (!integrated) {
-      sections.push("  ❌ CRS Include directives NOT found in ModSecurity configuration");
+      sections.push("  CRS Include directives NOT found in ModSecurity configuration");
       sections.push("  Add these lines to your ModSecurity configuration:");
       sections.push(`    Include ${crsPath}/crs-setup.conf`);
       sections.push(`    Include ${crsPath}/rules/*.conf`);
@@ -707,7 +646,7 @@ async function handleOwaspCrsDeploy(
 
       for (const file of ruleFiles) {
         categories.push(file);
-        sections.push(`    📄 ${file}`);
+        sections.push(`    ${file}`);
       }
     }
 
@@ -736,8 +675,8 @@ async function handleBlockedRequests(
     const sections: string[] = [];
     const jsonData: Record<string, unknown> = {};
 
-    sections.push("🚫 WAF Blocked Requests Analysis");
-    sections.push("=".repeat(55));
+    sections.push("WAF Blocked Requests Analysis");
+    sections.push("");
 
     // Find the log file
     let activeLogPath = logPath;
@@ -752,7 +691,7 @@ async function handleBlockedRequests(
     }
 
     if (!activeLogPath) {
-      sections.push("\n  ❌ No ModSecurity audit log found");
+      sections.push("\n  No ModSecurity audit log found");
       sections.push("  Searched paths:");
       for (const p of MODSEC_AUDIT_LOG_PATHS) {
         sections.push(`    - ${p}`);
@@ -837,7 +776,7 @@ async function handleBlockedRequests(
       if (fpCandidates.length > 0) {
         sections.push("  Rules triggered excessively (may be false positives):");
         for (const [ruleId, count] of fpCandidates) {
-          sections.push(`    ⚠️ Rule ${ruleId}: ${count} hits — review for tuning`);
+          sections.push(`    Rule ${ruleId}: ${count} hits — review for tuning`);
         }
       } else {
         sections.push("  No obvious false positive candidates detected");

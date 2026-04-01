@@ -140,7 +140,7 @@ export function formatToolOutput(data: unknown): McpTextContent {
   if (typeof data === "string") {
     text = data;
   } else {
-    text = JSON.stringify(data, null, 2);
+    text = JSON.stringify(data);
   }
 
   return { type: "text", text };

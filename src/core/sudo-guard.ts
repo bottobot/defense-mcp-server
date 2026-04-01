@@ -256,15 +256,15 @@ export class SudoGuard {
 
     // Build the prompt message for AI clients.
     const lines: string[] = [];
-    lines.push("🔒 Sudo session required");
-    lines.push("─".repeat(50));
+    lines.push("Sudo session required");
+    lines.push("");
     lines.push("");
     lines.push(`Tool: ${toolName}`);
     lines.push(`Reason: ${reasonText}`);
     lines.push("");
 
     if (status.elevated && status.remainingSeconds !== null && status.remainingSeconds <= 0) {
-      lines.push("⚠️  Your sudo session has expired.");
+      lines.push("WARNING: Your sudo session has expired.");
       lines.push("");
       lines.push("ACTION: Call sudo_session with action=elevate_gui to re-authenticate,");
       lines.push("or action=extend to extend an active session.");
@@ -279,7 +279,7 @@ export class SudoGuard {
 
     if (originalError) {
       lines.push("");
-      lines.push("─".repeat(50));
+      lines.push("");
       lines.push("Original error:");
       lines.push(originalError.substring(0, 500));
     }

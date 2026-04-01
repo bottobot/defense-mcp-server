@@ -252,14 +252,14 @@ export async function validateAllDependencies(): Promise<ValidationReport> {
         if (recheck.available) {
           installed.push(binary);
           available.push(binary);
-          console.error(`[dep-validator] ✅ Installed: ${binary}`);
+          console.error(`[dep-validator] Installed: ${binary}`);
         } else {
           missing.push(binary);
           installFailed.push({
             binary,
             error: "Package installed but binary not found in PATH",
           });
-          console.error(`[dep-validator] ⚠️ Package installed but binary '${binary}' not found`);
+          console.error(`[dep-validator] WARNING: Package installed but binary '${binary}' not found`);
         }
       } else {
         missing.push(binary);
@@ -267,7 +267,7 @@ export async function validateAllDependencies(): Promise<ValidationReport> {
           binary,
           error: result?.message ?? "No package mapping found",
         });
-        console.error(`[dep-validator] ❌ Failed to install: ${binary}`);
+        console.error(`[dep-validator] Failed to install: ${binary}`);
       }
     }
   }
@@ -311,7 +311,7 @@ export async function validateAllDependencies(): Promise<ValidationReport> {
 
   if (criticalMissing.length > 0) {
     console.error(
-      `[dep-validator] ⚠️ CRITICAL: ${criticalMissing.length} critical tools have missing dependencies:`
+      `[dep-validator] WARNING: CRITICAL: ${criticalMissing.length} critical tools have missing dependencies:`
     );
     for (const cm of criticalMissing) {
       console.error(
@@ -458,14 +458,14 @@ export function formatValidationReport(report: ValidationReport): string {
   if (report.installed.length > 0) {
     lines.push(`  Auto-installed:      ${report.installed.length}`);
     for (const bin of report.installed) {
-      lines.push(`    ✅ ${bin}`);
+      lines.push(`    PASS: ${bin}`);
     }
   }
 
   if (report.installFailed.length > 0) {
     lines.push(`  Install failures:    ${report.installFailed.length}`);
     for (const fail of report.installFailed) {
-      lines.push(`    ❌ ${fail.binary}: ${fail.error}`);
+      lines.push(`    ${fail.binary}: ${fail.error}`);
     }
   }
 
@@ -481,16 +481,16 @@ export function formatValidationReport(report: ValidationReport): string {
 
   if (report.criticalMissing.length > 0) {
     lines.push("");
-    lines.push("  ⚠️  CRITICAL tools with missing dependencies:");
+    lines.push("  WARNING: CRITICAL tools with missing dependencies:");
     for (const cm of report.criticalMissing) {
-      lines.push(`    ⛔ ${cm.toolName}: needs ${cm.missingBinaries.join(", ")}`);
+      lines.push(`    CRITICAL: ${cm.toolName}: needs ${cm.missingBinaries.join(", ")}`);
     }
   }
 
   lines.push("");
   lines.push(`  Auto-install: ${report.autoInstallEnabled ? "ENABLED" : "DISABLED"}`);
   if (!report.autoInstallEnabled && report.missing.length > 0) {
-    lines.push("  💡 Set DEFENSE_MCP_AUTO_INSTALL=true to auto-install missing tools");
+    lines.push("  Set DEFENSE_MCP_AUTO_INSTALL=true to auto-install missing tools");
   }
   lines.push(`  Duration: ${report.durationMs}ms`);
 

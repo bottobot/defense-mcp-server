@@ -1145,24 +1145,20 @@ export function registerComplianceTools(server: McpServer): void {
               for (const section of report.sections) {
                 md += `## ${section.name}\n\n`;
                 md += `**Score:** ${section.score}/100\n\n`;
-                md += `\`\`\`json\n${JSON.stringify(section.details, null, 2)}\n\`\`\`\n\n`;
+                md += `\`\`\`json\n${JSON.stringify(section.details)}\n\`\`\`\n\n`;
               }
 
               return { content: [createTextContent(md)] };
             }
 
             // Text format
-            let text = `${"=".repeat(60)}\n`;
-            text += `  COMPLIANCE REPORT\n`;
-            text += `  Generated: ${report.timestamp}\n`;
-            text += `  Overall Score: ${report.overallScore}/100\n`;
-            text += `${"=".repeat(60)}\n\n`;
+            let text = `COMPLIANCE REPORT\n`;
+            text += `Generated: ${report.timestamp}\n`;
+            text += `Overall Score: ${report.overallScore}/100\n\n`;
 
             for (const section of report.sections) {
-              text += `${"─".repeat(50)}\n`;
-              text += `  ${section.name} — Score: ${section.score}/100\n`;
-              text += `${"─".repeat(50)}\n`;
-              text += `${JSON.stringify(section.details, null, 2)}\n\n`;
+              text += `${section.name} — Score: ${section.score}/100\n`;
+              text += `${JSON.stringify(section.details)}\n\n`;
             }
 
             return { content: [createTextContent(text)] };
@@ -1188,7 +1184,7 @@ export function registerComplianceTools(server: McpServer): void {
             const currentUser = process.env.USER || process.env.LOGNAME;
             if (currentUser && currentUser !== "root" && !allowed_users.includes(currentUser)) {
               allowed_users = [...allowed_users, currentUser];
-              changes.push(`⚠️ Auto-included current user '${currentUser}' in allowed_users to prevent self-lockout`);
+              changes.push(`WARNING: Auto-included current user '${currentUser}' in allowed_users to prevent self-lockout`);
             }
 
             // Validate usernames

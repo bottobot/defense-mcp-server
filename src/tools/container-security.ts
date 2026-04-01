@@ -103,8 +103,8 @@ export function registerContainerSecurityTools(server: McpServer): void {
           const { check_type } = params;
           try {
             const sections: string[] = [];
-            sections.push("🐳 Docker Security Audit");
-            sections.push("=".repeat(50));
+            sections.push("Docker Security Audit");
+            sections.push("");
             const findings: Array<{ level: string; msg: string }> = [];
 
             const dockerCheck = await executeCommand({ command: "which", args: ["docker"], toolName: "container_docker", timeout: 5000 });
@@ -206,13 +206,12 @@ export function registerContainerSecurityTools(server: McpServer): void {
             }
 
             sections.push("\n── Security Findings Summary ──");
-            if (findings.length === 0) { sections.push("  ✅ No significant security issues found."); }
+            if (findings.length === 0) { sections.push("  No significant security issues found."); }
             else {
               for (const lvl of ["CRITICAL", "WARNING", "INFO"]) {
                 const items = findings.filter((f) => f.level === lvl);
                 if (items.length > 0) {
-                  const icon = lvl === "CRITICAL" ? "⛔" : lvl === "WARNING" ? "⚠️" : "ℹ️";
-                  sections.push(`\n  ${icon} ${lvl} (${items.length}):`);
+                  sections.push(`\n  ${lvl} (${items.length}):`);
                   for (const f of items) sections.push(`    - ${f.msg}`);
                 }
               }
@@ -225,7 +224,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
         case "bench": {
           const { checks: benchChecks, log_level } = params;
           try {
-            const sections: string[] = ["🔒 Docker Bench for Security", "=".repeat(50)];
+            const sections: string[] = ["Docker Bench for Security", ""];
             const dockerCheck = await executeCommand({ command: "which", args: ["docker"], toolName: "container_docker", timeout: 5000 });
             if (dockerCheck.exitCode !== 0) return { content: [createTextContent("Docker is not installed.")] };
 
@@ -236,7 +235,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
             const output = result.stdout || result.stderr;
 
             if (result.exitCode !== 0 && !output) {
-              sections.push("⚠️ Docker Bench could not run.");
+              sections.push("Docker Bench could not run.");
               return { content: [createTextContent(sections.join("\n"))] };
             }
 
@@ -288,7 +287,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
               });
             }
 
-            return { content: [createTextContent(JSON.stringify({ summary: { total: results.length, pass: results.filter(r => r.status === "PASS").length, warn: results.filter(r => r.status === "WARN").length, fail: results.filter(r => r.status === "FAIL").length }, containers: results }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { total: results.length, pass: results.filter(r => r.status === "PASS").length, warn: results.filter(r => r.status === "WARN").length, fail: results.filter(r => r.status === "FAIL").length }, containers: results }))] };
           } catch (error) { return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true }; }
         }
 
@@ -298,14 +297,14 @@ export function registerContainerSecurityTools(server: McpServer): void {
           try {
             if (!daemon_action) return { content: [createErrorContent("daemon_action is required (audit or apply)")], isError: true };
 
-            const sections: string[] = ["🐳 Docker Daemon Configuration", "=".repeat(50)];
+            const sections: string[] = ["Docker Daemon Configuration", ""];
             const daemonPath = "/etc/docker/daemon.json";
 
             const readResult = await executeCommand({ command: "cat", args: [daemonPath], toolName: "container_docker", timeout: 5000 });
             const existingConfig = readResult.exitCode === 0 ? (parseJsonSafe(readResult.stdout) as Record<string, unknown>) || {} : {};
 
             if (daemon_action === "audit") {
-              if (readResult.exitCode !== 0) sections.push("  ⚠️ No /etc/docker/daemon.json found");
+              if (readResult.exitCode !== 0) sections.push("  No /etc/docker/daemon.json found");
               else sections.push(`  ${JSON.stringify(existingConfig, null, 4).replace(/\n/g, "\n  ")}`);
 
               sections.push("\n── Security Settings Audit ──");
@@ -319,7 +318,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
                 { key: "default-network-opts", present: !!(existingConfig["default-network-opts"] as Record<string, Record<string, string>> | undefined)?.["bridge"]?.["com.docker.network.bridge.host_binding_ipv4"], recommended: '{"bridge":{"com.docker.network.bridge.host_binding_ipv4":"127.0.0.1"}}', severity: "HIGH" },
               ];
               let missingCount = 0;
-              for (const c of checks) { if (!c.present) missingCount++; sections.push(`  ${c.present ? "✅ Present" : "❌ Missing"}: ${c.key} [${c.severity}]`); }
+              for (const c of checks) { if (!c.present) missingCount++; sections.push(`  ${c.present ? "Present" : "Missing"}: ${c.key} [${c.severity}]`); }
               sections.push(`\n  Summary: ${checks.length - missingCount}/${checks.length} configured`);
               return { content: [createTextContent(sections.join("\n"))] };
             }
@@ -354,11 +353,11 @@ export function registerContainerSecurityTools(server: McpServer): void {
             if (isDryRun) {
               sections.push("\n[DRY RUN] No changes written.");
             } else {
-              if (readResult.exitCode === 0) { await backupFile(daemonPath); sections.push(`\n  ✅ Backed up ${daemonPath}`); }
+              if (readResult.exitCode === 0) { await backupFile(daemonPath); sections.push(`\n  Backed up ${daemonPath}`); }
               const writeResult = await executeCommand({ command: "sudo", args: ["tee", daemonPath], stdin: newJson, toolName: "container_docker", timeout: 10000 });
               if (writeResult.exitCode !== 0) return { content: [createErrorContent(`Failed to write ${daemonPath}: ${writeResult.stderr}`)], isError: true };
-              sections.push(`  ✅ Written to ${daemonPath}`);
-              sections.push("\n  ⚠️ Restart Docker: sudo systemctl restart docker");
+              sections.push(`  Written to ${daemonPath}`);
+              sections.push("\n  Restart Docker: sudo systemctl restart docker");
               logChange(createChangeEntry({ tool: "container_docker", action: "apply daemon config", target: daemonPath, before: JSON.stringify(existingConfig), after: newJson, dryRun: false, success: true }));
             }
             return { content: [createTextContent(sections.join("\n"))] };
@@ -383,7 +382,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
             const grypeResult = await executeCommand({ command: "grype", args: [image, "-o", "json"], timeout: 300000, toolName: "container_docker" });
             if (grypeResult.exitCode === 0) return { content: [createTextContent(`Grype scan results for ${image}:\n${grypeResult.stdout.substring(0, 8000)}`)] };
 
-            return { content: [createTextContent(JSON.stringify({ error: "Neither Trivy nor Grype is installed", recommendation: "Install Trivy or Grype" }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ error: "Neither Trivy nor Grype is installed", recommendation: "Install Trivy or Grype" }))] };
           } catch (error) { return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true }; }
         }
 
@@ -448,7 +447,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
         // ── apparmor_status ─────────────────────────────────────────
         case "apparmor_status": {
           try {
-            const sections: string[] = ["🛡️ AppArmor System Status", "=".repeat(40)];
+            const sections: string[] = ["AppArmor System Status", ""];
             const enabledResult = await executeCommand({ command: "aa-enabled", args: [], toolName: "container_isolation", timeout: 5000 });
             const aaEnabledBin = enabledResult.exitCode === 0 && enabledResult.stdout.trim() === "Yes";
 
@@ -461,16 +460,16 @@ export function registerContainerSecurityTools(server: McpServer): void {
 
             // AppArmor is considered enabled if aa-enabled says "Yes", OR if kernel module is loaded AND service is active
             const aaEnabled = aaEnabledBin || (kernelModuleLoaded && svcActive);
-            sections.push(`\n  AppArmor enabled: ${aaEnabled ? "✅ Yes" : "❌ No"}`);
+            sections.push(`\n  AppArmor enabled: ${aaEnabled ? "Yes" : "No"}`);
 
-            if (moduleResult.exitCode === 0) sections.push(`  Kernel module: ${kernelModuleLoaded ? "✅ Loaded" : "❌ Not loaded"}`);
+            if (moduleResult.exitCode === 0) sections.push(`  Kernel module: ${kernelModuleLoaded ? "Loaded" : "Not loaded"}`);
 
             const pkgChecks = ["apparmor-profiles", "apparmor-profiles-extra", "apparmor-utils"];
             sections.push("\n  Profile Packages:");
             for (const pkg of pkgChecks) {
               const dpkgResult = await executeCommand({ command: "dpkg", args: ["-s", pkg], toolName: "container_isolation", timeout: 5000 });
               const installed = dpkgResult.exitCode === 0 && dpkgResult.stdout.includes("Status: install ok installed");
-              sections.push(`    ${pkg}: ${installed ? "✅ Installed" : "❌ Not installed"}`);
+              sections.push(`    ${pkg}: ${installed ? "Installed" : "Not installed"}`);
             }
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
@@ -479,19 +478,19 @@ export function registerContainerSecurityTools(server: McpServer): void {
         // ── apparmor_list ───────────────────────────────────────────
         case "apparmor_list": {
           try {
-            const sections: string[] = ["🛡️ AppArmor Profiles", "=".repeat(40)];
+            const sections: string[] = ["AppArmor Profiles", ""];
             let result = await executeCommand({ command: "sudo", args: ["aa-status"], toolName: "container_isolation", timeout: getToolTimeout("container_apparmor_manage") });
             if (result.exitCode !== 0) result = await executeCommand({ command: "sudo", args: ["apparmor_status"], toolName: "container_isolation", timeout: getToolTimeout("container_apparmor_manage") });
-            if (result.exitCode !== 0) { sections.push("\n⚠️ Cannot list AppArmor profiles."); return { content: [createTextContent(sections.join("\n"))] }; }
+            if (result.exitCode !== 0) { sections.push("\nCannot list AppArmor profiles."); return { content: [createTextContent(sections.join("\n"))] }; }
 
             const output = result.stdout;
             const lines = output.split("\n");
             let currentSection = "";
             for (const line of lines) {
               const trimmed = line.trim();
-              if (trimmed.includes("enforce mode")) { currentSection = "enforce"; sections.push("\n  🔒 Enforce Mode:"); }
-              else if (trimmed.includes("complain mode")) { currentSection = "complain"; sections.push("\n  📝 Complain Mode:"); }
-              else if (trimmed.includes("unconfined")) { currentSection = "unconfined"; sections.push("\n  ⚠️ Unconfined:"); }
+              if (trimmed.includes("enforce mode")) { currentSection = "enforce"; sections.push("\n  Enforce Mode:"); }
+              else if (trimmed.includes("complain mode")) { currentSection = "complain"; sections.push("\n  Complain Mode:"); }
+              else if (trimmed.includes("unconfined")) { currentSection = "unconfined"; sections.push("\n  Unconfined:"); }
               else if (currentSection && trimmed && !trimmed.match(/^\d+\s+processes?/)) { sections.push(`    ${trimmed}`); }
             }
             return { content: [createTextContent(sections.join("\n"))] };
@@ -517,7 +516,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
 
             // SAFETY: Warn when enforcing profiles known to break desktop apps
             const desktopWarning = (baseAction === "enforce" && isDesktopProfile)
-              ? `\n\n⚠️ WARNING: Profile '${profileBaseName}' is known to break desktop applications ` +
+              ? `\n\nWARNING: Profile '${profileBaseName}' is known to break desktop applications ` +
                 `(flatpak, browsers, GUI apps) when enforced.\n` +
                 `These profiles use ABI 4.0 default-deny and block shared library loading.\n` +
                 `This may prevent Chromium, Firefox, Flatpak apps, and similar from launching.\n` +
@@ -532,7 +531,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
             if (result.exitCode !== 0) return { content: [createErrorContent(`Failed to ${baseAction} profile '${profile}': ${result.stderr}`)], isError: true };
 
             logChange(createChangeEntry({ tool: "container_isolation", action: baseAction, target: profile, after: `${baseAction} mode`, dryRun: false, success: true, rollbackCommand: baseAction === "disable" ? `sudo aa-enforce ${profile}` : baseAction === "enforce" ? `sudo aa-complain ${profile}` : undefined }));
-            return { content: [createTextContent(`✅ Profile '${profile}' set to ${baseAction} mode.\n${result.stdout || result.stderr}${desktopWarning}`)] };
+            return { content: [createTextContent(`Profile '${profile}' set to ${baseAction} mode.\n${result.stdout || result.stderr}${desktopWarning}`)] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
@@ -547,7 +546,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
               return { content: [createTextContent(
                 `[DRY RUN] Would install: ${packages.join(", ")}\n` +
                 `  Command: sudo apt-get install -y ${packages.join(" ")}\n\n` +
-                `⚠️ After installation, the following profiles will be set to COMPLAIN mode\n` +
+                `After installation, the following profiles will be set to COMPLAIN mode\n` +
                 `to prevent breaking desktop applications (flatpak, browsers, etc.):\n` +
                 `  ${[...DESKTOP_BREAKING_PROFILES].join(", ")}\n\n` +
                 `Use apparmor_enforce to selectively enforce profiles after testing.`
@@ -568,19 +567,19 @@ export function registerContainerSecurityTools(server: McpServer): void {
               if (checkResult.exitCode === 0) {
                 const complainResult = await executeCommand({ command: "sudo", args: ["aa-complain", profilePath], toolName: "container_isolation", timeout: 10000 });
                 if (complainResult.exitCode === 0) {
-                  complainResults.push(`  ✓ ${profileName} → complain mode`);
+                  complainResults.push(`  OK ${profileName} → complain mode`);
                 } else {
-                  complainResults.push(`  ✗ ${profileName} → failed: ${complainResult.stderr.trim()}`);
+                  complainResults.push(`  FAIL ${profileName} → failed: ${complainResult.stderr.trim()}`);
                 }
               }
             }
 
             const complainSection = complainResults.length > 0
-              ? `\n\n⚠️ Desktop-safe profiles set to complain mode (prevents breaking GUI apps):\n${complainResults.join("\n")}\n\nUse apparmor_enforce to selectively enforce profiles after testing.`
+              ? `\n\nDesktop-safe profiles set to complain mode (prevents breaking GUI apps):\n${complainResults.join("\n")}\n\nUse apparmor_enforce to selectively enforce profiles after testing.`
               : "";
 
             logChange(createChangeEntry({ tool: "container_isolation", action: "install_profiles", target: packages.join(", "), after: `installed; ${complainResults.length} profiles set to complain`, dryRun: false, success: true, rollbackCommand: `sudo apt-get remove -y ${packages.join(" ")}` }));
-            return { content: [createTextContent(`✅ Successfully installed: ${packages.join(", ")}${complainSection}`)] };
+            return { content: [createTextContent(`Successfully installed: ${packages.join(", ")}${complainSection}`)] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
 
@@ -615,9 +614,9 @@ export function registerContainerSecurityTools(server: McpServer): void {
         // ── selinux_status ──────────────────────────────────────────
         case "selinux_status": {
           try {
-            const sections: string[] = [`🛡️ SELinux Management: status`, "=".repeat(40)];
+            const sections: string[] = [`SELinux Management: status`, ""];
             const result = await executeCommand({ command: "sestatus", args: [], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
-            if (result.exitCode !== 0) { sections.push("\n⚠️ SELinux may not be installed."); sections.push(result.stderr || result.stdout); }
+            if (result.exitCode !== 0) { sections.push("\nSELinux may not be installed."); sections.push(result.stderr || result.stdout); }
             else sections.push("\n" + result.stdout);
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
@@ -626,9 +625,9 @@ export function registerContainerSecurityTools(server: McpServer): void {
         // ── selinux_getenforce ──────────────────────────────────────
         case "selinux_getenforce": {
           try {
-            const sections: string[] = [`🛡️ SELinux Management: getenforce`, "=".repeat(40)];
+            const sections: string[] = [`SELinux Management: getenforce`, ""];
             const result = await executeCommand({ command: "getenforce", args: [], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
-            if (result.exitCode !== 0) sections.push("\n⚠️ getenforce not available.");
+            if (result.exitCode !== 0) sections.push("\ngetenforce not available.");
             else sections.push(`\nCurrent SELinux mode: ${result.stdout.trim()}`);
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
@@ -638,14 +637,14 @@ export function registerContainerSecurityTools(server: McpServer): void {
         case "selinux_setenforce": {
           const { mode, dry_run } = params;
           try {
-            const sections: string[] = [`🛡️ SELinux Management: setenforce`, "=".repeat(40)];
+            const sections: string[] = [`SELinux Management: setenforce`, ""];
             if (!mode) return { content: [createErrorContent("mode is required for selinux_setenforce")], isError: true };
-            if (mode === "disabled") { sections.push("\n⚠️ Cannot disable SELinux at runtime."); return { content: [createTextContent(sections.join("\n"))] }; }
+            if (mode === "disabled") { sections.push("\nCannot disable SELinux at runtime."); return { content: [createTextContent(sections.join("\n"))] }; }
             const modeValue = mode === "enforcing" ? "1" : "0";
             if (dry_run ?? getConfig().dryRun) { sections.push(`\n[DRY RUN] Would set SELinux to ${mode}.`); return { content: [createTextContent(sections.join("\n"))] }; }
             const result = await executeCommand({ command: "sudo", args: ["setenforce", modeValue], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
             if (result.exitCode !== 0) return { content: [createErrorContent(`Failed: ${result.stderr}`)], isError: true };
-            sections.push(`\n✅ SELinux mode set to ${mode}.`);
+            sections.push(`\nSELinux mode set to ${mode}.`);
             logChange(createChangeEntry({ tool: "container_isolation", action: "setenforce", target: "SELinux", after: mode, dryRun: false, success: true, rollbackCommand: `sudo setenforce ${mode === "enforcing" ? "0" : "1"}` }));
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
@@ -655,13 +654,13 @@ export function registerContainerSecurityTools(server: McpServer): void {
         case "selinux_booleans": {
           const { boolean_name, boolean_value, dry_run } = params;
           try {
-            const sections: string[] = [`🛡️ SELinux Management: booleans`, "=".repeat(40)];
+            const sections: string[] = [`SELinux Management: booleans`, ""];
             if (boolean_name && boolean_value) {
               sanitizeArgs([boolean_name]);
               if (dry_run ?? getConfig().dryRun) { sections.push(`\n[DRY RUN] Would set '${boolean_name}' to ${boolean_value}.`); return { content: [createTextContent(sections.join("\n"))] }; }
               const result = await executeCommand({ command: "sudo", args: ["setsebool", "-P", boolean_name, boolean_value], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
               if (result.exitCode !== 0) return { content: [createErrorContent(`Failed: ${result.stderr}`)], isError: true };
-              sections.push(`\n✅ Boolean '${boolean_name}' set to ${boolean_value}.`);
+              sections.push(`\nBoolean '${boolean_name}' set to ${boolean_value}.`);
               logChange(createChangeEntry({ tool: "container_isolation", action: "set_boolean", target: boolean_name, after: boolean_value, dryRun: false, success: true, rollbackCommand: `sudo setsebool -P ${boolean_name} ${boolean_value === "on" ? "off" : "on"}` }));
             } else if (boolean_name) {
               sanitizeArgs([boolean_name]);
@@ -670,7 +669,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
               sections.push(`\n${result.stdout.trim()}`);
             } else {
               const result = await executeCommand({ command: "getsebool", args: ["-a"], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
-              if (result.exitCode !== 0) sections.push("\n⚠️ Cannot list booleans.");
+              if (result.exitCode !== 0) sections.push("\nCannot list booleans.");
               else sections.push(result.stdout);
             }
             return { content: [createTextContent(sections.join("\n"))] };
@@ -680,11 +679,11 @@ export function registerContainerSecurityTools(server: McpServer): void {
         // ── selinux_audit ───────────────────────────────────────────
         case "selinux_audit": {
           try {
-            const sections: string[] = [`🛡️ SELinux Management: audit`, "=".repeat(40)];
+            const sections: string[] = [`SELinux Management: audit`, ""];
             const result = await executeCommand({ command: "sudo", args: ["ausearch", "-m", "AVC", "-ts", "recent"], toolName: "container_isolation", timeout: getToolTimeout("container_selinux_manage") });
-            if (result.exitCode !== 0 && (result.stderr.includes("no matches") || result.stdout.includes("no matches"))) sections.push("\n✅ No recent SELinux AVC denials.");
-            else if (result.exitCode !== 0) sections.push("\n⚠️ Could not search audit logs.");
-            else sections.push(`\n⚠️ Recent SELinux AVC Denials:\n${result.stdout}`);
+            if (result.exitCode !== 0 && (result.stderr.includes("no matches") || result.stdout.includes("no matches"))) sections.push("\nNo recent SELinux AVC denials.");
+            else if (result.exitCode !== 0) sections.push("\nCould not search audit logs.");
+            else sections.push(`\nWARNING: Recent SELinux AVC Denials:\n${result.stdout}`);
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) { return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true }; }
         }
@@ -693,7 +692,7 @@ export function registerContainerSecurityTools(server: McpServer): void {
         case "namespace_check": {
           const { pid, check_type } = params;
           try {
-            const sections: string[] = ["📦 Namespace Isolation Check", "=".repeat(40)];
+            const sections: string[] = ["Namespace Isolation Check", ""];
 
             if (pid !== undefined) {
               sections.push(`\nProcess PID: ${pid}`);
@@ -705,17 +704,17 @@ export function registerContainerSecurityTools(server: McpServer): void {
               sections.push("\n── System Namespace Configuration ──");
 
               if (check_type === "user" || check_type === "all") {
-                sections.push("\n🔑 User Namespaces:");
+                sections.push("\nUser Namespaces:");
                 const maxNsResult = await executeCommand({ command: "cat", args: ["/proc/sys/user/max_user_namespaces"], toolName: "container_isolation", timeout: 5000 });
                 if (maxNsResult.exitCode === 0) {
                   const maxNs = maxNsResult.stdout.trim();
                   sections.push(`  max_user_namespaces: ${maxNs}`);
-                  sections.push(maxNs === "0" ? "  ⚠️ User namespaces are disabled" : "  ✅ User namespaces are enabled");
+                  sections.push(maxNs === "0" ? "  WARNING: User namespaces are disabled" : "  User namespaces are enabled");
                 }
               }
 
               if (check_type === "network" || check_type === "all") {
-                sections.push("\n🌐 Network Namespaces:");
+                sections.push("\nNetwork Namespaces:");
                 const netnsResult = await executeCommand({ command: "ip", args: ["netns", "list"], toolName: "container_isolation", timeout: getToolTimeout("container_namespace_check") });
                 if (netnsResult.exitCode === 0 && netnsResult.stdout.trim()) {
                   const namespaces = netnsResult.stdout.trim().split("\n").filter((l) => l.trim());
@@ -725,15 +724,15 @@ export function registerContainerSecurityTools(server: McpServer): void {
               }
 
               if (check_type === "all" || check_type === "pid") {
-                sections.push("\n📋 All Active Namespaces (lsns):");
+                sections.push("\nAll Active Namespaces (lsns):");
                 let lsnsResult = await executeCommand({ command: "lsns", args: [], toolName: "container_isolation", timeout: getToolTimeout("container_namespace_check") });
                 if (lsnsResult.exitCode !== 0) lsnsResult = await executeCommand({ command: "sudo", args: ["lsns"], toolName: "container_isolation", timeout: getToolTimeout("container_namespace_check") });
                 if (lsnsResult.exitCode === 0) sections.push(lsnsResult.stdout);
-                else sections.push("  ⚠️ Cannot list namespaces.");
+                else sections.push("  Cannot list namespaces.");
               }
 
               if (check_type === "mount" || check_type === "all") {
-                sections.push("\n📁 Mount Namespace Info:");
+                sections.push("\nMount Namespace Info:");
                 const mountInfoResult = await executeCommand({ command: "cat", args: ["/proc/self/mountinfo"], toolName: "container_isolation", timeout: 5000 });
                 if (mountInfoResult.exitCode === 0) sections.push(`  Current mount namespace has ${mountInfoResult.stdout.trim().split("\n").length} mount points`);
               }

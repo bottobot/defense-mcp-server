@@ -262,7 +262,7 @@ describe("PreflightEngine", () => {
     });
 
     const result = await engine.runPreflight("fmt_pass");
-    expect(result.summary).toContain("✅");
+    expect(result.summary).toContain("Pre-flight passed");
     expect(result.summary).toContain("fmt_pass");
     expect(result.summary).toContain("Ready to execute");
   });
@@ -277,7 +277,7 @@ describe("PreflightEngine", () => {
     vi.mocked(isBinaryInstalled).mockResolvedValueOnce(false);
 
     const result = await engine.runPreflight("fmt_fail");
-    expect(result.summary).toContain("❌");
+    expect(result.summary).toContain("Pre-flight FAILED");
     expect(result.summary).toContain("fmt_fail");
     expect(result.summary).toContain("Cannot proceed");
   });
@@ -293,7 +293,7 @@ describe("PreflightEngine", () => {
 
     const result = await engine.runPreflight("status_tool");
     const msg = engine.formatStatusMessage(result);
-    expect(msg).toContain("[pre-flight ✓]");
+    expect(msg).toContain("[pre-flight OK]");
     expect(msg).toContain("All checks passed");
   });
 

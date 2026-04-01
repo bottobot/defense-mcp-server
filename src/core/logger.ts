@@ -129,7 +129,7 @@ export class Logger {
         mkdirSync(dir, { recursive: true });
       } catch {
         // Fall back to stderr-only if directory creation fails
-        process.stderr.write(`[logger] WARNING: Cannot create log directory for ${this.logFile}, falling back to stderr-only\n`);
+        process.stderr.write(`[logger] Cannot create log directory for ${this.logFile}, falling back to stderr-only\n`);
         this.logFile = null;
       }
     }

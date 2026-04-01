@@ -40,7 +40,7 @@ import { THIRD_PARTY_MANIFEST } from "../core/third-party-manifest.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
+import { runCommand, type CommandResult } from "../core/run-command.js";
 import { secureWriteFileSync, verifySecurePermissions } from "../core/secure-fs.js";
 import { verifyAllBinaries } from "../core/command-allowlist.js";
 import { RateLimiter } from "../core/rate-limiter.js";
@@ -564,53 +564,6 @@ function riskSortValue(risk: RemRiskLevel): number {
   }
 }
 
-async function runRemediateCmd(
-  command: string,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return new Promise((resolve) => {
-    let child: ReturnType<typeof spawnSafe>;
-    try {
-      child = spawnSafe(command, args);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: msg, exitCode: -1 });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill("SIGTERM");
-        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => { stdout += data.toString(); });
-    child.stderr?.on("data", (data: Buffer) => { stderr += data.toString(); });
-
-    child.on("close", (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: err.message, exitCode: -1 });
-      }
-    });
-  });
-}
 
 async function gatherRemediationFindings(
   source: string,
@@ -620,7 +573,7 @@ async function gatherRemediationFindings(
   const shouldInclude = (cat: string): boolean => source === "all" || source === cat;
 
   if (shouldInclude("hardening")) {
-    const sysctlResult = await runRemediateCmd("sysctl", ["-a"]);
+    const sysctlResult = await runCommand("sysctl", ["-a"]);
     if (sysctlResult.exitCode === 0) {
       const sysctlValues = new Map<string, string>();
       for (const line of sysctlResult.stdout.split("\n")) {
@@ -641,7 +594,7 @@ async function gatherRemediationFindings(
   }
 
   if (shouldInclude("access_control")) {
-    const sshResult = await runRemediateCmd("grep", ["-E", "^PermitRootLogin|^PermitEmptyPasswords", "/etc/ssh/sshd_config"]);
+    const sshResult = await runCommand("grep", ["-E", "^PermitRootLogin|^PermitEmptyPasswords", "/etc/ssh/sshd_config"]);
     if (sshResult.exitCode === 0 || sshResult.stdout.length > 0) {
       if (sshResult.stdout.includes("PermitRootLogin yes")) { const f = KNOWN_REMEDIATIONS.find(r => r.finding_id === "ACCESS-001"); if (f) findings.push(f); }
       if (sshResult.stdout.includes("PermitEmptyPasswords yes")) { const f = KNOWN_REMEDIATIONS.find(r => r.finding_id === "ACCESS-002"); if (f) findings.push(f); }
@@ -649,7 +602,7 @@ async function gatherRemediationFindings(
   }
 
   if (shouldInclude("firewall")) {
-    const fwResult = await runRemediateCmd("iptables", ["-L", "-n"]);
+    const fwResult = await runCommand("iptables", ["-L", "-n"]);
     if (fwResult.exitCode === 0) {
       if (fwResult.stdout.includes("Chain INPUT (policy ACCEPT)")) { const f = KNOWN_REMEDIATIONS.find(r => r.finding_id === "FW-001"); if (f) findings.push(f); }
       if (fwResult.stdout.includes("Chain FORWARD (policy ACCEPT)")) { const f = KNOWN_REMEDIATIONS.find(r => r.finding_id === "FW-002"); if (f) findings.push(f); }
@@ -657,7 +610,7 @@ async function gatherRemediationFindings(
   }
 
   if (shouldInclude("compliance")) {
-    const lynisResult = await runRemediateCmd("lynis", ["audit", "system", "--quick", "--no-colors"], 120_000);
+    const lynisResult = await runCommand("lynis", ["audit", "system", "--quick", "--no-colors"], 120_000);
     if (lynisResult.exitCode === 0 || lynisResult.stdout.length > 0) {
       for (const f of KNOWN_REMEDIATIONS) {
         if (findings.some(e => e.finding_id === f.finding_id)) continue;
@@ -708,66 +661,12 @@ const ALL_SECTIONS = [
   "recommendations",
 ];
 
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-async function runReportCommand(
-  command: string,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawnSafe(command, args);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: msg, exitCode: -1 });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill("SIGTERM");
-        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => { stdout += data.toString(); });
-    child.stderr?.on("data", (data: Buffer) => { stderr += data.toString(); });
-
-    child.on("close", (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: err.message, exitCode: -1 });
-      }
-    });
-  });
-}
-
 async function runSudoReportCommand(
   command: string,
   args: string[],
   timeoutMs = 30_000,
 ): Promise<CommandResult> {
-  return runReportCommand("sudo", [command, ...args], timeoutMs);
+  return runCommand("sudo", [command, ...args], timeoutMs);
 }
 
 interface ReportSection {
@@ -778,9 +677,9 @@ interface ReportSection {
 }
 
 async function gatherSystemOverview(): Promise<ReportSection> {
-  const uname = await runReportCommand("uname", ["-a"]);
-  const hostname = await runReportCommand("hostname", []);
-  const uptime = await runReportCommand("uptime", []);
+  const uname = await runCommand("uname", ["-a"]);
+  const hostname = await runCommand("hostname", []);
+  const uptime = await runCommand("uptime", []);
 
   let data = "";
   if (uname.exitCode === 0) data += `Kernel: ${uname.stdout.trim()}\n`;
@@ -798,13 +697,13 @@ async function gatherFirewallStatus(): Promise<ReportSection> {
 }
 
 async function gatherServiceAudit(): Promise<ReportSection> {
-  const services = await runReportCommand("systemctl", ["list-units", "--type=service", "--state=running", "--no-pager", "--no-legend"]);
+  const services = await runCommand("systemctl", ["list-units", "--type=service", "--state=running", "--no-pager", "--no-legend"]);
   const data = services.exitCode === 0 ? services.stdout.trim() : `[Error listing services: ${services.stderr.trim()}]`;
   return { name: "Service Audit", key: "service_audit", data, error: services.exitCode !== 0 ? services.stderr.trim() : undefined };
 }
 
 async function gatherActiveConnections(): Promise<ReportSection> {
-  const ss = await runReportCommand("ss", ["-tulnp"]);
+  const ss = await runCommand("ss", ["-tulnp"]);
   const data = ss.exitCode === 0 ? ss.stdout.trim() : `[Error listing connections: ${ss.stderr.trim()}]`;
   return { name: "Active Connections", key: "active_connections", data, error: ss.exitCode !== 0 ? ss.stderr.trim() : undefined };
 }
@@ -812,7 +711,7 @@ async function gatherActiveConnections(): Promise<ReportSection> {
 async function gatherRecentLogins(since?: string): Promise<ReportSection> {
   const args = ["_COMM=sshd", "-n", "50", "--no-pager"];
   if (since) args.push("--since", since);
-  const logins = await runReportCommand("journalctl", args);
+  const logins = await runCommand("journalctl", args);
 
   let data = "";
   if (logins.exitCode === 0 && logins.stdout.trim().length > 0) {
@@ -901,7 +800,7 @@ function formatAsMarkdown(sections: ReportSection[], reportType: string, timesta
   md += `**Generated:** ${timestamp}\n**Report Type:** ${reportType}\n\n---\n\n`;
   for (const section of sections) {
     md += `## ${section.name}\n\n`;
-    if (section.error) md += `> ⚠️ Error: ${section.error}\n\n`;
+    if (section.error) md += `> Error: ${section.error}\n\n`;
     md += `\`\`\`\n${section.data}\n\`\`\`\n\n`;
   }
   return md;
@@ -914,7 +813,7 @@ function formatAsHtml(sections: ReportSection[], reportType: string, timestamp: 
   html += `<h1>Security Report: ${escapeHtml(reportType.replace(/_/g, " "))}</h1>\n<p><strong>Generated:</strong> ${escapeHtml(timestamp)}</p>\n`;
   for (const section of sections) {
     html += `<h2>${escapeHtml(section.name)}</h2>\n`;
-    if (section.error) html += `<p class="warning">⚠ Error: ${escapeHtml(section.error)}</p>\n`;
+    if (section.error) html += `<p class="warning">WARNING: Error: ${escapeHtml(section.error)}</p>\n`;
     html += `<pre>${escapeHtml(section.data)}</pre>\n`;
   }
   html += `</body></html>`;
@@ -922,7 +821,7 @@ function formatAsHtml(sections: ReportSection[], reportType: string, timestamp: 
 }
 
 function formatAsJson(sections: ReportSection[], reportType: string, timestamp: string): string {
-  return JSON.stringify({ reportType, generatedAt: timestamp, sections: sections.map((s) => ({ name: s.name, key: s.key, data: s.data, error: s.error || null })) }, null, 2);
+  return JSON.stringify({ reportType, generatedAt: timestamp, sections: sections.map((s) => ({ name: s.name, key: s.key, data: s.data, error: s.error || null })) });
 }
 
 function formatAsCsv(sections: ReportSection[], _reportType: string, _timestamp: string): string {
@@ -1011,14 +910,14 @@ export function registerMetaTools(server: McpServer): void {
           const { category, install_missing, dry_run, gate } = params;
           try {
             const sections: string[] = [];
-            sections.push("🔧 Defensive Tool Availability Check");
-            sections.push("=".repeat(50));
+            sections.push("Defensive Tool Availability Check");
+            sections.push("");
 
             const validCategories = ["hardening", "firewall", "monitoring", "assessment", "network", "access", "encryption", "container", "malware", "forensics"];
             const filterCategory = category && validCategories.includes(category) ? (category as ToolCategory) : undefined;
 
             if (category && !filterCategory) {
-              sections.push(`\n⚠️ Unknown category '${category}'. Valid: ${validCategories.join(", ")}`);
+              sections.push(`\nWARNING: Unknown category '${category}'. Valid: ${validCategories.join(", ")}`);
               sections.push("Showing all categories.\n");
             }
 
@@ -1039,12 +938,12 @@ export function registerMetaTools(server: McpServer): void {
                 if (t.installed) {
                   installed++;
                   const version = t.version ? ` (${t.version.substring(0, 60)})` : "";
-                  sections.push(`  ✅ ${t.tool.name}${version}`);
+                  sections.push(`  ${t.tool.name}${version}`);
                   if (t.path) sections.push(`     Path: ${t.path}`);
                 } else {
                   missing++;
                   const req = t.tool.required ? " [REQUIRED]" : " [optional]";
-                  sections.push(`  ❌ ${t.tool.name}${req}`);
+                  sections.push(`  ${t.tool.name}${req}`);
                 }
               }
             }
@@ -1061,7 +960,7 @@ export function registerMetaTools(server: McpServer): void {
                 sections.push("  Installing missing tools...\n");
                 const installResults = await installMissing(filterCategory, false);
                 for (const r of installResults) {
-                  const icon = r.success ? "✅" : "❌";
+                  const icon = r.success ? "PASS" : "FAIL";
                   sections.push(`  ${icon} ${r.message}`);
                 }
                 logChange(createChangeEntry({ tool: "defense_mgmt", action: "install_missing", target: filterCategory || "all", after: `Attempted to install ${installResults.length} tools`, dryRun: false, success: installResults.every((r) => r.success) }));
@@ -1085,8 +984,8 @@ export function registerMetaTools(server: McpServer): void {
 
               if (requiredMissing.length > 0) {
                 sections.push("");
-                sections.push("🚫 AUDIT GATE: BLOCKED");
-                sections.push("=".repeat(50));
+                sections.push("AUDIT GATE: BLOCKED");
+                sections.push("");
                 sections.push(`${requiredMissing.length} required tool(s) missing. Audit cannot proceed.\n`);
 
                 sections.push("Required (must fix):");
@@ -1124,7 +1023,7 @@ export function registerMetaTools(server: McpServer): void {
 
               if (optionalMissing.length > 0) {
                 sections.push("");
-                sections.push("✅ AUDIT GATE: PASSED (with warnings)");
+                sections.push("AUDIT GATE: PASSED (with warnings)");
                 sections.push(`${optionalMissing.length} optional tool(s) missing — audit can proceed but some checks may be skipped.`);
                 for (const r of optionalMissing) {
                   const hint = await getInstallHint(r.tool);
@@ -1145,7 +1044,7 @@ export function registerMetaTools(server: McpServer): void {
               }
 
               // All tools present
-              sections.push("\n✅ AUDIT GATE: PASSED — all tools available.");
+              sections.push("\nAUDIT GATE: PASSED — all tools available.");
               return {
                 content: [createTextContent(sections.join("\n"))],
                 _meta: {
@@ -1173,9 +1072,9 @@ export function registerMetaTools(server: McpServer): void {
             if (!objective) return { content: [createErrorContent("objective is required for workflow_suggest action")], isError: true };
 
             const sections: string[] = [];
-            sections.push(`📋 Recommended Workflow: ${objective.replace(/_/g, " ").toUpperCase()}`);
+            sections.push(`Recommended Workflow: ${objective.replace(/_/g, " ").toUpperCase()}`);
             sections.push(`System type: ${system_type}`);
-            sections.push("=".repeat(50));
+            sections.push("");
 
             const suggestions = WORKFLOW_SUGGESTIONS[objective]?.[system_type!] || [];
             if (suggestions.length === 0) {
@@ -1209,8 +1108,8 @@ export function registerMetaTools(server: McpServer): void {
             if (!workflow) return { content: [createErrorContent("workflow is required for workflow_run action")], isError: true };
 
             const sections: string[] = [];
-            sections.push(`🚀 Workflow: ${workflow.replace(/_/g, " ").toUpperCase()}`);
-            sections.push("=".repeat(50));
+            sections.push(`Workflow: ${workflow.replace(/_/g, " ").toUpperCase()}`);
+            sections.push("");
 
             const steps = WORKFLOWS[workflow];
             if (!steps || steps.length === 0) return { content: [createErrorContent(`Unknown workflow: ${workflow}`)], isError: true };
@@ -1254,9 +1153,9 @@ export function registerMetaTools(server: McpServer): void {
                   `defense_mgmt_${workflow}_step_${i + 1}`,
                   { command: step.command, args: step.args, description: step.description }
                 );
-                if (stepSafety.warnings.length > 0) sections.push(`  ⚠️ Safety warnings: ${stepSafety.warnings.join("; ")}`);
+                if (stepSafety.warnings.length > 0) sections.push(`  WARNING: Safety warnings: ${stepSafety.warnings.join("; ")}`);
                 if (!stepSafety.safe) {
-                  sections.push(`  🛑 Step blocked by safeguards: ${stepSafety.blockers.join("; ")}`);
+                  sections.push(`  Step blocked by safeguards: ${stepSafety.blockers.join("; ")}`);
                   sections.push(`  Impacted: ${stepSafety.impactedApps.join(", ")}`);
                   failCount++;
                   logChange(createChangeEntry({ tool: "defense_mgmt", action: `${workflow}_step_${i + 1}`, target: step.description, after: `blocked by safeguards: ${stepSafety.blockers.join("; ")}`, dryRun: false, success: false, error: "Blocked by safeguard checks" }));
@@ -1270,7 +1169,7 @@ export function registerMetaTools(server: McpServer): void {
 
                 if (result.exitCode === 0) {
                   successCount++;
-                  sections.push(`  ✅ Completed in ${duration}s`);
+                  sections.push(`  Completed in ${duration}s`);
                   const output = result.stdout.trim();
                   if (output) {
                     const outputLines = output.split("\n");
@@ -1279,7 +1178,7 @@ export function registerMetaTools(server: McpServer): void {
                   }
                 } else {
                   failCount++;
-                  sections.push(`  ❌ Failed (exit ${result.exitCode}) in ${duration}s`);
+                  sections.push(`  Failed (exit ${result.exitCode}) in ${duration}s`);
                   if (result.stderr) sections.push(`  Error: ${result.stderr.substring(0, 200)}`);
                 }
                 sections.push("");
@@ -1289,7 +1188,7 @@ export function registerMetaTools(server: McpServer): void {
               sections.push("── Workflow Summary ──");
               sections.push(`  Completed: ${successCount}/${steps.length}`);
               sections.push(`  Failed: ${failCount}/${steps.length}`);
-              sections.push(failCount === 0 ? "  ✅ All steps completed successfully" : "  ⚠️ Some steps failed");
+              sections.push(failCount === 0 ? "  All steps completed successfully" : "  WARNING: Some steps failed");
             }
             return { content: [createTextContent(sections.join("\n"))] };
           } catch (err: unknown) {
@@ -1302,8 +1201,8 @@ export function registerMetaTools(server: McpServer): void {
           const { limit, tool, since } = params;
           try {
             const sections: string[] = [];
-            sections.push("📜 Defense Change History");
-            sections.push("=".repeat(50));
+            sections.push("Defense Change History");
+            sections.push("");
 
             let entries = getChangelog(limit * 5);
 
@@ -1334,14 +1233,14 @@ export function registerMetaTools(server: McpServer): void {
             if (since) sections.push(`  Filter: since '${since}'`);
 
             for (const entry of entries) {
-              sections.push("\n  " + "─".repeat(40));
+              sections.push("\n  " + "");
               sections.push(`  ID: ${entry.id}`);
               sections.push(`  Time: ${entry.timestamp}`);
               sections.push(`  Tool: ${entry.tool}`);
               sections.push(`  Action: ${entry.action}`);
               sections.push(`  Target: ${entry.target}`);
               sections.push(`  Dry Run: ${entry.dryRun ? "Yes" : "No"}`);
-              sections.push(`  Success: ${entry.success ? "✅" : "❌"}`);
+              sections.push(`  Success: ${entry.success ? "PASS" : "FAIL"}`);
               if (entry.error) sections.push(`  Error: ${entry.error}`);
               if (entry.before) sections.push(`  Before: ${entry.before.substring(0, 100)}`);
               if (entry.after) sections.push(`  After: ${entry.after.substring(0, 100)}`);
@@ -1712,13 +1611,13 @@ export function registerMetaTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push("🔍 Auto-Remediation Plan");
-            sections.push("=".repeat(50));
+            sections.push("Auto-Remediation Plan");
+            sections.push("");
             sections.push(`Source: ${effectiveSource} | Severity filter: >= ${effectiveSeverity}`);
             sections.push(`Total findings: ${findings.length}`);
 
             if (findings.length === 0) {
-              sections.push("\n✅ No findings match the current filters. System looks good!");
+              sections.push("\nNo findings match the current filters. System looks good!");
               return { content: [createTextContent(sections.join("\n"))] };
             }
 
@@ -1755,7 +1654,7 @@ export function registerMetaTools(server: McpServer): void {
             if (findings.length === 0) {
               const msg = "No findings match the current filters. Nothing to remediate.";
               if (params.output_format === "json") return { content: [formatToolOutput({ action: "apply", dry_run: effectiveDryRun, message: msg, actions_taken: 0 })] };
-              return { content: [createTextContent(`✅ ${msg}`)] };
+              return { content: [createTextContent(msg)] };
             }
 
             if (effectiveDryRun) {
@@ -1764,8 +1663,8 @@ export function registerMetaTools(server: McpServer): void {
               }
 
               const sections: string[] = [];
-              sections.push("🔒 Auto-Remediation — DRY RUN");
-              sections.push("=".repeat(50));
+              sections.push("Auto-Remediation — DRY RUN");
+              sections.push("");
               sections.push("[DRY RUN] No changes will be made.\n");
 
               const safeFindings = findings.filter(f => f.risk_level === "safe");
@@ -1774,13 +1673,13 @@ export function registerMetaTools(server: McpServer): void {
               if (safeFindings.length > 0) {
                 sections.push("Would execute:");
                 for (const f of safeFindings) {
-                  sections.push(`  ✅ ${f.finding_id}: ${f.remediation_command} ${f.remediation_args.join(" ")}`);
+                  sections.push(`  ${f.finding_id}: ${f.remediation_command} ${f.remediation_args.join(" ")}`);
                   sections.push(`     ${f.description}`);
                 }
               }
               if (skippedFindings.length > 0) {
                 sections.push("\nWould skip (too risky for auto-execution):");
-                for (const f of skippedFindings) sections.push(`  ⏭️  ${f.finding_id}: ${f.description} [${f.risk_level}]`);
+                for (const f of skippedFindings) sections.push(`  SKIPPED: ${f.finding_id}: ${f.description} [${f.risk_level}]`);
               }
               sections.push("\nSet dry_run=false to execute safe remediations.");
               return { content: [createTextContent(sections.join("\n"))] };
@@ -1796,8 +1695,8 @@ export function registerMetaTools(server: McpServer): void {
             };
 
             const sections: string[] = [];
-            sections.push("🔧 Auto-Remediation — LIVE EXECUTION");
-            sections.push("=".repeat(50));
+            sections.push("Auto-Remediation — LIVE EXECUTION");
+            sections.push("");
             sections.push(`Session ID: ${sessionId}\n`);
 
             for (const f of findings) {
@@ -1805,13 +1704,13 @@ export function registerMetaTools(server: McpServer): void {
               if (f.risk_level !== "safe") {
                 session.actions.push({ finding_id: f.finding_id, description: f.description, remediation_command: f.remediation_command, remediation_args: f.remediation_args, rollback_command: f.rollback_command, rollback_args: f.rollback_args, before_state: "", after_state: "", status: "skipped", error: `risk_level is ${f.risk_level} (only safe actions auto-executed)`, timestamp: new Date().toISOString() });
                 session.summary.skipped++;
-                sections.push(`  ⏭️  ${f.finding_id}: SKIPPED (${f.risk_level} risk)`);
+                sections.push(`  SKIPPED: ${f.finding_id}: SKIPPED (${f.risk_level} risk)`);
                 continue;
               }
               if (!REMEDIATION_ALLOWLIST.has(f.remediation_command)) {
                 session.actions.push({ finding_id: f.finding_id, description: f.description, remediation_command: f.remediation_command, remediation_args: f.remediation_args, rollback_command: f.rollback_command, rollback_args: f.rollback_args, before_state: "", after_state: "", status: "skipped", error: `Command '${f.remediation_command}' not in remediation allowlist`, timestamp: new Date().toISOString() });
                 session.summary.skipped++;
-                sections.push(`  ⏭️  ${f.finding_id}: SKIPPED (command not in remediation allowlist)`);
+                sections.push(`  SKIPPED: ${f.finding_id}: SKIPPED (command not in remediation allowlist)`);
                 continue;
               }
 
@@ -1819,27 +1718,27 @@ export function registerMetaTools(server: McpServer): void {
               const setArg = f.remediation_args.find(a => a.includes("="));
               if (setArg && f.remediation_command === "sysctl") {
                 const key = setArg.substring(0, setArg.indexOf("="));
-                const beforeResult = await runRemediateCmd("sysctl", ["-n", key]);
+                const beforeResult = await runCommand("sysctl", ["-n", key]);
                 beforeState = beforeResult.stdout.trim();
               }
 
-              const result = await runRemediateCmd(f.remediation_command, f.remediation_args);
+              const result = await runCommand(f.remediation_command, f.remediation_args);
 
               let afterState = "";
               if (setArg && f.remediation_command === "sysctl") {
                 const key = setArg.substring(0, setArg.indexOf("="));
-                const afterResult = await runRemediateCmd("sysctl", ["-n", key]);
+                const afterResult = await runCommand("sysctl", ["-n", key]);
                 afterState = afterResult.stdout.trim();
               }
 
               if (result.exitCode === 0) {
                 session.actions.push({ finding_id: f.finding_id, description: f.description, remediation_command: f.remediation_command, remediation_args: f.remediation_args, rollback_command: f.rollback_command, rollback_args: f.rollback_args, before_state: beforeState, after_state: afterState, status: "success", timestamp: new Date().toISOString() });
                 session.summary.successful++;
-                sections.push(`  ✅ ${f.finding_id}: ${f.description}`);
+                sections.push(`  ${f.finding_id}: ${f.description}`);
               } else {
                 session.actions.push({ finding_id: f.finding_id, description: f.description, remediation_command: f.remediation_command, remediation_args: f.remediation_args, rollback_command: f.rollback_command, rollback_args: f.rollback_args, before_state: beforeState, after_state: afterState, status: "failed", error: result.stderr.substring(0, 200), timestamp: new Date().toISOString() });
                 session.summary.failed++;
-                sections.push(`  ❌ ${f.finding_id}: FAILED — ${result.stderr.substring(0, 100)}`);
+                sections.push(`  ${f.finding_id}: FAILED — ${result.stderr.substring(0, 100)}`);
               }
             }
 
@@ -1850,7 +1749,7 @@ export function registerMetaTools(server: McpServer): void {
               secureWriteFileSync(sessionPath, JSON.stringify(session, null, 2), "utf-8");
               sections.push(`\nSession saved: ${sessionPath}`);
             } catch (writeErr: unknown) {
-              sections.push(`\n⚠️ Failed to save session: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+              sections.push(`\nWARNING: Failed to save session: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
             }
 
             sections.push("\n── Summary ──");
@@ -1879,8 +1778,8 @@ export function registerMetaTools(server: McpServer): void {
             catch { return { content: [createErrorContent(`Failed to parse session file: ${sessionPath}`)], isError: true }; }
 
             const sections: string[] = [];
-            sections.push("⏪ Rollback Session");
-            sections.push("=".repeat(50));
+            sections.push("Rollback Session");
+            sections.push("");
             sections.push(`Session: ${session_id}`);
 
             const actionsToRollback = session.actions.filter(a => a.status === "success").reverse();
@@ -1892,14 +1791,14 @@ export function registerMetaTools(server: McpServer): void {
 
             let rolledBack = 0, errors = 0;
             for (const action of actionsToRollback) {
-              const result = await runRemediateCmd(action.rollback_command, action.rollback_args);
+              const result = await runCommand(action.rollback_command, action.rollback_args);
               if (result.exitCode === 0) {
                 action.status = "rolled_back";
                 rolledBack++;
-                sections.push(`  ✅ Rolled back: ${action.finding_id} — ${action.description}`);
+                sections.push(`  Rolled back: ${action.finding_id} — ${action.description}`);
               } else {
                 errors++;
-                sections.push(`  ❌ Rollback failed: ${action.finding_id} — ${result.stderr.substring(0, 100)}`);
+                sections.push(`  Rollback failed: ${action.finding_id} — ${result.stderr.substring(0, 100)}`);
               }
             }
 
@@ -1934,8 +1833,8 @@ export function registerMetaTools(server: McpServer): void {
               if (output_format === "json") return { content: [formatToolOutput(session)] };
 
               const sections: string[] = [];
-              sections.push("📊 Remediation Session Detail");
-              sections.push("=".repeat(50));
+              sections.push("Remediation Session Detail");
+              sections.push("");
               sections.push(`Session: ${session.session_id}`);
               sections.push(`Created: ${session.created_at}`);
               sections.push(`Status: ${session.status}`);
@@ -1976,8 +1875,8 @@ export function registerMetaTools(server: McpServer): void {
             if (output_format === "json") return { content: [formatToolOutput({ total_sessions: sessionSummaries.length, sessions: sessionSummaries })] };
 
             const sections: string[] = [];
-            sections.push("📊 Remediation Sessions");
-            sections.push("=".repeat(50));
+            sections.push("Remediation Sessions");
+            sections.push("");
             sections.push(`Total sessions: ${sessionSummaries.length}\n`);
             for (const s of sessionSummaries) {
               sections.push(`  ${s.session_id}`);
@@ -2074,8 +1973,8 @@ export function registerMetaTools(server: McpServer): void {
           try {
             const statuses = await listThirdPartyTools();
             const sections: string[] = [];
-            sections.push("📦 Optional Third-Party Tool Status");
-            sections.push("=".repeat(50));
+            sections.push("Optional Third-Party Tool Status");
+            sections.push("");
             sections.push("");
 
             // Table header
@@ -2088,14 +1987,14 @@ export function registerMetaTools(server: McpServer): void {
               "Method".padEnd(16) +
               "Verification"
             );
-            sections.push("  " + "─".repeat(80));
+            sections.push("  " + "");
 
             let installedCount = 0;
             let missingCount = 0;
 
             for (const status of statuses) {
               const entry = THIRD_PARTY_MANIFEST.find(e => e.binary === status.binary);
-              const installedStr = status.installed ? "✅ yes" : "❌ no";
+              const installedStr = status.installed ? "yes" : "no";
               const currentVer = status.currentVersion ?? "—";
               const targetVer = status.manifestVersion;
               const method = entry?.installMethod ?? "unknown";
@@ -2130,7 +2029,7 @@ export function registerMetaTools(server: McpServer): void {
                 }
               }
               sections.push("");
-              sections.push("  💡 Run: defense_mgmt → install_optional_deps (dry_run=true) to see full install plan");
+              sections.push("  Run: defense_mgmt → install_optional_deps (dry_run=true) to see full install plan");
             }
 
             return { content: [createTextContent(sections.join("\n"))] };
@@ -2150,8 +2049,8 @@ export function registerMetaTools(server: McpServer): void {
             // Gate 1: Check DEFENSE_MCP_THIRD_PARTY_INSTALL env var
             if (!isThirdPartyInstallEnabled()) {
               const sections: string[] = [];
-              sections.push("🔒 Third-Party Installation Not Enabled");
-              sections.push("=".repeat(50));
+              sections.push("Third-Party Installation Not Enabled");
+              sections.push("");
               sections.push("");
               sections.push("SECURITY: Third-party tool installation requires explicit opt-in.");
               sections.push("Set the following environment variable in your MCP server configuration:");
@@ -2169,7 +2068,7 @@ export function registerMetaTools(server: McpServer): void {
               if (missing.length > 0) {
                 sections.push("── Missing Optional Tools ──");
                 for (const status of missing) {
-                  sections.push(`\n  📦 ${status.name} (v${status.manifestVersion})`);
+                  sections.push(`\n  ${status.name} (v${status.manifestVersion})`);
                   const instructions = getVerifiedInstallInstructions(status.binary);
                   // Show first few lines of instructions
                   const instrLines = instructions.split("\n").slice(0, 3);
@@ -2178,7 +2077,7 @@ export function registerMetaTools(server: McpServer): void {
                   }
                 }
               } else {
-                sections.push("  ✅ All optional tools are already installed.");
+                sections.push("  All optional tools are already installed.");
               }
 
               return { content: [createTextContent(sections.join("\n"))] };
@@ -2188,8 +2087,8 @@ export function registerMetaTools(server: McpServer): void {
             if (effectiveDryRun) {
               const statuses = await listThirdPartyTools();
               const sections: string[] = [];
-              sections.push("📋 Third-Party Tool Installation Plan [DRY RUN]");
-              sections.push("=".repeat(50));
+              sections.push("Third-Party Tool Installation Plan [DRY RUN]");
+              sections.push("");
               sections.push("");
 
               let planCount = 0;
@@ -2212,11 +2111,11 @@ export function registerMetaTools(server: McpServer): void {
               }
 
               if (planCount === 0) {
-                sections.push("  ✅ All optional tools are already installed. Nothing to do.");
+                sections.push("  All optional tools are already installed. Nothing to do.");
                 if (toolName) {
                   const found = statuses.find(s => s.binary === toolName);
                   if (!found) {
-                    sections.push(`  ⚠️  Tool '${toolName}' is not in the third-party manifest.`);
+                    sections.push(`  WARNING: Tool '${toolName}' is not in the third-party manifest.`);
                   }
                 }
               } else {
@@ -2231,12 +2130,12 @@ export function registerMetaTools(server: McpServer): void {
             // Gate 3: Live installation (dry_run=false AND DEFENSE_MCP_THIRD_PARTY_INSTALL=true)
             const statuses = await listThirdPartyTools();
             const sections: string[] = [];
-            sections.push("🔧 Third-Party Tool Installation [LIVE]");
-            sections.push("=".repeat(50));
+            sections.push("Third-Party Tool Installation [LIVE]");
+            sections.push("");
             sections.push("");
 
             if (!forceInstall) {
-              sections.push("⚠️  Note: The caller is responsible for confirming intent.");
+              sections.push("WARNING: Note: The caller is responsible for confirming intent.");
               sections.push("   Use force=true to skip this notice for automation.");
               sections.push("");
             }
@@ -2251,26 +2150,26 @@ export function registerMetaTools(server: McpServer): void {
 
               if (status.installed && !forceInstall) {
                 skipCount++;
-                sections.push(`  ⏭️  ${status.name} (${status.binary}) — already installed (v${status.currentVersion ?? "unknown"})`);
+                sections.push(`  SKIPPED: ${status.name} (${status.binary}) — already installed (v${status.currentVersion ?? "unknown"})`);
                 continue;
               }
 
-              sections.push(`  ⏳ Installing ${status.name} v${status.manifestVersion}...`);
+              sections.push(`  Installing ${status.name} v${status.manifestVersion}...`);
               const result = await installThirdPartyTool(status.binary, { force: forceInstall });
 
               if (result.success) {
                 successCount++;
-                sections.push(`  ✅ ${result.message}`);
+                sections.push(`  ${result.message}`);
               } else {
                 failCount++;
-                sections.push(`  ❌ ${result.message}`);
+                sections.push(`  ${result.message}`);
               }
             }
 
             if (toolName) {
               const found = statuses.find(s => s.binary === toolName);
               if (!found) {
-                sections.push(`  ⚠️  Tool '${toolName}' is not in the third-party manifest.`);
+                sections.push(`  WARNING: Tool '${toolName}' is not in the third-party manifest.`);
                 sections.push(`  Available tools: ${statuses.map(s => s.binary).join(", ")}`);
               }
             }

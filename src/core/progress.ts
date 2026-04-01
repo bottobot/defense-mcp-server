@@ -78,10 +78,10 @@ export function renderProgressBar(
 // ── Complexity Badges ────────────────────────────────────────────────────────
 
 const COMPLEXITY_BADGES: Record<Complexity, string> = {
-  low: "⚡ LOW",
-  medium: "📊 MEDIUM",
-  high: "🔥 HIGH",
-  critical: "⚠️  CRITICAL",
+  low: "LOW",
+  medium: "MEDIUM",
+  high: "HIGH",
+  critical: "WARNING: CRITICAL",
 };
 
 // ── Pre-Execution Banner ─────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ export function generateDurationBanner(
 
   if (!estimate) {
     // No estimate available — return minimal info
-    return `⏱️  Timeout: ${formatElapsed(timeoutMs)}\n`;
+    return `Timeout: ${formatElapsed(timeoutMs)}\n`;
   }
 
   const durationStr = formatDurationEstimate(estimate);
@@ -116,24 +116,24 @@ export function generateDurationBanner(
 
   if (!longRunning) {
     // Quick tool — compact one-liner
-    return `⏱️  Est: ${durationStr} | ${complexityBadge}\n`;
+    return `Est: ${durationStr} | ${complexityBadge}\n`;
   }
 
   // Long-running tool — detailed banner
   const lines: string[] = [];
   lines.push("┌─────────────────────────────────────────────────────────┐");
-  lines.push(`│ 📋 ${estimate.description.padEnd(54)}│`);
+  lines.push(`│ ${estimate.description.padEnd(54)}│`);
   lines.push("├─────────────────────────────────────────────────────────┤");
-  lines.push(`│ ⏱️  Duration estimate: ${durationStr.padEnd(36)}│`);
-  lines.push(`│ 📊 Complexity: ${complexityBadge.padEnd(42)}│`);
-  lines.push(`│ 🔧 Timeout: ${formatElapsed(timeoutMs).padEnd(45)}│`);
+  lines.push(`│ Duration estimate: ${durationStr.padEnd(36)}│`);
+  lines.push(`│ Complexity: ${complexityBadge.padEnd(42)}│`);
+  lines.push(`│ Timeout: ${formatElapsed(timeoutMs).padEnd(45)}│`);
 
   if (estimate.supportsProgress) {
-    lines.push(`│ 📈 Progress tracking: enabled${" ".repeat(28)}│`);
+    lines.push(`│ Progress tracking: enabled${" ".repeat(28)}│`);
   }
 
   if (estimate.durationFactors.length > 0) {
-    lines.push(`│ 📎 Factors: ${estimate.durationFactors.slice(0, 2).join(", ").padEnd(45)}│`);
+    lines.push(`│ Factors: ${estimate.durationFactors.slice(0, 2).join(", ").padEnd(45)}│`);
   }
 
   lines.push("└─────────────────────────────────────────────────────────┘");
@@ -163,7 +163,7 @@ export function generateTimingSummary(
   const actualStr = formatElapsed(actualMs);
 
   if (!estimate) {
-    return `\n⏱️  Completed in ${actualStr}`;
+    return `\nCompleted in ${actualStr}`;
   }
 
   const minMs = estimate.minSeconds * 1000;
@@ -172,14 +172,14 @@ export function generateTimingSummary(
 
   let indicator: string;
   if (actualMs < minMs) {
-    indicator = "⚡ Faster than expected";
+    indicator = "Faster than expected";
   } else if (actualMs > maxMs) {
-    indicator = "🐢 Slower than expected";
+    indicator = "Slower than expected";
   } else {
-    indicator = "✅ Within estimate";
+    indicator = "PASS: Within estimate";
   }
 
-  return `\n⏱️  Completed in ${actualStr} (est: ${estimatedStr}) — ${indicator}`;
+  return `\nCompleted in ${actualStr} (est: ${estimatedStr}) — ${indicator}`;
 }
 
 // ── Timing Context Helpers ───────────────────────────────────────────────────
@@ -267,14 +267,14 @@ export function generatePhaseBanner(
     const totalMinMin = Math.ceil(totalMinSec / 60);
     const totalMaxMin = Math.ceil(totalMaxSec / 60);
     const avgMin = Math.ceil((totalMinMin + totalMaxMin) / 2);
-    lines.push(`║  📊 TOTAL ESTIMATE: ${totalMinMin}-${totalMaxMin} min (avg: ~${avgMin} min)${" ".repeat(Math.max(0, 20 - String(totalMaxMin).length - String(avgMin).length))}║`);
+    lines.push(`║  TOTAL ESTIMATE: ${totalMinMin}-${totalMaxMin} min (avg: ~${avgMin} min)${" ".repeat(Math.max(0, 20 - String(totalMaxMin).length - String(avgMin).length))}║`);
   }
 
   if (hasLongRunning) {
-    lines.push("║  ⚠️  Long-running phase — progress updates included         ║");
+    lines.push("║  WARNING: Long-running phase — progress updates included         ║");
   }
 
-  lines.push("║  ✓ All tools will run to completion (no timeouts)          ║");
+  lines.push("║  OK All tools will run to completion (no timeouts)          ║");
   lines.push("║                                                            ║");
   lines.push("╚════════════════════════════════════════════════════════════╝");
 

@@ -338,7 +338,7 @@ function verifyInstalledBinary(binary: string): boolean {
 
     if (!pattern.test(stdout ?? "")) {
       console.error(
-        `[auto-installer] ⚠️  Installed '${binary}' but --version output doesn't match ` +
+        `[auto-installer] WARNING: Installed '${binary}' but --version output doesn't match ` +
         `expected pattern /${pattern.source}/. The package may be a name collision, not the security tool.`
       );
       return false;
@@ -347,7 +347,7 @@ function verifyInstalledBinary(binary: string): boolean {
   } catch {
     // Can't verify — warn but don't block
     console.error(
-      `[auto-installer] ⚠️  Could not verify '${binary}' identity via --version (non-fatal)`
+      `[auto-installer] WARNING: Could not verify '${binary}' identity via --version (non-fatal)`
     );
     return false;
   }
@@ -393,7 +393,7 @@ export class AutoInstaller {
       // Fix E: Warn when auto-install is enabled
       if (AutoInstaller._instance.isEnabled()) {
         console.error(
-          "[auto-install] ⚠ Auto-installation is ENABLED. Packages will be installed with sudo when missing dependencies are detected.",
+          "[auto-install] WARNING: Auto-installation is ENABLED. Packages will be installed with sudo when missing dependencies are detected.",
         );
       }
     }
@@ -563,7 +563,7 @@ export class AutoInstaller {
     if (!toolReq) {
       // Binary not in approved package list — refuse to install
       console.error(
-        `[auto-install] ⚠ Binary "${binary}" not in approved package list — skipping auto-install`,
+        `[auto-install] WARNING: Binary "${binary}" not in approved package list — skipping auto-install`,
       );
       return {
         dependency: binary,
@@ -607,7 +607,7 @@ export class AutoInstaller {
       // Third-party install not enabled — return verified instructions (NOT curl|sh hints)
       const instructions = getVerifiedInstallInstructions(binary);
       console.error(
-        `[auto-install] ⚠ Binary "${binary}" requires third-party installation (not in standard repos).\n` +
+        `[auto-install] WARNING: Binary "${binary}" requires third-party installation (not in standard repos).\n` +
         `  Set DEFENSE_MCP_THIRD_PARTY_INSTALL=true to enable verified auto-install.`,
       );
       return {
@@ -626,7 +626,7 @@ export class AutoInstaller {
     // Check if this is a package-only dependency (e.g. PAM module, not a binary)
     if (toolReq.isPackageOnly) {
       console.error(
-        `[auto-install] ℹ "${binary}" is a package-only dependency (e.g. PAM module), not a standalone binary. ` +
+        `[auto-install] INFO: "${binary}" is a package-only dependency (e.g. PAM module), not a standalone binary. ` +
         `Will attempt to install the package "${toolReq.packages.debian ?? toolReq.packages.fallback}".`,
       );
     }
@@ -637,7 +637,7 @@ export class AutoInstaller {
         const checkResult = execSimple("dpkg", ["-l", conflictPkg], { timeoutMs: 10_000 });
         if (checkResult.success && checkResult.stdout.includes("ii")) {
           console.error(
-            `[auto-install] ⚠ CONFLICT: Cannot install "${binary}" — conflicting package "${conflictPkg}" is already installed. ` +
+            `[auto-install] WARNING: CONFLICT: Cannot install "${binary}" — conflicting package "${conflictPkg}" is already installed. ` +
             `${toolReq.availabilityNote ?? ""}`,
           );
           return {
@@ -662,7 +662,7 @@ export class AutoInstaller {
 
     if (!packageName) {
       console.error(
-        `[auto-install] ⚠ No package mapping for binary "${binary}" on ${distro.family} — skipping`,
+        `[auto-install] WARNING: No package mapping for binary "${binary}" on ${distro.family} — skipping`,
       );
       return {
         dependency: binary,
@@ -677,7 +677,7 @@ export class AutoInstaller {
     // Validate package name for safe characters
     if (!validatePackageName(packageName)) {
       console.error(
-        `[auto-install] ⚠ Invalid package name "${packageName}" for binary "${binary}" — skipping`,
+        `[auto-install] WARNING: Invalid package name "${packageName}" for binary "${binary}" — skipping`,
       );
       return {
         dependency: binary,
@@ -692,7 +692,7 @@ export class AutoInstaller {
     // Verify package is in the approved allowlist
     if (!getApprovedPackages().has(packageName)) {
       console.error(
-        `[auto-install] ⚠ Package "${packageName}" not in approved allowlist — skipping`,
+        `[auto-install] WARNING: Package "${packageName}" not in approved allowlist — skipping`,
       );
       return {
         dependency: binary,
@@ -727,7 +727,7 @@ export class AutoInstaller {
 
     if (!result.success) {
       console.error(
-        `[auto-installer] ✗ Failed to install '${binary}' (package: ${packageName}): ${result.stderr.slice(0, 200)}`,
+        `[auto-installer] FAIL Failed to install '${binary}' (package: ${packageName}): ${result.stderr.slice(0, 200)}`,
       );
       return {
         dependency: binary,
@@ -748,7 +748,7 @@ export class AutoInstaller {
       const verified = verifyInstalledBinary(binary);
       if (!verified) {
         console.error(
-          `[auto-installer] ⚠️  Binary '${binary}' installed but identity verification failed. ` +
+          `[auto-installer] WARNING: Binary '${binary}' installed but identity verification failed. ` +
           `The package may be a name collision (not the expected security tool). ` +
           `Trivy, Grype, Syft, and Cosign require third-party repositories.`
         );
@@ -757,7 +757,7 @@ export class AutoInstaller {
 
     if (installed) {
       console.error(
-        `[auto-installer] ✓ Installed '${binary}' via ${distro.packageManager} (${elapsed}s)`,
+        `[auto-installer] OK Installed '${binary}' via ${distro.packageManager} (${elapsed}s)`,
       );
       // Log successful installation to the audit changelog
       logChange(createChangeEntry({
@@ -771,7 +771,7 @@ export class AutoInstaller {
       }));
     } else {
       console.error(
-        `[auto-installer] ⚠ Package '${packageName}' installed but binary '${binary}' not found in PATH`,
+        `[auto-installer] WARNING: Package '${packageName}' installed but binary '${binary}' not found in PATH`,
       );
     }
 
@@ -802,7 +802,7 @@ export class AutoInstaller {
     const pip = binaryAvailable("pip3") ? "pip3" : binaryAvailable("pip") ? "pip" : null;
 
     if (!pip) {
-      console.error(`[auto-installer] ✗ Cannot install Python module '${module}': pip not found`);
+      console.error(`[auto-installer] FAIL Cannot install Python module '${module}': pip not found`);
       return {
         dependency: module,
         type: "python-module",
@@ -816,7 +816,7 @@ export class AutoInstaller {
     // Validate module name for safe characters
     if (!validateModuleName(module)) {
       console.error(
-        `[auto-install] ⚠ Invalid Python module name "${module}" — skipping`,
+        `[auto-install] WARNING: Invalid Python module name "${module}" — skipping`,
       );
       return {
         dependency: module,
@@ -831,7 +831,7 @@ export class AutoInstaller {
     // SECURITY (CORE-008): Verify pip package is in the allowed packages list
     if (!ALLOWED_PIP_PACKAGES.has(module)) {
       console.error(
-        `[auto-install] ⚠ REJECTED: pip package "${module}" is not in the allowed packages list`,
+        `[auto-install] WARNING: REJECTED: pip package "${module}" is not in the allowed packages list`,
       );
       return {
         dependency: module,
@@ -858,7 +858,7 @@ export class AutoInstaller {
 
     if (!result.success) {
       console.error(
-        `[auto-installer] ✗ Failed to install Python module '${module}': ${result.stderr.slice(0, 200)}`,
+        `[auto-installer] FAIL Failed to install Python module '${module}': ${result.stderr.slice(0, 200)}`,
       );
       return {
         dependency: module,
@@ -878,7 +878,7 @@ export class AutoInstaller {
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
     if (verifyResult.success) {
-      console.error(`[auto-installer] ✓ Installed Python module '${module}' (${elapsed}s)`);
+      console.error(`[auto-installer] OK Installed Python module '${module}' (${elapsed}s)`);
       // Log successful installation to the audit changelog
       logChange(createChangeEntry({
         tool: "auto-installer",
@@ -891,7 +891,7 @@ export class AutoInstaller {
       }));
     } else {
       console.error(
-        `[auto-installer] ⚠ pip install succeeded for '${module}' but import verification failed`,
+        `[auto-installer] WARNING: pip install succeeded for '${module}' but import verification failed`,
       );
     }
 
@@ -918,7 +918,7 @@ export class AutoInstaller {
     const start = Date.now();
 
     if (!binaryAvailable("npm")) {
-      console.error(`[auto-installer] ✗ Cannot install npm package '${pkg}': npm not found`);
+      console.error(`[auto-installer] FAIL Cannot install npm package '${pkg}': npm not found`);
       return {
         dependency: pkg,
         type: "npm-package",
@@ -932,7 +932,7 @@ export class AutoInstaller {
     // Validate npm package name for safe characters
     if (!validateModuleName(pkg)) {
       console.error(
-        `[auto-install] ⚠ Invalid npm package name "${pkg}" — skipping`,
+        `[auto-install] WARNING: Invalid npm package name "${pkg}" — skipping`,
       );
       return {
         dependency: pkg,
@@ -947,7 +947,7 @@ export class AutoInstaller {
     // SECURITY (CORE-008): Verify npm package is in the allowed packages list
     if (!ALLOWED_NPM_PACKAGES.has(pkg)) {
       console.error(
-        `[auto-install] ⚠ REJECTED: npm package "${pkg}" is not in the allowed packages list`,
+        `[auto-install] WARNING: REJECTED: npm package "${pkg}" is not in the allowed packages list`,
       );
       return {
         dependency: pkg,
@@ -976,7 +976,7 @@ export class AutoInstaller {
 
     if (!result.success) {
       console.error(
-        `[auto-installer] ✗ Failed to install npm package '${pkg}': ${result.stderr.slice(0, 200)}`,
+        `[auto-installer] FAIL Failed to install npm package '${pkg}': ${result.stderr.slice(0, 200)}`,
       );
       return {
         dependency: pkg,
@@ -992,11 +992,11 @@ export class AutoInstaller {
     const installed = binaryAvailable(pkg);
 
     if (installed) {
-      console.error(`[auto-installer] ✓ Installed npm package '${pkg}' (${elapsed}s)`);
+      console.error(`[auto-installer] OK Installed npm package '${pkg}' (${elapsed}s)`);
     } else {
       // Package installed but binary might have a different name
       console.error(
-        `[auto-installer] ✓ npm package '${pkg}' installed (binary may differ from package name)`,
+        `[auto-installer] OK npm package '${pkg}' installed (binary may differ from package name)`,
       );
     }
 
@@ -1061,7 +1061,7 @@ export class AutoInstaller {
       // Validate candidate package name for safe characters
       if (!validatePackageName(candidate)) {
         console.error(
-          `[auto-install] ⚠ Invalid library package name "${candidate}" — skipping candidate`,
+          `[auto-install] WARNING: Invalid library package name "${candidate}" — skipping candidate`,
         );
         continue;
       }
@@ -1075,7 +1075,7 @@ export class AutoInstaller {
       if (result.success) {
         installed = true;
         console.error(
-          `[auto-installer] ✓ Installed library '${lib}' (package: ${candidate})`,
+          `[auto-installer] OK Installed library '${lib}' (package: ${candidate})`,
         );
         // Log successful library installation to the audit changelog
         logChange(createChangeEntry({
@@ -1094,7 +1094,7 @@ export class AutoInstaller {
 
     if (!installed) {
       console.error(
-        `[auto-installer] ✗ Failed to install library '${lib}': ${lastError}`,
+        `[auto-installer] FAIL Failed to install library '${lib}': ${lastError}`,
       );
       return {
         dependency: lib,
@@ -1112,11 +1112,11 @@ export class AutoInstaller {
 
     if (verified) {
       console.error(
-        `[auto-installer] ✓ Library '${lib}' verified (${elapsed}s)`,
+        `[auto-installer] OK Library '${lib}' verified (${elapsed}s)`,
       );
     } else {
       console.error(
-        `[auto-installer] ⚠ Library package installed but '${lib}' not found via ldconfig/pkg-config`,
+        `[auto-installer] WARNING: Library package installed but '${lib}' not found via ldconfig/pkg-config`,
       );
     }
 

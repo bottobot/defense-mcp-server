@@ -10,7 +10,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
+import { runCommand, type CommandResult } from "../core/run-command.js";
 import {
   createTextContent,
   createErrorContent,
@@ -39,67 +39,6 @@ const MAX_PROCESSES = 100;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-/**
- * Run a command via spawnSafe and collect output as a promise.
- * Handles errors gracefully — returns error info instead of throwing.
- */
-async function runCommand(
-  command: string,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawnSafe(command, args);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: msg, exitCode: -1 });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill("SIGTERM");
-        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: err.message, exitCode: -1 });
-      }
-    });
-  });
-}
 
 // ── Process parsing helpers ────────────────────────────────────────────────────
 
@@ -193,13 +132,13 @@ async function auditRunning(
   const sections: string[] = [];
   const findings: Finding[] = [];
 
-  sections.push("🔍 Process Security Audit");
-  sections.push("=".repeat(50));
+  sections.push("Process Security Audit");
+  sections.push("");
 
   // Get process list
   const psResult = await runCommand("ps", ["auxf"]);
   if (psResult.exitCode !== 0) {
-    sections.push(`\n⚠️ Failed to get process list: ${psResult.stderr}`);
+    sections.push(`\nWARNING: Failed to get process list: ${psResult.stderr}`);
     return { sections, findings };
   }
 
@@ -209,7 +148,7 @@ async function auditRunning(
   if (pid !== undefined) {
     processes = processes.filter((p) => p.pid === pid);
     if (processes.length === 0) {
-      sections.push(`\n⚠️ No process found with PID ${pid}`);
+      sections.push(`\nWARNING: No process found with PID ${pid}`);
       return { sections, findings };
     }
   }
@@ -306,7 +245,7 @@ async function auditRunning(
   if (deletedExe.length > 0) {
     sections.push("\n── Processes with Deleted Executables ──");
     for (const p of deletedExe) {
-      sections.push(`  ⛔ PID ${p.pid}: ${p.command}`);
+      sections.push(`  CRITICAL: PID ${p.pid}: ${p.command}`);
       findings.push({
         severity: "CRITICAL",
         category: "deleted_exe",
@@ -319,7 +258,7 @@ async function auditRunning(
 
   // Summary
   if (!showAll && findings.length === 0) {
-    sections.push("\n✅ No suspicious processes detected.");
+    sections.push("\nNo suspicious processes detected.");
   } else if (showAll) {
     sections.push("\n── All Processes ──");
     for (const p of processes.slice(0, 50)) {
@@ -337,14 +276,14 @@ async function checkCapabilities(
   const sections: string[] = [];
   const findings: Finding[] = [];
 
-  sections.push("🔐 Process Capabilities Check");
-  sections.push("=".repeat(50));
+  sections.push("Process Capabilities Check");
+  sections.push("");
 
   if (pid !== undefined) {
     // Check specific PID capabilities
     const capsResult = await runCommand("getpcaps", [String(pid)]);
     if (capsResult.exitCode !== 0) {
-      sections.push(`\n⚠️ Failed to get capabilities for PID ${pid}: ${capsResult.stderr}`);
+      sections.push(`\nWARNING: Failed to get capabilities for PID ${pid}: ${capsResult.stderr}`);
       return { sections, findings };
     }
 
@@ -367,7 +306,7 @@ async function checkCapabilities(
     // Scan processes for elevated capabilities
     const psResult = await runCommand("ps", ["-eo", "pid"]);
     if (psResult.exitCode !== 0) {
-      sections.push("\n⚠️ Failed to list processes");
+      sections.push("\nWARNING: Failed to list processes");
       return { sections, findings };
     }
 
@@ -425,7 +364,7 @@ async function checkCapabilities(
         sections.push(`  PID ${ep.pid}: ${ep.decoded}`);
       }
     } else {
-      sections.push("\n✅ No processes with elevated capabilities found.");
+      sections.push("\nNo processes with elevated capabilities found.");
     }
   }
 
@@ -439,14 +378,14 @@ async function checkNamespaces(
   const sections: string[] = [];
   const findings: Finding[] = [];
 
-  sections.push("📦 Process Namespace Analysis");
-  sections.push("=".repeat(50));
+  sections.push("Process Namespace Analysis");
+  sections.push("");
 
   if (pid !== undefined) {
     // Show namespace details for specific PID
     const nsResult = await runCommand("ls", ["-la", `/proc/${pid}/ns/`]);
     if (nsResult.exitCode !== 0) {
-      sections.push(`\n⚠️ Cannot read namespaces for PID ${pid}: ${nsResult.stderr}`);
+      sections.push(`\nCannot read namespaces for PID ${pid}: ${nsResult.stderr}`);
       return { sections, findings };
     }
 
@@ -475,7 +414,7 @@ async function checkNamespaces(
       for (const [nsType, nsId] of pidNsMap) {
         const initId = initNsMap.get(nsType);
         const inRootNs = initId === nsId;
-        const icon = inRootNs ? "⚠️" : "✅";
+        const icon = inRootNs ? "WARNING" : "PASS";
         sections.push(`  ${icon} ${nsType}: ${inRootNs ? "in root namespace" : "isolated"} (${nsId})`);
 
         if (inRootNs && !["user", "cgroup"].includes(nsType)) {
@@ -495,7 +434,7 @@ async function checkNamespaces(
       // Retry with sudo
       const sudoLsnsResult = await runCommand("sudo", ["lsns"]);
       if (sudoLsnsResult.exitCode !== 0) {
-        sections.push("\n⚠️ Cannot list namespaces (lsns not available or permission denied)");
+        sections.push("\nCannot list namespaces (lsns not available or permission denied)");
         return { sections, findings };
       }
       sections.push("\n── Active Namespaces ──");
@@ -540,13 +479,13 @@ async function detectAnomalies(
   const sections: string[] = [];
   const findings: Finding[] = [];
 
-  sections.push("🚨 Process Anomaly Detection");
-  sections.push("=".repeat(50));
+  sections.push("Process Anomaly Detection");
+  sections.push("");
 
   // Get process list for analysis
   const psResult = await runCommand("ps", ["-eo", "pid,ppid,user,comm"]);
   if (psResult.exitCode !== 0) {
-    sections.push("\n⚠️ Failed to get process list");
+    sections.push("\nWARNING: Failed to get process list");
     return { sections, findings };
   }
 
@@ -580,7 +519,7 @@ async function detectAnomalies(
     const exeResult = await runCommand("ls", ["-la", `/proc/${proc.pid}/exe`]);
     if (exeResult.exitCode === 0 && exeResult.stdout.includes("(deleted)")) {
       deletedCount++;
-      sections.push(`  ⛔ PID ${proc.pid} (${proc.comm}): executable deleted`);
+      sections.push(`  CRITICAL: PID ${proc.pid} (${proc.comm}): executable deleted`);
       findings.push({
         severity: "CRITICAL",
         category: "deleted_binary",
@@ -590,7 +529,7 @@ async function detectAnomalies(
       });
     }
   }
-  if (deletedCount === 0) sections.push("  ✅ No processes with deleted binaries");
+  if (deletedCount === 0) sections.push("  No processes with deleted binaries");
 
   // 2. Cross-reference network connections with expected services
   sections.push("\n── Unexpected Network Connections ──");
@@ -601,10 +540,10 @@ async function detectAnomalies(
       sections.push(`  ${line.trim()}`);
     }
     if (ssLines.length === 0) {
-      sections.push("  ✅ No listening TCP connections");
+      sections.push("  No listening TCP connections");
     }
   } else {
-    sections.push("  ⚠️ Could not check network connections");
+    sections.push("  Could not check network connections");
   }
 
   // 3. Check for shell spawning from non-shell parents
@@ -620,7 +559,7 @@ async function detectAnomalies(
         parent.comm !== "screen" && parent.comm !== "tmux" && parent.comm !== "script" &&
         parent.comm !== "getty" && parent.comm !== "agetty" && parent.comm !== "systemd") {
       suspiciousShellCount++;
-      sections.push(`  ⚠️ PID ${shell.pid} (${shell.comm}) spawned by ${parent.comm} (PID ${parent.pid})`);
+      sections.push(`  WARNING: PID ${shell.pid} (${shell.comm}) spawned by ${parent.comm} (PID ${parent.pid})`);
       findings.push({
         severity: "HIGH",
         category: "suspicious_shell",
@@ -630,7 +569,7 @@ async function detectAnomalies(
       });
     }
   }
-  if (suspiciousShellCount === 0) sections.push("  ✅ No suspicious shell spawning detected");
+  if (suspiciousShellCount === 0) sections.push("  No suspicious shell spawning detected");
 
   // 4. Check for open file descriptors to sensitive files
   sections.push("\n── Sensitive File Access ──");
@@ -645,7 +584,7 @@ async function detectAnomalies(
     for (const sf of sensitiveFiles) {
       if (fdResult.stdout.includes(sf)) {
         sensitiveAccessCount++;
-        sections.push(`  ⚠️ PID ${proc.pid} (${proc.comm}) has open fd to ${sf}`);
+        sections.push(`  WARNING: PID ${proc.pid} (${proc.comm}) has open fd to ${sf}`);
         findings.push({
           severity: "HIGH",
           category: "sensitive_file_access",
@@ -656,7 +595,7 @@ async function detectAnomalies(
       }
     }
   }
-  if (sensitiveAccessCount === 0) sections.push("  ✅ No suspicious sensitive file access");
+  if (sensitiveAccessCount === 0) sections.push("  No suspicious sensitive file access");
 
   // 5. Check for suspicious environment variables
   sections.push("\n── Suspicious Environment Variables ──");
@@ -671,7 +610,7 @@ async function detectAnomalies(
         envStr.includes("nc -e") || envStr.includes("mkfifo") ||
         envStr.includes("PAYLOAD") || envStr.includes("SHELLCODE")) {
       suspiciousEnvCount++;
-      sections.push(`  ⛔ PID ${proc.pid} (${proc.comm}): suspicious environment variables detected`);
+      sections.push(`  CRITICAL: PID ${proc.pid} (${proc.comm}): suspicious environment variables detected`);
       findings.push({
         severity: "CRITICAL",
         category: "suspicious_env",
@@ -681,7 +620,7 @@ async function detectAnomalies(
       });
     }
   }
-  if (suspiciousEnvCount === 0) sections.push("  ✅ No suspicious environment variables detected");
+  if (suspiciousEnvCount === 0) sections.push("  No suspicious environment variables detected");
 
   return { sections, findings };
 }
@@ -693,14 +632,14 @@ async function cgroupAudit(
   const sections: string[] = [];
   const findings: Finding[] = [];
 
-  sections.push("📊 Cgroup Resource Audit");
-  sections.push("=".repeat(50));
+  sections.push("Cgroup Resource Audit");
+  sections.push("");
 
   if (pid !== undefined) {
     // Inspect specific process cgroup membership
     const cgroupResult = await runCommand("cat", [`/proc/${pid}/cgroup`]);
     if (cgroupResult.exitCode !== 0) {
-      sections.push(`\n⚠️ Cannot read cgroup for PID ${pid}: ${cgroupResult.stderr}`);
+      sections.push(`\nCannot read cgroup for PID ${pid}: ${cgroupResult.stderr}`);
       return { sections, findings };
     }
 
@@ -719,7 +658,7 @@ async function cgroupAudit(
         const memMaxResult = await runCommand("cat", [`/sys/fs/cgroup${cgroupPath}/memory.max`]);
         if (memMaxResult.exitCode === 0) {
           const memMax = memMaxResult.stdout.trim();
-          sections.push(`  Memory limit: ${memMax === "max" ? "unlimited ⚠️" : memMax}`);
+          sections.push(`  Memory limit: ${memMax === "max" ? "unlimited WARNING" : memMax}`);
           if (memMax === "max") {
             findings.push({
               severity: "LOW",
@@ -733,7 +672,7 @@ async function cgroupAudit(
         const cpuMaxResult = await runCommand("cat", [`/sys/fs/cgroup${cgroupPath}/cpu.max`]);
         if (cpuMaxResult.exitCode === 0) {
           const cpuMax = cpuMaxResult.stdout.trim();
-          sections.push(`  CPU limit: ${cpuMax === "max 100000" ? "unlimited ⚠️" : cpuMax}`);
+          sections.push(`  CPU limit: ${cpuMax === "max 100000" ? "unlimited WARNING" : cpuMax}`);
           if (cpuMax.startsWith("max")) {
             findings.push({
               severity: "LOW",
@@ -792,7 +731,7 @@ async function cgroupAudit(
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
 function formatFindings(findings: Finding[]): string {
-  if (findings.length === 0) return "\n✅ No security findings.";
+  if (findings.length === 0) return "\nNo security findings.";
 
   const lines: string[] = ["\n── Security Findings Summary ──"];
   const bySeverity: Record<string, Finding[]> = {};
@@ -803,18 +742,11 @@ function formatFindings(findings: Finding[]): string {
   }
 
   const severityOrder: Array<Finding["severity"]> = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
-  const icons: Record<string, string> = {
-    CRITICAL: "⛔",
-    HIGH: "🔴",
-    MEDIUM: "🟠",
-    LOW: "🟡",
-    INFO: "ℹ️",
-  };
 
   for (const sev of severityOrder) {
     const items = bySeverity[sev];
     if (!items || items.length === 0) continue;
-    lines.push(`\n  ${icons[sev]} ${sev} (${items.length}):`);
+    lines.push(`\n  ${sev} (${items.length}):`);
     for (const f of items) {
       const pidStr = f.pid ? ` [PID ${f.pid}]` : "";
       lines.push(`    - ${f.message}${pidStr}`);
@@ -841,7 +773,7 @@ function formatAsJson(
       process: f.process || null,
     })),
     rawOutput: rawSections.join("\n"),
-  }, null, 2);
+  });
 }
 
 // ── Registration entry point ───────────────────────────────────────────────
