@@ -834,6 +834,1028 @@ PermitEmptyPasswords no
       expect(result.content[0].text).toContain("testuser");
       expect(result.content[0].text).toContain("chage");
     });
+
+    it("should return error when target_user does not exist", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        if (command === "id") {
+          return { exitCode: 1, stdout: "", stderr: "id: 'nosuchuser': no such user" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        target_user: "nosuchuser",
+        max_days: 90,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("does not exist");
+    });
+
+    it("should apply chage successfully for target_user (non-dry-run)", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "id") {
+          return { exitCode: 0, stdout: "uid=1000(deploy)", stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "chage" && args?.[1] === "-l") {
+          return { exitCode: 0, stdout: "Last password change\t\t\t: Jan 01, 2026\nMaximum number of days between password change\t\t: 99999", stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "chage" && args?.[1] === "-M") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        target_user: "deploy",
+        max_days: 90,
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("deploy");
+    });
+  });
+
+  // ── ssh_harden (non-dry-run path) ──────────────────────────────────
+
+  describe("ssh_harden non-dry-run", () => {
+    it("should apply settings and validate config (success path)", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        // sshd -t validation pass
+        if (command === "sudo" && args?.[0] === "sshd" && args?.[1] === "-t") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "ssh_harden",
+        settings: "PermitRootLogin=no",
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("SSH hardening applied");
+      expect(result.content[0].text).toContain("PermitRootLogin");
+    });
+
+    it("should report error when sshd -t validation fails", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "sudo" && args?.[0] === "sshd" && args?.[1] === "-t") {
+          return { exitCode: 1, stdout: "", stderr: "/etc/ssh/sshd_config: line 42: Bad configuration option" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "ssh_harden",
+        settings: "PermitRootLogin=no",
+        dry_run: false,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("config validation failed");
+    });
+
+    it("should restart sshd when restart_sshd=true", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "ssh_harden",
+        settings: "PermitRootLogin=no",
+        restart_sshd: true,
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("sshd restarted successfully");
+    });
+
+    it("should mention sshd restart in dry_run when restart_sshd=true", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "ssh_harden",
+        settings: "PermitRootLogin=no",
+        restart_sshd: true,
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("restart sshd");
+    });
+
+    it("should apply all recommended settings when apply_recommended=true (non-dry-run)", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "ssh_harden",
+        apply_recommended: true,
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("SSH hardening applied");
+    });
+  });
+
+  // ── ssh_cipher_audit ───────────────────────────────────────────────
+
+  describe("ssh_cipher_audit", () => {
+    it("should report PASS when only strong ciphers are configured", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        // cat sshd_config
+        if (command === "cat" && args?.[0]?.toString().includes("sshd_config")) {
+          return {
+            exitCode: 0,
+            stdout: `Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
+HostKeyAlgorithms ssh-ed25519,rsa-sha2-512`,
+            stderr: "",
+          };
+        }
+        // sshd -T runtime config (fail so file config is used)
+        if (command === "sudo" && args?.[0] === "sshd" && args?.[1] === "-T") {
+          return { exitCode: 1, stdout: "", stderr: "" };
+        }
+        // ls /etc/ssh/
+        if (command === "ls") {
+          return { exitCode: 0, stdout: "ssh_host_ed25519_key\nssh_host_rsa_key", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "ssh_cipher_audit" });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.summary.fail).toBe(0);
+    });
+
+    it("should report FAIL when weak ciphers are present", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "cat" && args?.[0]?.toString().includes("sshd_config")) {
+          return {
+            exitCode: 0,
+            stdout: `Ciphers 3des-cbc,aes256-ctr
+MACs hmac-md5,hmac-sha2-256
+KexAlgorithms diffie-hellman-group1-sha1,curve25519-sha256
+HostKeyAlgorithms ssh-dss,ssh-ed25519`,
+            stderr: "",
+          };
+        }
+        if (command === "sudo" && args?.[0] === "sshd") {
+          return { exitCode: 1, stdout: "", stderr: "" };
+        }
+        if (command === "ls") {
+          return { exitCode: 0, stdout: "ssh_host_dsa_key\nssh_host_ed25519_key", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "ssh_cipher_audit" });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.summary.fail).toBeGreaterThan(0);
+      expect(output.recommendation).toContain("CRITICAL");
+      // DSA host key should be flagged
+      const dsaKey = output.hostKeyAudit.find((k: Record<string, unknown>) => k.key === "DSA");
+      expect(dsaKey.status).toBe("FAIL");
+    });
+
+    it("should report WARN when no algorithms are explicitly configured", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "cat" && args?.[0]?.toString().includes("sshd_config")) {
+          return { exitCode: 0, stdout: "# No explicit algorithm config\nPermitRootLogin no", stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "sshd") {
+          return { exitCode: 1, stdout: "", stderr: "" };
+        }
+        if (command === "ls") {
+          return { exitCode: 0, stdout: "ssh_host_ed25519_key", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "ssh_cipher_audit" });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.summary.warn).toBeGreaterThan(0);
+      expect(output.recommendation).toContain("WARNING");
+    });
+  });
+
+  // ── pam_audit ──────────────────────────────────────────────────────
+
+  describe("pam_audit", () => {
+    it("should require service or check_all", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "pam_audit" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("service");
+    });
+
+    it("should audit a specific PAM service", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const args = params.args as string[];
+        if (args?.[0] === "cat" && args?.[1] === "/etc/pam.d/sshd") {
+          return {
+            exitCode: 0,
+            stdout: `auth\trequired\tpam_unix.so nullok
+auth\trequired\tpam_deny.so
+account\trequired\tpam_unix.so`,
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "pam_audit", service: "sshd" });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.filesChecked).toContain("/etc/pam.d/sshd");
+      // Should detect missing lockout in sshd
+      const lockoutFinding = output.findings.find((f: Record<string, unknown>) => f.type === "LOCKOUT_POLICY");
+      expect(lockoutFinding).toBeDefined();
+      expect(lockoutFinding.severity).toBe("high");
+    });
+
+    it("should audit all common PAM files with check_all", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const args = params.args as string[];
+        if (args?.[0] === "cat" && args?.[1]?.toString().includes("common-auth")) {
+          return {
+            exitCode: 0,
+            stdout: `auth\t[success=1 default=ignore]\tpam_unix.so nullok
+auth\trequisite\tpam_deny.so`,
+            stderr: "",
+          };
+        }
+        if (args?.[0] === "cat" && args?.[1]?.toString().includes("common-password")) {
+          return {
+            exitCode: 0,
+            stdout: `password\trequisite\tpam_pwquality.so retry=3
+password\t[success=1 default=ignore]\tpam_unix.so sha512`,
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "pam_audit", check_all: true });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.filesChecked.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("should detect MD5 hashing as critical", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const args = params.args as string[];
+        if (args?.[0] === "cat" && args?.[1] === "/etc/pam.d/login") {
+          return {
+            exitCode: 0,
+            stdout: `password\t[success=1 default=ignore]\tpam_unix.so md5`,
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "pam_audit", service: "login" });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      const md5Finding = output.findings.find(
+        (f: Record<string, unknown>) => f.type === "HASH_ALGORITHM" && (f.detail as string).includes("MD5")
+      );
+      expect(md5Finding).toBeDefined();
+      expect(md5Finding.severity).toBe("critical");
+    });
+
+    it("should handle unreadable PAM files gracefully", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const args = params.args as string[];
+        if (args?.[0] === "cat" && args?.[1] === "/etc/pam.d/sudo") {
+          return { exitCode: 1, stdout: "", stderr: "Permission denied" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "pam_audit", service: "sudo" });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.unreadableFiles).toBe(1);
+      const unreadable = output.findings.find((f: Record<string, unknown>) => f.type === "FILE_UNREADABLE");
+      expect(unreadable).toBeDefined();
+    });
+
+    it("should detect SHA-512 hashing as info (good)", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const args = params.args as string[];
+        if (args?.[0] === "cat") {
+          return {
+            exitCode: 0,
+            stdout: `auth\trequired\tpam_unix.so sha512
+auth\trequired\tpam_faillock.so`,
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "pam_audit", service: "sshd" });
+      const output = JSON.parse(result.content[0].text);
+      const sha512Finding = output.findings.find(
+        (f: Record<string, unknown>) => f.type === "HASH_ALGORITHM" && (f.detail as string).includes("SHA-512")
+      );
+      expect(sha512Finding).toBeDefined();
+      expect(sha512Finding.severity).toBe("info");
+    });
+  });
+
+  // ── sudo_audit ─────────────────────────────────────────────────────
+
+  describe("sudo_audit", () => {
+    it("should detect NOPASSWD entries", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1] === "/etc/sudoers") {
+          return {
+            exitCode: 0,
+            stdout: `Defaults env_reset
+Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+root\tALL=(ALL:ALL) ALL
+deploy\tALL=(ALL) NOPASSWD: /usr/bin/systemctl restart myapp`,
+            stderr: "",
+          };
+        }
+        if (command === "sudo" && args?.[0] === "ls") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "sudo:x:27:admin", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "sudo_audit", check_nopasswd: true, check_insecure: true });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      const nopasswd = output.findings.find((f: Record<string, unknown>) => f.type === "NOPASSWD");
+      expect(nopasswd).toBeDefined();
+      expect(nopasswd.severity).toBe("high");
+    });
+
+    it("should detect !authenticate as critical", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1] === "/etc/sudoers") {
+          return {
+            exitCode: 0,
+            stdout: `Defaults env_reset
+Defaults !authenticate`,
+            stderr: "",
+          };
+        }
+        if (command === "sudo" && args?.[0] === "ls") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "sudo:x:27:", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "sudo_audit", check_nopasswd: true, check_insecure: true });
+      const output = JSON.parse(result.content[0].text);
+      const noAuth = output.findings.find((f: Record<string, unknown>) => f.type === "NO_AUTHENTICATE");
+      expect(noAuth).toBeDefined();
+      expect(noAuth.severity).toBe("critical");
+    });
+
+    it("should detect broad privilege for non-root users", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1] === "/etc/sudoers") {
+          return {
+            exitCode: 0,
+            stdout: `Defaults env_reset
+Defaults secure_path="/usr/sbin:/usr/bin"
+root\tALL=(ALL:ALL) ALL
+admin\tALL=(ALL) ALL`,
+            stderr: "",
+          };
+        }
+        if (command === "sudo" && args?.[0] === "ls") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "sudo:x:27:admin", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "sudo_audit", check_nopasswd: true, check_insecure: true });
+      const output = JSON.parse(result.content[0].text);
+      const broad = output.findings.find((f: Record<string, unknown>) => f.type === "BROAD_PRIVILEGE");
+      expect(broad).toBeDefined();
+      expect(broad.severity).toBe("high");
+    });
+
+    it("should detect missing secure defaults", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1] === "/etc/sudoers") {
+          return {
+            exitCode: 0,
+            stdout: `# Minimal sudoers
+root\tALL=(ALL:ALL) ALL`,
+            stderr: "",
+          };
+        }
+        if (command === "sudo" && args?.[0] === "ls") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "sudo:x:27:", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "sudo_audit", check_nopasswd: true, check_insecure: true });
+      const output = JSON.parse(result.content[0].text);
+      const missingDefaults = output.findings.filter((f: Record<string, unknown>) => f.type === "MISSING_DEFAULT");
+      expect(missingDefaults.length).toBeGreaterThanOrEqual(2); // env_reset and secure_path at minimum
+    });
+
+    it("should return error when /etc/sudoers is unreadable", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1] === "/etc/sudoers") {
+          return { exitCode: 1, stdout: "", stderr: "Permission denied" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "sudo_audit", check_nopasswd: true, check_insecure: true });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Cannot read /etc/sudoers");
+    });
+
+    it("should include drop-in files in audit", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1] === "/etc/sudoers") {
+          return { exitCode: 0, stdout: "Defaults env_reset\nDefaults secure_path=\"/usr/sbin:/usr/bin\"", stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "ls") {
+          return { exitCode: 0, stdout: "deploy\nciadmin", stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1]?.toString().includes("sudoers.d/deploy")) {
+          return { exitCode: 0, stdout: "deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl", stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1]?.toString().includes("sudoers.d/ciadmin")) {
+          return { exitCode: 0, stdout: "ciadmin ALL=(ALL) ALL", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "sudo:x:27:", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "sudo_audit", check_nopasswd: true, check_insecure: true });
+      const output = JSON.parse(result.content[0].text);
+      expect(output.dropInFiles).toContain("deploy");
+      expect(output.dropInFiles).toContain("ciadmin");
+      expect(output.findings.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ── user_audit ─────────────────────────────────────────────────────
+
+  describe("user_audit", () => {
+    const MOCK_PASSWD = [
+      "root:x:0:0:root:/root:/bin/bash",
+      "daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin",
+      "bin:x:2:2:bin:/bin:/usr/sbin/nologin",
+      "www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin",
+      "syslog:x:104:110::/home/syslog:/bin/bash",
+      "admin:x:1000:1000:Admin User:/home/admin:/bin/bash",
+      "deploy:x:1001:1001:Deploy User:/home/deploy:/bin/bash",
+      "stale:x:1002:1002:Stale User:/home/stale:/bin/bash",
+    ].join("\n");
+
+    const MOCK_SHADOW = [
+      "root:$6$salt$hash:19000:0:99999:7:::",
+      "daemon:*:19000:0:99999:7:::",
+      "bin:*:19000:0:99999:7:::",
+      "www-data:*:19000:0:99999:7:::",
+      "syslog:!!:19000:0:99999:7:::",
+      "admin:$6$salt$hash:19000:0:99999:7:::",
+      "deploy::19000:0:99999:7:::",
+      "stale:!$6$salt$hash:19000:0:99999:7:::",
+    ].join("\n");
+
+    const MOCK_LASTLOG = [
+      "Username         Port     From             Latest",
+      "root                                       **Never logged in**",
+      "admin            pts/0    192.168.1.5      Mon Jan  5 10:00:00 +0000 2026",
+      "deploy                                     **Never logged in**",
+      "stale                                      **Never logged in**",
+      "syslog                                     **Never logged in**",
+    ].join("\n");
+
+    async function mockExecuteForUserAudit() {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "cat" && args?.[0] === "/etc/passwd") {
+          return { exitCode: 0, stdout: MOCK_PASSWD, stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "cat" && args?.[1] === "/etc/shadow") {
+          return { exitCode: 0, stdout: MOCK_SHADOW, stderr: "" };
+        }
+        if (command === "lastlog") {
+          return { exitCode: 0, stdout: MOCK_LASTLOG, stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+    }
+
+    it("should audit all user categories by default", async () => {
+      await mockExecuteForUserAudit();
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "user_audit", check_type: "all" });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.checkType).toBe("all");
+      expect(output.totalUsers).toBe(8);
+      expect(output.categories.privileged).toBeDefined();
+      expect(output.categories.inactive).toBeDefined();
+      expect(output.categories.no_password).toBeDefined();
+      expect(output.categories.shell).toBeDefined();
+      expect(output.categories.locked).toBeDefined();
+    });
+
+    it("should find privileged users (uid=0)", async () => {
+      await mockExecuteForUserAudit();
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "user_audit", check_type: "privileged" });
+      const output = JSON.parse(result.content[0].text);
+      expect(output.categories.privileged.length).toBe(1);
+      expect(output.categories.privileged[0].username).toBe("root");
+    });
+
+    it("should detect system users with login shells", async () => {
+      await mockExecuteForUserAudit();
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "user_audit", check_type: "shell" });
+      const output = JSON.parse(result.content[0].text);
+      // syslog (uid=104) has /bin/bash
+      const syslogEntry = output.categories.shell.find((u: Record<string, unknown>) => u.username === "syslog");
+      expect(syslogEntry).toBeDefined();
+      expect(syslogEntry.warning).toContain("interactive login shell");
+    });
+
+    it("should detect users with empty or no password", async () => {
+      await mockExecuteForUserAudit();
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "user_audit", check_type: "no_password" });
+      const output = JSON.parse(result.content[0].text);
+      // deploy has empty password hash; daemon/bin/www-data have "*"; syslog has "!!"
+      expect(output.categories.no_password.length).toBeGreaterThan(0);
+    });
+
+    it("should detect locked accounts", async () => {
+      await mockExecuteForUserAudit();
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "user_audit", check_type: "locked" });
+      const output = JSON.parse(result.content[0].text);
+      // stale has "!" prefix, daemon/bin/www-data have "*"
+      expect(output.categories.locked.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ── password_policy_audit ──────────────────────────────────────────
+
+  describe("password_policy_audit", () => {
+    it("should audit login.defs and PAM password settings", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "cat" && args?.[0] === "/etc/login.defs") {
+          return {
+            exitCode: 0,
+            stdout: `PASS_MAX_DAYS\t99999
+PASS_MIN_DAYS\t0
+PASS_WARN_AGE\t7
+ENCRYPT_METHOD SHA512`,
+            stderr: "",
+          };
+        }
+        if (command === "cat" && args?.[0]?.toString().includes("common-password")) {
+          return {
+            exitCode: 0,
+            stdout: `password\trequisite\tpam_pwquality.so retry=3
+password\t[success=1 default=ignore]\tpam_unix.so sha512`,
+            stderr: "",
+          };
+        }
+        if (command === "cat" && args?.[0] === "/etc/default/useradd") {
+          return { exitCode: 0, stdout: "INACTIVE=-1", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "password_policy_audit" });
+      expect(result.isError).toBeUndefined();
+      const output = JSON.parse(result.content[0].text);
+      expect(output.loginDefs["PASS_MAX_DAYS"]).toBe("99999");
+      expect(output.loginDefs["ENCRYPT_METHOD"]).toBe("SHA512");
+      // PASS_MAX_DAYS > 365 should be a recommendation
+      const maxDaysRec = output.recommendations.find((r: string) => r.includes("PASS_MAX_DAYS"));
+      expect(maxDaysRec).toBeDefined();
+      // INACTIVE=-1 should be a recommendation
+      const inactiveRec = output.recommendations.find((r: string) => r.includes("INACTIVE"));
+      expect(inactiveRec).toBeDefined();
+      // pam_pwquality should be detected
+      const pwqMod = output.pamModules.find((m: Record<string, unknown>) => m.module === "pam_pwquality");
+      expect(pwqMod.present).toBe(true);
+    });
+
+    it("should recommend PASS_MIN_DAYS >= 1 when set to 0", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "cat" && args?.[0] === "/etc/login.defs") {
+          return { exitCode: 0, stdout: "PASS_MAX_DAYS\t90\nPASS_MIN_DAYS\t0\nPASS_WARN_AGE\t7\nENCRYPT_METHOD SHA512", stderr: "" };
+        }
+        if (command === "cat" && args?.[0]?.toString().includes("common-password")) {
+          return { exitCode: 0, stdout: "password\trequisite\tpam_pwquality.so", stderr: "" };
+        }
+        if (command === "cat" && args?.[0] === "/etc/default/useradd") {
+          return { exitCode: 0, stdout: "INACTIVE=30", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "password_policy_audit" });
+      const output = JSON.parse(result.content[0].text);
+      const minDaysRec = output.recommendations.find((r: string) => r.includes("PASS_MIN_DAYS"));
+      expect(minDaysRec).toBeDefined();
+    });
+
+    it("should recommend pam_pwquality when not configured", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "cat" && args?.[0] === "/etc/login.defs") {
+          return { exitCode: 0, stdout: "PASS_MAX_DAYS\t90\nPASS_MIN_DAYS\t1\nPASS_WARN_AGE\t14\nENCRYPT_METHOD SHA512", stderr: "" };
+        }
+        if (command === "cat" && args?.[0]?.toString().includes("common-password")) {
+          return { exitCode: 0, stdout: "password\t[success=1 default=ignore]\tpam_unix.so sha512", stderr: "" };
+        }
+        if (command === "cat" && args?.[0] === "/etc/default/useradd") {
+          return { exitCode: 0, stdout: "INACTIVE=30", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "password_policy_audit" });
+      const output = JSON.parse(result.content[0].text);
+      const pwqRec = output.recommendations.find((r: string) => r.includes("pam_pwquality"));
+      expect(pwqRec).toBeDefined();
+    });
+  });
+
+  // ── password_policy_set (system-wide) ──────────────────────────────
+
+  describe("password_policy_set system-wide", () => {
+    it("should require at least one policy parameter", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "password_policy_set" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("No password policy values");
+    });
+
+    it("should preview changes in dry_run mode", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        max_days: 365,
+        min_days: 1,
+        warn_days: 14,
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("DRY-RUN");
+      expect(result.content[0].text).toContain("PASS_MAX_DAYS");
+      expect(result.content[0].text).toContain("PASS_MIN_DAYS");
+      expect(result.content[0].text).toContain("PASS_WARN_AGE");
+    });
+
+    it("should include INACTIVE in dry_run when inactive_days set", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        inactive_days: 30,
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("INACTIVE");
+    });
+
+    it("should apply system-wide settings (non-dry-run)", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        max_days: 365,
+        encrypt_method: "SHA512",
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Password policy updated");
+      expect(result.content[0].text).toContain("PASS_MAX_DAYS");
+      expect(result.content[0].text).toContain("ENCRYPT_METHOD");
+    });
+
+    it("should handle inactive_days in non-dry-run mode", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        // grep for INACTIVE returns found
+        if (command === "grep" && args?.[1] === "/etc/default/useradd") {
+          return { exitCode: 0, stdout: "INACTIVE=30", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "password_policy_set",
+        inactive_days: 30,
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("INACTIVE");
+    });
+  });
+
+  // ── restrict_shell ─────────────────────────────────────────────────
+
+  describe("restrict_shell", () => {
+    it("should require username", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({ action: "restrict_shell" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("username");
+    });
+
+    it("should reject invalid username", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "bad user!",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid username");
+    });
+
+    it("should reject invalid shell path", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "deploy",
+        shell: "not-a-path",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Invalid shell path");
+    });
+
+    it("should refuse to change shell for root", async () => {
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "root",
+        shell: "/usr/sbin/nologin",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("root");
+      expect(result.content[0].text).toContain("safety restriction");
+    });
+
+    it("should refuse to change shell for current user", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        if (command === "whoami") {
+          return { exitCode: 0, stdout: "deploy", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "deploy",
+        shell: "/usr/sbin/nologin",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("current user");
+    });
+
+    it("should return error when user does not exist", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        if (command === "whoami") {
+          return { exitCode: 0, stdout: "admin", stderr: "" };
+        }
+        if (command === "id") {
+          return { exitCode: 1, stdout: "", stderr: "id: 'nosuchuser': no such user" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "nosuchuser",
+        shell: "/usr/sbin/nologin",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("does not exist");
+    });
+
+    it("should preview shell change in dry_run mode", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        if (command === "whoami") {
+          return { exitCode: 0, stdout: "admin", stderr: "" };
+        }
+        if (command === "id") {
+          return { exitCode: 0, stdout: "uid=1001(deploy)", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "deploy:x:1001:1001::/home/deploy:/bin/bash", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "deploy",
+        shell: "/usr/sbin/nologin",
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("DRY-RUN");
+      expect(result.content[0].text).toContain("/bin/bash");
+      expect(result.content[0].text).toContain("/usr/sbin/nologin");
+    });
+
+    it("should apply shell change successfully (non-dry-run)", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "whoami") {
+          return { exitCode: 0, stdout: "admin", stderr: "" };
+        }
+        if (command === "id") {
+          return { exitCode: 0, stdout: "uid=1001(deploy)", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "deploy:x:1001:1001::/home/deploy:/bin/bash", stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "usermod") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "deploy",
+        shell: "/usr/sbin/nologin",
+        dry_run: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Shell restricted");
+      expect(result.content[0].text).toContain("Rollback");
+    });
+
+    it("should report error when usermod fails", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        const args = params.args as string[];
+        if (command === "whoami") {
+          return { exitCode: 0, stdout: "admin", stderr: "" };
+        }
+        if (command === "id") {
+          return { exitCode: 0, stdout: "uid=1001(deploy)", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "deploy:x:1001:1001::/home/deploy:/bin/bash", stderr: "" };
+        }
+        if (command === "sudo" && args?.[0] === "usermod") {
+          return { exitCode: 1, stdout: "", stderr: "usermod: user 'deploy' does not exist" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "deploy",
+        shell: "/usr/sbin/nologin",
+        dry_run: false,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to change shell");
+    });
+
+    it("should accept a custom shell path", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      vi.mocked(executeCommand).mockImplementation(async (params: Record<string, unknown>) => {
+        const command = params.command as string;
+        if (command === "whoami") {
+          return { exitCode: 0, stdout: "admin", stderr: "" };
+        }
+        if (command === "id") {
+          return { exitCode: 0, stdout: "uid=1001(deploy)", stderr: "" };
+        }
+        if (command === "getent") {
+          return { exitCode: 0, stdout: "deploy:x:1001:1001::/home/deploy:/bin/bash", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+      const handler = tools.get("access_control")!.handler;
+      const result = await handler({
+        action: "restrict_shell",
+        username: "deploy",
+        shell: "/bin/false",
+        dry_run: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("/bin/false");
+    });
   });
 
 });

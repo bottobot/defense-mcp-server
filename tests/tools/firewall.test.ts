@@ -430,4 +430,113 @@ describe("firewall tools", () => {
     });
     expect(result.isError).toBe(true);
   });
+
+  // ── nftables guard: persist_enable ──────────────────────────────────
+
+  it("should refuse persist_enable when nftables is active", async () => {
+    const { executeCommand } = await import("../../src/core/executor.js");
+    const mockExec = vi.mocked(executeCommand);
+
+    // Mock nftables as active: systemctl is-active returns "active", nft list has rules
+    mockExec.mockImplementation(async (opts: { command: string; args?: string[] }) => {
+      const args = opts.args ?? [];
+      if (opts.command === "systemctl" && args.includes("is-active") && args.includes("nftables")) {
+        return { exitCode: 0, stdout: "active", stderr: "" };
+      }
+      if (opts.command === "sudo" && args.includes("nft") && args.includes("list")) {
+        return { exitCode: 0, stdout: "table inet filter {\n  chain input {\n    type filter hook input priority 0;\n  }\n}", stderr: "" };
+      }
+      if (opts.command === "systemctl" && args.includes("is-enabled") && args.includes("nftables")) {
+        return { exitCode: 0, stdout: "enabled", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const handler = tools.get("firewall")!.handler;
+    const result = await handler({ action: "persist_enable", dry_run: false });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("nftables");
+    expect(result.content[0].text).toContain("Cannot enable iptables persistence");
+  });
+
+  // ── nftables guard: ufw_add ─────────────────────────────────────────
+
+  it("should refuse ufw_add when nftables is active and UFW not installed", async () => {
+    const { executeCommand } = await import("../../src/core/executor.js");
+    const mockExec = vi.mocked(executeCommand);
+
+    mockExec.mockImplementation(async (opts: { command: string; args?: string[] }) => {
+      const args = opts.args ?? [];
+      if (opts.command === "systemctl" && args.includes("is-active") && args.includes("nftables")) {
+        return { exitCode: 0, stdout: "active", stderr: "" };
+      }
+      if (opts.command === "sudo" && args.includes("nft") && args.includes("list")) {
+        return { exitCode: 0, stdout: "table inet filter {\n  chain input {\n    type filter hook input priority 0;\n  }\n}", stderr: "" };
+      }
+      if (opts.command === "systemctl" && args.includes("is-enabled")) {
+        return { exitCode: 0, stdout: "enabled", stderr: "" };
+      }
+      // which ufw → not found
+      if (opts.command === "which" && args.includes("ufw")) {
+        return { exitCode: 1, stdout: "", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const handler = tools.get("firewall")!.handler;
+    const result = await handler({ action: "ufw_add", rule_action: "allow", port: "22", protocol: "tcp", dry_run: true });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("nftables");
+  });
+
+  // ── set_policy DROP: dry-run shows discovered services ──────────────
+
+  it("should include active service discovery in set_policy DROP dry-run", async () => {
+    const { executeCommand } = await import("../../src/core/executor.js");
+    const mockExec = vi.mocked(executeCommand);
+
+    mockExec.mockImplementation(async (opts: { command: string; args?: string[] }) => {
+      const args = opts.args ?? [];
+      // nftables not active
+      if (opts.command === "systemctl" && args.includes("is-active") && args.includes("nftables")) {
+        return { exitCode: 3, stdout: "inactive", stderr: "" };
+      }
+      if (opts.command === "sudo" && args.includes("nft")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (opts.command === "systemctl" && args.includes("is-enabled")) {
+        return { exitCode: 1, stdout: "disabled", stderr: "" };
+      }
+      // iptables -C (check rule) → rule does not exist
+      if (opts.command === "sudo" && args.includes("iptables") && args.includes("-C")) {
+        return { exitCode: 1, stdout: "", stderr: "iptables: No chain/target/match by that name." };
+      }
+      // ss -tlnpH → sshd on port 22
+      if (opts.command === "sudo" && args.includes("ss") && args.includes("-tlnpH")) {
+        return { exitCode: 0, stdout: 'LISTEN 0      128          0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=1234,fd=3))', stderr: "" };
+      }
+      // ss -ulnpH → empty
+      if (opts.command === "sudo" && args.includes("ss") && args.includes("-ulnpH")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      // ss established → qbittorrent connected to tracker on port 6881
+      if (opts.command === "sudo" && args.includes("ss") && args.includes("established")) {
+        return { exitCode: 0, stdout: 'ESTAB 0      0      192.168.1.5:54321  1.2.3.4:6881   users:(("qbittorrent",pid=5678,fd=10))', stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const handler = tools.get("firewall")!.handler;
+    const result = await handler({
+      action: "iptables_set_policy",
+      chain: "INPUT",
+      policy: "DROP",
+      dry_run: true,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("DRY-RUN");
+    // Should mention sshd port 22 as auto-discovered
+    expect(result.content[0].text).toContain("22");
+    expect(result.content[0].text).toContain("sshd");
+  });
 });

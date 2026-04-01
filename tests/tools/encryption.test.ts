@@ -830,4 +830,840 @@ describe("encryption tools", () => {
       expect(parsed.action).toBe("ca_audit");
     });
   });
+
+  // ── tls_remote_audit success paths ────────────────────────────────────
+
+  describe("tls_remote_audit", () => {
+    it("should perform TLS audit and report connection info", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      // First call: brief connection test
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "Protocol  : TLSv1.3\nCipher    : TLS_AES_256_GCM_SHA384",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      // Second call: detailed connection
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "subject=CN = example.com\nissuer=CN = Let's Encrypt\nNot Before: Jan  1 00:00:00 2024 GMT\nNot After : Dec 31 23:59:59 2030 GMT\nVerify return code: 0 (ok)",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      // Protocol test calls (TLSv1, TLSv1.1, TLSv1.2)
+      mockExec.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "no protocols available", timedOut: false, duration: 10, permissionDenied: false });
+      mockExec.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "no protocols available", timedOut: false, duration: 10, permissionDenied: false });
+      mockExec.mockResolvedValueOnce({ exitCode: 0, stdout: "Protocol  : TLSv1.2", stderr: "", timedOut: false, duration: 10, permissionDenied: false });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_remote_audit", host: "example.com", port: 443, check_ciphers: true, check_protocols: true, check_certificate: true });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("TLS/SSL Audit");
+      expect(result.content[0].text).toContain("Protocol: TLSv1.3");
+      expect(result.content[0].text).toContain("example.com");
+    });
+
+    it("should report connection failure", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Connection refused",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_remote_audit", host: "fail.example.com", port: 443, check_ciphers: false, check_protocols: false, check_certificate: false });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to connect");
+    });
+
+    it("should detect weak ciphers in audit", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "Protocol  : TLSv1.2\nCipher    : RC4-SHA",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "subject=CN = test.com\nRC4-SHA cipher used\nVerify return code: 0 (ok)",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_remote_audit", host: "test.com", port: 443, check_ciphers: true, check_protocols: false, check_certificate: false });
+      expect(result.content[0].text).toContain("Weak ciphers detected");
+      expect(result.content[0].text).toContain("RC4");
+    });
+
+    it("should detect self-signed certificate", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "Protocol  : TLSv1.3",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "subject=CN = localhost\nself signed certificate\nVerify return code: 18 (self signed certificate)",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_remote_audit", host: "localhost", port: 443, check_ciphers: false, check_protocols: false, check_certificate: true });
+      expect(result.content[0].text).toContain("Self-signed certificate");
+      expect(result.content[0].text).toContain("Verification FAILED");
+    });
+  });
+
+  // ── tls_cert_expiry success paths ─────────────────────────────────────
+
+  describe("tls_cert_expiry", () => {
+    it("should check local certificate expiry", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "notAfter=Dec 31 23:59:59 2030 GMT\nsubject=CN = test.com\nissuer=CN = Test CA",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_cert_expiry", cert_path: "/etc/ssl/certs/test.pem", port: 443, warn_days: 30 });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("Certificate Expiry Check");
+      expect(result.content[0].text).toContain("OK");
+    });
+
+    it("should check remote host certificate expiry", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "subject=CN = example.com\nissuer=CN = Let's Encrypt\nNot After : Dec 31 23:59:59 2030 GMT",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_cert_expiry", host: "example.com", port: 443, warn_days: 30 });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("OK");
+    });
+
+    it("should warn for expiring certificate", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      const soon = new Date();
+      soon.setDate(soon.getDate() + 10);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: `notAfter=${soon.toUTCString()}\nsubject=CN = expiring.com\nissuer=CN = CA`,
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_cert_expiry", cert_path: "/etc/ssl/certs/expiring.pem", port: 443, warn_days: 30 });
+      expect(result.content[0].text).toContain("WARNING");
+    });
+
+    it("should report expired certificate", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "notAfter=Jan  1 00:00:00 2020 GMT\nsubject=CN = old.com\nissuer=CN = CA",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_cert_expiry", cert_path: "/etc/ssl/certs/old.pem", port: 443, warn_days: 30 });
+      expect(result.content[0].text).toContain("CRITICAL");
+      expect(result.content[0].text).toContain("EXPIRED");
+    });
+
+    it("should report error when cert read fails", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "unable to load certificate",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_cert_expiry", cert_path: "/etc/ssl/certs/bad.pem", port: 443, warn_days: 30 });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to read certificate");
+    });
+  });
+
+  // ── tls_config_audit ──────────────────────────────────────────────────
+
+  describe("tls_config_audit", () => {
+    it("should audit apache TLS config with weak protocols", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      // find apache config files
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "/etc/apache2/sites-enabled/default-ssl.conf",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      // cat apache config
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "SSLProtocol all -SSLv2 +TLSv1.0\nSSLCipherSuite HIGH:!aNULL:!MD5",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_config_audit", service: "apache", port: 443 });
+      expect(result.content[0].text).toContain("Apache TLS Configuration");
+      expect(result.content[0].text).toContain("Critical");
+    });
+
+    it("should audit nginx TLS config", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      // find nginx config files
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "/etc/nginx/conf.d/ssl.conf",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      // cat nginx config
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "ssl_protocols TLSv1.2 TLSv1.3;\nssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384';",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_config_audit", service: "nginx", port: 443 });
+      expect(result.content[0].text).toContain("Nginx TLS Configuration");
+      expect(result.content[0].text).toContain("ssl_protocols");
+    });
+
+    it("should audit system crypto config", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      // cat openssl.cnf
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "MinProtocol = TLSv1.2\nCipherString = DEFAULT@SECLEVEL=2",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      // cat crypto-policies
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "LEGACY",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      // openssl version
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "OpenSSL 3.0.2 15 Mar 2022",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_config_audit", service: "system", port: 443 });
+      expect(result.content[0].text).toContain("System-Wide Crypto Configuration");
+      expect(result.content[0].text).toContain("MinProtocol: TLSv1.2");
+      expect(result.content[0].text).toContain("LEGACY");
+      expect(result.content[0].text).toContain("OpenSSL 3.0.2");
+    });
+
+    it("should report no issues when config is clean", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      // apache not found
+      mockExec.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "not found", timedOut: false, duration: 10, permissionDenied: false });
+      // nginx not found
+      mockExec.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "not found", timedOut: false, duration: 10, permissionDenied: false });
+      // openssl.cnf not found
+      mockExec.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "not found", timedOut: false, duration: 10, permissionDenied: false });
+      // crypto-policies not found
+      mockExec.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "", timedOut: false, duration: 10, permissionDenied: false });
+      // openssl version
+      mockExec.mockResolvedValueOnce({ exitCode: 0, stdout: "OpenSSL 3.0.2", stderr: "", timedOut: false, duration: 10, permissionDenied: false });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "tls_config_audit", service: "all", port: 443 });
+      expect(result.content[0].text).toContain("No critical TLS configuration issues found");
+    });
+  });
+
+  // ── gpg_list ──────────────────────────────────────────────────────────
+
+  describe("gpg_list", () => {
+    it("should list GPG keys", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "pub   rsa4096/ABCDEF1234567890 2024-01-01\nuid           Test User <test@example.com>",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "sec   rsa4096/ABCDEF1234567890 2024-01-01",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_list" });
+      expect(result.content[0].text).toContain("GPG Key Management: list");
+      expect(result.content[0].text).toContain("Public Keys");
+      expect(result.content[0].text).toContain("Secret Keys");
+      expect(result.content[0].text).toContain("ABCDEF1234567890");
+    });
+
+    it("should handle no GPG keys found", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 2,
+        stdout: "",
+        stderr: "gpg: no keys found",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_list" });
+      expect(result.content[0].text).toContain("No GPG keys found");
+    });
+  });
+
+  // ── gpg_generate ──────────────────────────────────────────────────────
+
+  describe("gpg_generate", () => {
+    it("should show dry run output for key generation", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_generate", dry_run: true });
+      expect(result.content[0].text).toContain("DRY RUN");
+      expect(result.content[0].text).toContain("gpg --full-generate-key");
+      expect(result.content[0].text).toContain("Key-Type: RSA");
+    });
+
+    it("should warn about interactive mode when not dry run", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_generate", dry_run: false });
+      expect(result.content[0].text).toContain("Interactive GPG key generation cannot be run");
+    });
+  });
+
+  // ── gpg_export ────────────────────────────────────────────────────────
+
+  describe("gpg_export success", () => {
+    it("should export a GPG key", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQINBF...\n-----END PGP PUBLIC KEY BLOCK-----",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_export", key_id: "ABCDEF1234567890" });
+      expect(result.content[0].text).toContain("Exported public key for: ABCDEF1234567890");
+      expect(result.content[0].text).toContain("BEGIN PGP PUBLIC KEY BLOCK");
+    });
+
+    it("should report error when export fails", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "gpg: key not found",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_export", key_id: "NONEXISTENT" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to export key");
+    });
+  });
+
+  // ── gpg_import success paths ──────────────────────────────────────────
+
+  describe("gpg_import success", () => {
+    it("should show dry run for import", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_import", file_path: "/tmp/key.asc", dry_run: true });
+      expect(result.content[0].text).toContain("DRY RUN");
+      expect(result.content[0].text).toContain("/tmp/key.asc");
+    });
+
+    it("should import a GPG key when not dry run", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "",
+        stderr: "gpg: key ABCDEF: public key imported\ngpg: Total number processed: 1",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_import", file_path: "/tmp/key.asc", dry_run: false });
+      expect(result.content[0].text).toContain("Key imported from: /tmp/key.asc");
+    });
+  });
+
+  // ── gpg_verify ────────────────────────────────────────────────────────
+
+  describe("gpg_verify", () => {
+    it("should require file_path", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_verify" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("file_path is required");
+    });
+
+    it("should verify a valid GPG signature", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "",
+        stderr: 'gpg: Good signature from "Test User <test@example.com>"',
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_verify", file_path: "/tmp/file.sig" });
+      expect(result.content[0].text).toContain("Signature verification PASSED");
+    });
+
+    it("should report failed GPG signature verification", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "gpg: BAD signature",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_verify", file_path: "/tmp/file.sig" });
+      expect(result.content[0].text).toContain("Signature verification FAILED");
+    });
+
+    it("should reject verify path with traversal", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "gpg_verify", file_path: "/tmp/../../../etc/shadow" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("traversal");
+    });
+  });
+
+  // ── luks_status success path ──────────────────────────────────────────
+
+  describe("luks_status success", () => {
+    it("should show status for an active LUKS volume", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "/dev/mapper/cryptvol is active.\n  type: LUKS2\n  cipher: aes-xts-plain64",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_status", name: "cryptvol" });
+      expect(result.content[0].text).toContain("Status for /dev/mapper/cryptvol");
+      expect(result.content[0].text).toContain("aes-xts-plain64");
+    });
+
+    it("should report inactive LUKS volume", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 4,
+        stdout: "",
+        stderr: "Device cryptvol is not active.",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_status", name: "cryptvol" });
+      expect(result.content[0].text).toContain("not found or not active");
+    });
+  });
+
+  // ── luks_dump success path ────────────────────────────────────────────
+
+  describe("luks_dump success", () => {
+    it("should dump LUKS header info", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "LUKS header information\nVersion: 2\nCipher name: aes\nCipher mode: xts-plain64\nKey Slots: 8",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_dump", device: "/dev/sda2" });
+      expect(result.content[0].text).toContain("LUKS Header Dump for /dev/sda2");
+      expect(result.content[0].text).toContain("Version: 2");
+    });
+
+    it("should report error on dump failure", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Device does not exist",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_dump", device: "/dev/sda99" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to dump LUKS header");
+    });
+  });
+
+  // ── luks_open ─────────────────────────────────────────────────────────
+
+  describe("luks_open", () => {
+    it("should require both device and name", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_open", device: "/dev/sda2" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Both device and name are required");
+    });
+
+    it("should show dry run output", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_open", device: "/dev/sda2", name: "cryptvol", dry_run: true });
+      expect(result.content[0].text).toContain("DRY RUN");
+      expect(result.content[0].text).toContain("/dev/sda2");
+      expect(result.content[0].text).toContain("cryptvol");
+    });
+
+    it("should reject device path with traversal", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_open", device: "/dev/../etc/shadow", name: "test" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("traversal");
+    });
+
+    it("should warn about interactive passphrase when not dry run", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_open", device: "/dev/sda2", name: "cryptvol", dry_run: false });
+      expect(result.content[0].text).toContain("Interactive LUKS open requires a passphrase");
+    });
+  });
+
+  // ── luks_close ────────────────────────────────────────────────────────
+
+  describe("luks_close", () => {
+    it("should require name", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_close" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("name");
+    });
+
+    it("should show dry run output for close", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_close", name: "cryptvol", dry_run: true });
+      expect(result.content[0].text).toContain("DRY RUN");
+      expect(result.content[0].text).toContain("/dev/mapper/cryptvol");
+    });
+
+    it("should close LUKS volume when not dry run", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_close", name: "cryptvol", dry_run: false });
+      expect(result.content[0].text).toContain("closed successfully");
+    });
+
+    it("should report error when close fails", async () => {
+      const { getConfig } = await import("../../src/core/config.js");
+      vi.mocked(getConfig).mockReturnValue({ dryRun: false } as ReturnType<typeof getConfig>);
+
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Device is busy",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_close", name: "cryptvol", dry_run: false });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to close LUKS volume");
+    });
+  });
+
+  // ── luks_list ─────────────────────────────────────────────────────────
+
+  describe("luks_list", () => {
+    it("should list LUKS volumes and detect encrypted devices", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "control\ncryptvol -> ../dm-0",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "NAME      FSTYPE      SIZE MOUNTPOINT UUID\nsda1      ext4       50G  /          abc-123\nsda2      crypto_LUKS 100G             def-456",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_list" });
+      expect(result.content[0].text).toContain("Device Mapper Entries");
+      expect(result.content[0].text).toContain("LUKS Encrypted Devices");
+      expect(result.content[0].text).toContain("crypto_LUKS");
+    });
+
+    it("should report no LUKS devices when none found", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "control",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "NAME FSTYPE SIZE MOUNTPOINT UUID\nsda1 ext4   50G  /          abc-123",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "luks_list" });
+      expect(result.content[0].text).toContain("No LUKS encrypted devices detected");
+    });
+  });
+
+  // ── file_hash ─────────────────────────────────────────────────────────
+
+  describe("file_hash", () => {
+    it("should require path parameter", async () => {
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "file_hash", algorithm: "sha256", recursive: false });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("path is required");
+    });
+
+    it("should hash a single file", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /etc/passwd",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "file_hash", path: "/etc/passwd", algorithm: "sha256", recursive: false });
+      expect(result.content[0].text).toContain("File Integrity Hash");
+      expect(result.content[0].text).toContain("SHA256");
+      expect(result.content[0].text).toContain("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    });
+
+    it("should hash files recursively", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: "abc123  /etc/ssl/file1.pem\ndef456  /etc/ssl/file2.pem",
+        stderr: "",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "file_hash", path: "/etc/ssl", algorithm: "sha512", recursive: true });
+      expect(result.content[0].text).toContain("Directory: /etc/ssl");
+      expect(result.content[0].text).toContain("Files hashed: 2");
+    });
+
+    it("should report error when hash command fails", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "No such file or directory",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "file_hash", path: "/nonexistent", algorithm: "sha256", recursive: false });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to hash");
+    });
+
+    it("should report error when recursive hash fails with no output", async () => {
+      const { executeCommand } = await import("../../src/core/executor.js");
+      const mockExec = vi.mocked(executeCommand);
+      mockExec.mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Permission denied",
+        timedOut: false,
+        duration: 10,
+        permissionDenied: false,
+      });
+
+      const handler = tools.get("crypto")!.handler;
+      const result = await handler({ action: "file_hash", path: "/root/secret", algorithm: "sha256", recursive: true });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to hash files");
+    });
+  });
 });
