@@ -13,7 +13,7 @@ export default defineConfig({
             provider: "v8",
             include: ["src/core/**/*.ts", "src/tools/**/*.ts"],
             exclude: ["src/index.ts"],
-            reporter: ["text", "text-summary", "json"],
+            reporter: ["text", "text-summary", "json", "json-summary"],
             thresholds: {
                 // CI runners lack security binaries (iptables, auditd, etc.)
                 // so many tool code paths are unreachable in that environment.
