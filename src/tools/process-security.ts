@@ -10,12 +10,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spawnSafe } from "../core/spawn-safe.js";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 import {
   createTextContent,
   createErrorContent,
 } from "../core/parsers.js";
-import type { ChildProcess } from "node:child_process";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 

@@ -21,8 +21,7 @@ import { logChange, createChangeEntry } from "../core/changelog.js";
 import { validateInterface, sanitizeArgs, validateToolPath } from "../core/sanitizer.js";
 import { validateBpfFilter } from "./ebpf-security.js";
 import * as net from "node:net";
-import { spawnSafe } from "../core/spawn-safe.js";
-import type { ChildProcess } from "node:child_process";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 
 // ── TOOL-022 remediation: strict network parameter validation helpers ───────
 

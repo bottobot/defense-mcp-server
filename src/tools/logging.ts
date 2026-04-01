@@ -32,8 +32,7 @@ import {
 } from "../core/sanitizer.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
 import { existsSync } from "node:fs";
-import { spawnSafe } from "../core/spawn-safe.js";
-import type { ChildProcess } from "node:child_process";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 
 // ── TOOL-015 remediation: allowed directories for log file paths ────────────
 const ALLOWED_LOG_DIRS = ["/var/log", "/var/spool", "/tmp", "/var/lib", "/run/log"];

@@ -25,8 +25,7 @@ import {
 } from "../core/sanitizer.js";
 
 import { validateToolPath } from "../core/sanitizer.js";
-import { spawnSafe } from "../core/spawn-safe.js";
-import type { ChildProcess } from "node:child_process";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

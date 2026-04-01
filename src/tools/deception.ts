@@ -12,14 +12,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as crypto from "node:crypto";
-import { spawnSafe } from "../core/spawn-safe.js";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 import {
   createTextContent,
   createErrorContent,
   formatToolOutput,
 } from "../core/parsers.js";
-import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, rmSync } from "node:fs";
 
 // ── Constants ──────────────────────────────────────────────────────────────────

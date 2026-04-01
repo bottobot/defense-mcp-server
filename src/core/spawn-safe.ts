@@ -19,15 +19,18 @@ import {
   execFileSync as nodeExecFileSync,
   type SpawnOptions,
   type ExecFileSyncOptions,
-  type ChildProcess,
+  type ChildProcess as NodeChildProcess,
 } from "node:child_process";
+
+/** Re-export ChildProcess type so tool files can import it without touching node:child_process directly. */
+export type { NodeChildProcess as ChildProcess };
 import { resolveCommand } from "./command-allowlist.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface SpawnSafeOptions extends SpawnOptions {}
+export type SpawnSafeOptions = SpawnOptions;
 
-export interface ExecFileSafeOptions extends ExecFileSyncOptions {}
+export type ExecFileSafeOptions = ExecFileSyncOptions;
 
 // ── Argument Redaction ───────────────────────────────────────────────────────
 
@@ -99,7 +102,7 @@ export function spawnSafe(
   command: string,
   args: string[],
   options?: SpawnSafeOptions,
-): ChildProcess {
+): NodeChildProcess {
   const resolvedCommand = resolveCommandSafe(command);
 
   const safeOptions: SpawnOptions = {

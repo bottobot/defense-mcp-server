@@ -40,11 +40,10 @@ import { THIRD_PARTY_MANIFEST } from "../core/third-party-manifest.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { spawnSafe } from "../core/spawn-safe.js";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 import { secureWriteFileSync, verifySecurePermissions } from "../core/secure-fs.js";
 import { verifyAllBinaries } from "../core/command-allowlist.js";
 import { RateLimiter } from "../core/rate-limiter.js";
-import type { ChildProcess } from "node:child_process";
 
 // Suppress unused import warnings
 void getToolTimeout;
@@ -2355,7 +2354,6 @@ export function registerMetaTools(server: McpServer): void {
               const binResults = await verifyAllBinaries();
               const verified = binResults.filter(r => r.verified).length;
               const warnBins = binResults.filter(r => !r.verified).length;
-              const skipped = binResults.length === 0 ? 0 : 0;
               sections.push(`   Verified: ${verified}, Warnings: ${warnBins}, Total: ${binResults.length}`);
               if (warnBins === 0) { score++; sections.push("   Status: OK"); }
               else { warnings++; sections.push("   Status: WARNING"); }

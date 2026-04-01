@@ -15,9 +15,8 @@ import {
   createTextContent,
   createErrorContent,
 } from "../core/parsers.js";
-import { spawnSafe } from "../core/spawn-safe.js";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 import { secureWriteFileSync } from "../core/secure-fs.js";
-import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 
 // ── Suspicious port list for IOC scanning ──────────────────────────────────

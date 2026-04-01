@@ -29,9 +29,7 @@ import {
 import { SafeguardRegistry } from "../core/safeguards.js";
 import { SudoSession } from "../core/sudo-session.js";
 import { readFileSync, existsSync } from "node:fs";
-import { execSync } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
-import { spawnSafe } from "../core/spawn-safe.js";
+import { spawnSafe, execFileSafe, type ChildProcess } from "../core/spawn-safe.js";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 
 // ── TOOL-019 remediation: privilege check helper ───────────────────────────
@@ -58,7 +56,7 @@ function checkPrivileges(): { ok: boolean; message?: string } {
 
   // Fallback: Check if sudo is available without password (NOPASSWD)
   try {
-    execSync("sudo -n true 2>/dev/null", { timeout: 3000, stdio: "ignore" });
+    execFileSafe("sudo", ["-n", "true"], { timeout: 3000, stdio: "ignore" });
     return { ok: true };
   } catch {
     return {

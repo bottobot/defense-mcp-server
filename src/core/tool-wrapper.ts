@@ -185,9 +185,7 @@ function createWrappedToolMethod(
   ctx: WrappedToolContext,
 ): (...args: unknown[]) => unknown {
   // Bind to preserve `this` context on the real McpServer
-  const originalTool = (server.tool as Function).bind(server) as (
-    ...args: unknown[]
-  ) => unknown;
+  const originalTool = (server.tool as (...args: unknown[]) => unknown).bind(server);
 
   return (...args: unknown[]): unknown => {
     // Sanity: need at least (name, handler)

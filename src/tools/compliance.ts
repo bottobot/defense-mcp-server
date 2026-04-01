@@ -26,7 +26,7 @@ import {
 import { logChange, createChangeEntry } from "../core/changelog.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
 import { sanitizeArgs } from "../core/sanitizer.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import {
   loadPolicy,
   evaluatePolicy,
@@ -853,7 +853,7 @@ export function registerComplianceTools(server: McpServer): void {
 
             function filePermCheckLocal(filePath: string, maxPerm: string): { passed: boolean; detail: string } {
               try {
-                const { statSync } = require("node:fs");
+                // statSync imported at module level
                 const stat = statSync(filePath);
                 const mode = (stat.mode & 0o777).toString(8);
                 return { passed: parseInt(mode, 8) <= parseInt(maxPerm, 8), detail: `${filePath}: ${mode} (max: ${maxPerm})` };
