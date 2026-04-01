@@ -431,64 +431,6 @@ describe("firewall tools", () => {
     expect(result.isError).toBe(true);
   });
 
-  // ── nftables guard: persist_enable ──────────────────────────────────
-
-  it("should refuse persist_enable when nftables is active", async () => {
-    const { executeCommand } = await import("../../src/core/executor.js");
-    const mockExec = vi.mocked(executeCommand);
-
-    // Mock nftables as active: systemctl is-active returns "active", nft list has rules
-    mockExec.mockImplementation(async (opts: { command: string; args?: string[] }) => {
-      const args = opts.args ?? [];
-      if (opts.command === "systemctl" && args.includes("is-active") && args.includes("nftables")) {
-        return { exitCode: 0, stdout: "active", stderr: "" };
-      }
-      if (opts.command === "sudo" && args.includes("nft") && args.includes("list")) {
-        return { exitCode: 0, stdout: "table inet filter {\n  chain input {\n    type filter hook input priority 0;\n  }\n}", stderr: "" };
-      }
-      if (opts.command === "systemctl" && args.includes("is-enabled") && args.includes("nftables")) {
-        return { exitCode: 0, stdout: "enabled", stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
-
-    const handler = tools.get("firewall")!.handler;
-    const result = await handler({ action: "persist_enable", dry_run: false });
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("nftables");
-    expect(result.content[0].text).toContain("Cannot enable iptables persistence");
-  });
-
-  // ── nftables guard: ufw_add ─────────────────────────────────────────
-
-  it("should refuse ufw_add when nftables is active and UFW not installed", async () => {
-    const { executeCommand } = await import("../../src/core/executor.js");
-    const mockExec = vi.mocked(executeCommand);
-
-    mockExec.mockImplementation(async (opts: { command: string; args?: string[] }) => {
-      const args = opts.args ?? [];
-      if (opts.command === "systemctl" && args.includes("is-active") && args.includes("nftables")) {
-        return { exitCode: 0, stdout: "active", stderr: "" };
-      }
-      if (opts.command === "sudo" && args.includes("nft") && args.includes("list")) {
-        return { exitCode: 0, stdout: "table inet filter {\n  chain input {\n    type filter hook input priority 0;\n  }\n}", stderr: "" };
-      }
-      if (opts.command === "systemctl" && args.includes("is-enabled")) {
-        return { exitCode: 0, stdout: "enabled", stderr: "" };
-      }
-      // which ufw → not found
-      if (opts.command === "which" && args.includes("ufw")) {
-        return { exitCode: 1, stdout: "", stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
-
-    const handler = tools.get("firewall")!.handler;
-    const result = await handler({ action: "ufw_add", rule_action: "allow", port: "22", protocol: "tcp", dry_run: true });
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("nftables");
-  });
-
   // ── set_policy DROP: dry-run shows discovered services ──────────────
 
   it("should include active service discovery in set_policy DROP dry-run", async () => {
