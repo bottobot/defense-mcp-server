@@ -7,8 +7,11 @@
  * @see CICD-009
  */
 import pluginSecurity from "eslint-plugin-security";
+import tseslint from "typescript-eslint";
 
 export default [
+  // TypeScript parser config — required for ESLint to understand .ts files
+  ...tseslint.configs.recommended,
   // Security plugin recommended config
   pluginSecurity.configs.recommended,
   {
