@@ -46,11 +46,9 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn().mockReturnValue(""),
   existsSync: vi.fn().mockReturnValue(true),
 }));
-vi.mock("node:child_process", () => ({
-  execSync: vi.fn(), // Make checkPrivileges() succeed (no throw = sudo available)
-}));
 vi.mock("../../src/core/spawn-safe.js", () => ({
   spawnSafe: vi.fn(),
+  execFileSafe: vi.fn(), // Make checkPrivileges() succeed (no throw = sudo available)
 }));
 vi.mock("../../src/core/secure-fs.js", () => ({
   secureWriteFileSync: vi.fn(),
