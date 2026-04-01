@@ -12,7 +12,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as crypto from "node:crypto";
-import { runCommand, type CommandResult } from "../core/run-command.js";
+import { runCommand } from "../core/run-command.js";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 import {
   createTextContent,

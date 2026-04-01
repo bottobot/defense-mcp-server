@@ -32,7 +32,7 @@ import {
 } from "../core/sanitizer.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
 import { existsSync } from "node:fs";
-import { runCommand, type CommandResult } from "../core/run-command.js";
+import { runCommand } from "../core/run-command.js";
 
 // ── TOOL-015 remediation: allowed directories for log file paths ────────────
 const ALLOWED_LOG_DIRS = ["/var/log", "/var/spool", "/tmp", "/var/lib", "/run/log"];

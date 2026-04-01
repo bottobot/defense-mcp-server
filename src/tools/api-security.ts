@@ -10,7 +10,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { runCommand, type CommandResult } from "../core/run-command.js";
+import { runCommand } from "../core/run-command.js";
 import {
   createTextContent,
   createErrorContent,
