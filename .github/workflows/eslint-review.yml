@@ -34,5 +34,5 @@ jobs:
         with:
           reporter: github-check
           eslint_flags: 'src/ --max-warnings=0'
-          fail_level: warning
+          fail_level: error
           filter_mode: nofilter
