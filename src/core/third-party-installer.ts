@@ -557,7 +557,7 @@ async function installGithubRelease(
       success: true,
     }));
 
-    console.error(`[third-party-installer] ✓ ${entry.name} v${entry.version} installed successfully`);
+    console.error(`[third-party-installer] OK ${entry.name} v${entry.version} installed successfully`);
 
     return {
       binary: entry.binary,
@@ -700,7 +700,7 @@ async function installAptRepo(
     );
 
     if (!updateResult.success) {
-      console.error(`[third-party-installer] ⚠ apt-get update had issues: ${updateResult.stderr.slice(0, 200)}`);
+      console.error(`[third-party-installer] WARNING: apt-get update had issues: ${updateResult.stderr.slice(0, 200)}`);
     }
 
     const packages = entry.aptPinnedPackages ?? [entry.binary];
@@ -731,7 +731,7 @@ async function installAptRepo(
       success: true,
     }));
 
-    console.error(`[third-party-installer] ✓ ${entry.name} v${entry.version} installed successfully via APT`);
+    console.error(`[third-party-installer] OK ${entry.name} v${entry.version} installed successfully via APT`);
 
     return {
       binary: entry.binary,
@@ -792,7 +792,7 @@ async function installNpmLocal(
     success: true,
   }));
 
-  console.error(`[third-party-installer] ✓ ${entry.name} v${entry.version} installed via npm`);
+  console.error(`[third-party-installer] OK ${entry.name} v${entry.version} installed via npm`);
 
   return {
     binary: entry.binary,

@@ -25,8 +25,7 @@ import {
 } from "../core/sanitizer.js";
 
 import { validateToolPath } from "../core/sanitizer.js";
-import { spawnSafe } from "../core/spawn-safe.js";
-import type { ChildProcess } from "node:child_process";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -221,8 +220,8 @@ export function registerEncryptionTools(server: McpServer): void {
           try {
             const validHost = validateTarget(host);
             const sections: string[] = [];
-            sections.push(`🔐 TLS/SSL Audit: ${validHost}:${port}`);
-            sections.push("=".repeat(50));
+            sections.push(`TLS/SSL Audit: ${validHost}:${port}`);
+            sections.push("");
 
             // Basic connection test
             const connResult = await executeCommand({
@@ -253,7 +252,7 @@ export function registerEncryptionTools(server: McpServer): void {
               };
             }
 
-            sections.push("\n📡 Connection Info:");
+            sections.push("\nConnection Info:");
             const protocolMatch = fullOutput.match(/Protocol\s*:\s*(\S+)/);
             const cipherMatch = fullOutput.match(/Cipher\s*:\s*(\S+)/);
 
@@ -277,7 +276,7 @@ export function registerEncryptionTools(server: McpServer): void {
             const detailOutput = detailResult.stdout + "\n" + detailResult.stderr;
 
             if (check_certificate) {
-              sections.push("\n📜 Certificate Details:");
+              sections.push("\nCertificate Details:");
 
               const subjectMatch = detailOutput.match(/subject=([^\n]+)/);
               const issuerMatch = detailOutput.match(/issuer=([^\n]+)/);
@@ -300,46 +299,46 @@ export function registerEncryptionTools(server: McpServer): void {
                   (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
                 );
                 if (daysLeft < 0) {
-                  sections.push(`  ⛔ EXPIRED ${Math.abs(daysLeft)} days ago`);
+                  sections.push(`  CRITICAL: EXPIRED ${Math.abs(daysLeft)} days ago`);
                 } else if (daysLeft < 30) {
-                  sections.push(`  ⚠️ WARNING: Expires in ${daysLeft} days`);
+                  sections.push(`  WARNING: Expires in ${daysLeft} days`);
                 } else {
-                  sections.push(`  ✅ Valid for ${daysLeft} more days`);
+                  sections.push(`  Valid for ${daysLeft} more days`);
                 }
               }
               if (verifyMatch) {
                 const code = parseInt(verifyMatch[1], 10);
                 const reason = verifyMatch[2];
                 if (code === 0) {
-                  sections.push(`  ✅ Verification: OK`);
+                  sections.push(`  Verification: OK`);
                 } else {
-                  sections.push(`  ⛔ Verification FAILED: ${reason} (code ${code})`);
+                  sections.push(`  CRITICAL: Verification FAILED: ${reason} (code ${code})`);
                 }
               }
 
               if (detailOutput.includes("self signed certificate") ||
                   detailOutput.includes("self-signed")) {
-                sections.push(`  ⚠️ Self-signed certificate detected`);
+                sections.push(`  WARNING: Self-signed certificate detected`);
               }
             }
 
             if (check_ciphers) {
-              sections.push("\n🔑 Cipher Analysis:");
+              sections.push("\nCipher Analysis:");
               const weakFound = checkWeakCiphers(detailOutput);
               if (weakFound.length > 0) {
-                sections.push(`  ⛔ Weak ciphers detected: ${weakFound.join(", ")}`);
+                sections.push(`  Weak ciphers detected: ${weakFound.join(", ")}`);
               } else {
-                sections.push(`  ✅ No known weak ciphers detected in connection`);
+                sections.push(`  No known weak ciphers detected in connection`);
               }
             }
 
             if (check_protocols) {
-              sections.push("\n🔒 Protocol Analysis:");
+              sections.push("\nProtocol Analysis:");
               const weakProtos = checkWeakProtocols(detailOutput);
               if (weakProtos.length > 0) {
-                sections.push(`  ⛔ Weak protocols detected: ${weakProtos.join(", ")}`);
+                sections.push(`  Weak protocols detected: ${weakProtos.join(", ")}`);
               } else {
-                sections.push(`  ✅ No weak protocols detected in connection`);
+                sections.push(`  No weak protocols detected in connection`);
               }
 
               const testProtocols = [
@@ -373,15 +372,15 @@ export function registerEncryptionTools(server: McpServer): void {
 
                 if (proto.name === "TLSv1" || proto.name === "TLSv1.1") {
                   if (connected) {
-                    sections.push(`  ⚠️ ${proto.name}: Supported (deprecated, should be disabled)`);
+                    sections.push(`  WARNING: ${proto.name}: Supported (deprecated, should be disabled)`);
                   } else {
-                    sections.push(`  ✅ ${proto.name}: Not supported (good)`);
+                    sections.push(`  ${proto.name}: Not supported (good)`);
                   }
                 } else {
                   if (connected) {
-                    sections.push(`  ✅ ${proto.name}: Supported`);
+                    sections.push(`  ${proto.name}: Supported`);
                   } else {
-                    sections.push(`  ℹ️ ${proto.name}: Not supported`);
+                    sections.push(`  INFO: ${proto.name}: Not supported`);
                   }
                 }
               }
@@ -410,8 +409,8 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push("📅 Certificate Expiry Check");
-            sections.push("=".repeat(40));
+            sections.push("Certificate Expiry Check");
+            sections.push("");
 
             let endDate = "";
             let subject = "";
@@ -506,13 +505,13 @@ export function registerEncryptionTools(server: McpServer): void {
             let status: string;
             if (daysLeft < 0) {
               status = "CRITICAL";
-              sections.push(`\n⛔ Status: ${status} - Certificate EXPIRED ${Math.abs(daysLeft)} days ago`);
+              sections.push(`\nCRITICAL: Status: ${status} - Certificate EXPIRED ${Math.abs(daysLeft)} days ago`);
             } else if (daysLeft <= warn_days) {
               status = "WARNING";
-              sections.push(`\n⚠️ Status: ${status} - Certificate expires in ${daysLeft} days (threshold: ${warn_days})`);
+              sections.push(`\nWARNING: Status: ${status} - Certificate expires in ${daysLeft} days (threshold: ${warn_days})`);
             } else {
               status = "OK";
-              sections.push(`\n✅ Status: ${status} - Certificate valid for ${daysLeft} more days`);
+              sections.push(`\nStatus: ${status} - Certificate valid for ${daysLeft} more days`);
             }
 
             return { content: [createTextContent(sections.join("\n"))] };
@@ -527,8 +526,8 @@ export function registerEncryptionTools(server: McpServer): void {
           const { service } = params;
           try {
             const sections: string[] = [];
-            sections.push("🔍 TLS Configuration Audit");
-            sections.push("=".repeat(40));
+            sections.push("TLS Configuration Audit");
+            sections.push("");
 
             const findings: Array<{ level: string; msg: string }> = [];
 
@@ -684,17 +683,17 @@ export function registerEncryptionTools(server: McpServer): void {
 
             sections.push("\n── Findings Summary ──");
             if (findings.length === 0) {
-              sections.push("  ✅ No critical TLS configuration issues found.");
+              sections.push("  No critical TLS configuration issues found.");
             } else {
               const criticals = findings.filter((f) => f.level === "CRITICAL");
               const warnings = findings.filter((f) => f.level === "WARNING");
 
               if (criticals.length > 0) {
-                sections.push(`\n  ⛔ Critical (${criticals.length}):`);
+                sections.push(`\n  CRITICAL: Critical (${criticals.length}):`);
                 for (const f of criticals) sections.push(`    - ${f.msg}`);
               }
               if (warnings.length > 0) {
-                sections.push(`\n  ⚠️ Warnings (${warnings.length}):`);
+                sections.push(`\n  WARNING: Warnings (${warnings.length}):`);
                 for (const f of warnings) sections.push(`    - ${f.msg}`);
               }
             }
@@ -710,8 +709,8 @@ export function registerEncryptionTools(server: McpServer): void {
         case "gpg_list": {
           try {
             const sections: string[] = [];
-            sections.push(`🔑 GPG Key Management: list`);
-            sections.push("=".repeat(40));
+            sections.push(`GPG Key Management: list`);
+            sections.push("");
 
             const result = await executeCommand({
               command: "gpg",
@@ -752,8 +751,8 @@ export function registerEncryptionTools(server: McpServer): void {
           const { dry_run } = params;
           try {
             const sections: string[] = [];
-            sections.push(`🔑 GPG Key Management: generate`);
-            sections.push("=".repeat(40));
+            sections.push(`GPG Key Management: generate`);
+            sections.push("");
 
             if (dry_run ?? getConfig().dryRun) {
               sections.push("\n[DRY RUN] Would generate a new GPG key pair.");
@@ -771,7 +770,7 @@ export function registerEncryptionTools(server: McpServer): void {
               sections.push("  Expire-Date: 1y");
               sections.push("  %commit");
             } else {
-              sections.push("⚠️ Interactive GPG key generation cannot be run in non-interactive mode.");
+              sections.push("Interactive GPG key generation cannot be run in non-interactive mode.");
               sections.push("Use 'gpg --batch --gen-key <batch_file>' for non-interactive generation.");
             }
 
@@ -796,8 +795,8 @@ export function registerEncryptionTools(server: McpServer): void {
             sanitizeArgs([key_id]);
 
             const sections: string[] = [];
-            sections.push(`🔑 GPG Key Management: export`);
-            sections.push("=".repeat(40));
+            sections.push(`GPG Key Management: export`);
+            sections.push("");
 
             const result = await executeCommand({
               command: "gpg",
@@ -839,8 +838,8 @@ export function registerEncryptionTools(server: McpServer): void {
             validateKeyPath(file_path);
 
             const sections: string[] = [];
-            sections.push(`🔑 GPG Key Management: import`);
-            sections.push("=".repeat(40));
+            sections.push(`GPG Key Management: import`);
+            sections.push("");
 
             if (dry_run ?? getConfig().dryRun) {
               sections.push(`\n[DRY RUN] Would import GPG key from: ${file_path}`);
@@ -860,7 +859,7 @@ export function registerEncryptionTools(server: McpServer): void {
                 };
               }
 
-              sections.push(`\n✅ Key imported from: ${file_path}`);
+              sections.push(`\nKey imported from: ${file_path}`);
               sections.push(result.stderr || result.stdout);
 
               logChange(
@@ -898,8 +897,8 @@ export function registerEncryptionTools(server: McpServer): void {
             validateKeyPath(file_path);
 
             const sections: string[] = [];
-            sections.push(`🔑 GPG Key Management: verify`);
-            sections.push("=".repeat(40));
+            sections.push(`GPG Key Management: verify`);
+            sections.push("");
 
             const result = await executeCommand({
               command: "gpg",
@@ -910,9 +909,9 @@ export function registerEncryptionTools(server: McpServer): void {
 
             const output = result.stderr || result.stdout;
             if (result.exitCode !== 0) {
-              sections.push(`\n⛔ Signature verification FAILED for: ${file_path}`);
+              sections.push(`\nCRITICAL: Signature verification FAILED for: ${file_path}`);
             } else {
-              sections.push(`\n✅ Signature verification PASSED for: ${file_path}`);
+              sections.push(`\nSignature verification PASSED for: ${file_path}`);
             }
             sections.push(output);
 
@@ -937,8 +936,8 @@ export function registerEncryptionTools(server: McpServer): void {
             sanitizeArgs([name]);
 
             const sections: string[] = [];
-            sections.push(`🔐 LUKS Volume Management: status`);
-            sections.push("=".repeat(40));
+            sections.push(`LUKS Volume Management: status`);
+            sections.push("");
 
             const result = await executeCommand({
               command: "sudo",
@@ -948,7 +947,7 @@ export function registerEncryptionTools(server: McpServer): void {
             });
 
             if (result.exitCode !== 0) {
-              sections.push(`\n⚠️ Device mapper '${name}' not found or not active.`);
+              sections.push(`\nWARNING: Device mapper '${name}' not found or not active.`);
               sections.push(result.stderr || result.stdout);
             } else {
               sections.push(`\nStatus for /dev/mapper/${name}:`);
@@ -977,8 +976,8 @@ export function registerEncryptionTools(server: McpServer): void {
             assertNoTraversal(device);
 
             const sections: string[] = [];
-            sections.push(`🔐 LUKS Volume Management: dump`);
-            sections.push("=".repeat(40));
+            sections.push(`LUKS Volume Management: dump`);
+            sections.push("");
 
             const result = await executeCommand({
               command: "sudo",
@@ -1019,8 +1018,8 @@ export function registerEncryptionTools(server: McpServer): void {
             assertNoTraversal(device);
 
             const sections: string[] = [];
-            sections.push(`🔐 LUKS Volume Management: open`);
-            sections.push("=".repeat(40));
+            sections.push(`LUKS Volume Management: open`);
+            sections.push("");
 
             if (dry_run ?? getConfig().dryRun) {
               sections.push(`\n[DRY RUN] Would open LUKS volume:`);
@@ -1029,7 +1028,7 @@ export function registerEncryptionTools(server: McpServer): void {
               sections.push(`  Command: sudo cryptsetup luksOpen ${device} ${name}`);
               sections.push("\nNote: This operation requires a passphrase and cannot be run non-interactively without a key file.");
             } else {
-              sections.push("⚠️ Interactive LUKS open requires a passphrase.");
+              sections.push("Interactive LUKS open requires a passphrase.");
               sections.push("Use a key file with: sudo cryptsetup luksOpen --key-file <keyfile> <device> <name>");
 
               logChange(
@@ -1065,8 +1064,8 @@ export function registerEncryptionTools(server: McpServer): void {
             sanitizeArgs([name]);
 
             const sections: string[] = [];
-            sections.push(`🔐 LUKS Volume Management: close`);
-            sections.push("=".repeat(40));
+            sections.push(`LUKS Volume Management: close`);
+            sections.push("");
 
             if (dry_run ?? getConfig().dryRun) {
               sections.push(`\n[DRY RUN] Would close LUKS volume: /dev/mapper/${name}`);
@@ -1086,7 +1085,7 @@ export function registerEncryptionTools(server: McpServer): void {
                 };
               }
 
-              sections.push(`\n✅ LUKS volume '${name}' closed successfully.`);
+              sections.push(`\nLUKS volume '${name}' closed successfully.`);
 
               logChange(
                 createChangeEntry({
@@ -1111,8 +1110,8 @@ export function registerEncryptionTools(server: McpServer): void {
         case "luks_list": {
           try {
             const sections: string[] = [];
-            sections.push(`🔐 LUKS Volume Management: list`);
-            sections.push("=".repeat(40));
+            sections.push(`LUKS Volume Management: list`);
+            sections.push("");
 
             const mapperResult = await executeCommand({
               command: "ls",
@@ -1121,7 +1120,7 @@ export function registerEncryptionTools(server: McpServer): void {
               timeout: getToolTimeout("crypto_luks_manage"),
             });
 
-            sections.push("\n📁 Device Mapper Entries:");
+            sections.push("\nDevice Mapper Entries:");
             sections.push(mapperResult.stdout || "No entries found");
 
             const lsblkResult = await executeCommand({
@@ -1131,14 +1130,14 @@ export function registerEncryptionTools(server: McpServer): void {
               timeout: getToolTimeout("crypto_luks_manage"),
             });
 
-            sections.push("\n💾 Block Devices (with filesystem info):");
+            sections.push("\nBlock Devices (with filesystem info):");
             sections.push(lsblkResult.stdout || "No block devices found");
 
             const cryptoLines = (lsblkResult.stdout || "")
               .split("\n")
               .filter((l) => l.includes("crypto_LUKS") || l.includes("crypt"));
             if (cryptoLines.length > 0) {
-              sections.push("\n🔐 LUKS Encrypted Devices:");
+              sections.push("\nLUKS Encrypted Devices:");
               for (const line of cryptoLines) {
                 sections.push(`  ${line.trim()}`);
               }
@@ -1169,8 +1168,8 @@ export function registerEncryptionTools(server: McpServer): void {
 
             const sections: string[] = [];
             const hashCmd = `${algorithm}sum`;
-            sections.push(`#️⃣ File Integrity Hash (${algorithm.toUpperCase()})`);
-            sections.push("=".repeat(40));
+            sections.push(`File Integrity Hash (${algorithm.toUpperCase()})`);
+            sections.push("");
 
             if (recursive) {
               const result = await executeCommand({
@@ -1330,12 +1329,12 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push("📜 Certificate Inventory");
-            sections.push("=".repeat(50));
+            sections.push("Certificate Inventory");
+            sections.push("");
             sections.push(`\nTotal certificates found: ${certDetails.length}`);
-            sections.push(`  ✅ Valid: ${validCount}`);
-            sections.push(`  ⚠️ Expiring soon (< 30 days): ${expiringSoonCount}`);
-            sections.push(`  ⛔ Expired: ${expiredCount}`);
+            sections.push(`  Valid: ${validCount}`);
+            sections.push(`  WARNING: Expiring soon (< 30 days): ${expiringSoonCount}`);
+            sections.push(`  CRITICAL: Expired: ${expiredCount}`);
 
             if (expiredCount > 0) {
               sections.push("\n── Expired Certificates ──");
@@ -1380,9 +1379,9 @@ export function registerEncryptionTools(server: McpServer): void {
               }
 
               const sections: string[] = [];
-              sections.push("🔄 Auto-Renewal Check");
-              sections.push("=".repeat(50));
-              sections.push("\n⚠️ Certbot is not installed.");
+              sections.push("Auto-Renewal Check");
+              sections.push("");
+              sections.push("\nCertbot is not installed.");
               sections.push("  Install with: apt install certbot");
               return { content: [createTextContent(sections.join("\n"))] };
             }
@@ -1420,10 +1419,10 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push("🔄 Auto-Renewal Check");
-            sections.push("=".repeat(50));
+            sections.push("Auto-Renewal Check");
+            sections.push("");
             sections.push(`\nCertbot: installed at ${certbotCheck.stdout.trim()}`);
-            sections.push(`Timer: ${timerActive ? "✅ Active" : "⚠️ Not active"}`);
+            sections.push(`Timer: ${timerActive ? "Active" : "WARNING: Not active"}`);
             sections.push("\nManaged Certificates:");
             sections.push(certsResult.stdout.trim() || "  No certificates found");
             sections.push(`\nRenewal Configs (${renewalConfigs.length}):`);
@@ -1502,8 +1501,8 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push("🏛️ CA Trust Store Audit");
-            sections.push("=".repeat(50));
+            sections.push("CA Trust Store Audit");
+            sections.push("");
             sections.push(`\nTrust store path: ${trustStorePath}`);
             sections.push(`Total trusted CAs: ${caFiles.length}`);
             sections.push(`Recently added (last 30 days): ${recentlyAdded.length}`);
@@ -1516,12 +1515,12 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             if (suspiciousFindings.length > 0) {
-              sections.push(`\n⚠️ Suspicious CAs Found (${suspiciousFindings.length}):`);
+              sections.push(`\nWARNING: Suspicious CAs Found (${suspiciousFindings.length}):`);
               for (const ca of suspiciousFindings.slice(0, 20)) {
                 sections.push(`  ${ca}`);
               }
             } else {
-              sections.push("\n✅ No suspicious CA names detected.");
+              sections.push("\nNo suspicious CA names detected.");
             }
 
             return { content: [createTextContent(sections.join("\n"))] };
@@ -1600,8 +1599,7 @@ export function registerEncryptionTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    "🔍 OCSP Check\n" + "=".repeat(50) +
-                    "\n\n⚠️ Certificate does not contain an OCSP responder URI.",
+                    "OCSP Check\n\nWARNING: Certificate does not contain an OCSP responder URI.",
                   ),
                 ],
               };
@@ -1640,12 +1638,12 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push("🔍 OCSP Check");
-            sections.push("=".repeat(50));
+            sections.push("OCSP Check");
+            sections.push("");
             sections.push(`\nOCSP Responder: ${ocspUri}`);
             sections.push(`Revocation Status: ${String(findings.revocationStatus)}`);
             if (findings.ocspStapling !== undefined) {
-              sections.push(`OCSP Stapling: ${findings.ocspStapling ? "✅ Supported" : "⚠️ Not supported"}`);
+              sections.push(`OCSP Stapling: ${findings.ocspStapling ? "Supported" : "WARNING: Not supported"}`);
             }
             if (findings.message) {
               sections.push(`\nNote: ${String(findings.message)}`);
@@ -1690,8 +1688,8 @@ export function registerEncryptionTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    "🔍 CT Log Monitor\n" + "=".repeat(50) +
-                    `\n\n⚠️ Failed to query crt.sh for ${validDomain}.\n` +
+                    "CT Log Monitor\n" +
+                    `\nWARNING: Failed to query crt.sh for ${validDomain}.\n` +
                     `Error: ${crtshResult.stderr}`,
                   ),
                 ],
@@ -1761,8 +1759,8 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push("🔍 CT Log Monitor");
-            sections.push("=".repeat(50));
+            sections.push("CT Log Monitor");
+            sections.push("");
             sections.push(`\nDomain: ${validDomain}`);
             sections.push(`Total certificates in CT logs: ${ctEntries.length}`);
             sections.push(`Unique issuers: ${issuers.size}`);
@@ -1784,7 +1782,7 @@ export function registerEncryptionTools(server: McpServer): void {
             }
 
             if (unexpectedFindings.length > 0) {
-              sections.push("\n⚠️ Findings:");
+              sections.push("\nWARNING: Findings:");
               for (const finding of unexpectedFindings) {
                 sections.push(`  ${finding}`);
               }

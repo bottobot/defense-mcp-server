@@ -32,8 +32,7 @@ import {
 } from "../core/sanitizer.js";
 import { getDistroAdapter } from "../core/distro-adapter.js";
 import { existsSync } from "node:fs";
-import { spawnSafe } from "../core/spawn-safe.js";
-import type { ChildProcess } from "node:child_process";
+import { runCommand } from "../core/run-command.js";
 
 // ── TOOL-015 remediation: allowed directories for log file paths ────────────
 const ALLOWED_LOG_DIRS = ["/var/log", "/var/spool", "/tmp", "/var/lib", "/run/log"];
@@ -55,63 +54,6 @@ const SIEM_HOST_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,253}[a-zA-Z0-9]$/;
 
 // ── SIEM helpers ────────────────────────────────────────────────────────────
 
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-async function runCommand(
-  command: string,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawnSafe(command, args);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: msg, exitCode: -1 });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill("SIGTERM");
-        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: err.message, exitCode: -1 });
-      }
-    });
-  });
-}
 
 /**
  * Validate a SIEM host string (hostname or IP address).
@@ -864,7 +806,7 @@ export function registerLoggingTools(server: McpServer): void {
 
             const result = await executeCommand({ command: "sudo", args, toolName: "log_management", timeout: getToolTimeout("auditd") });
             if (result.exitCode !== 0) return { content: [createErrorContent(`aureport failed (exit ${result.exitCode}): ${result.stderr}`)], isError: true };
-            return { content: [createTextContent(`Audit Report (${report_type}):\n${"=".repeat(50)}\n${result.stdout}`)] };
+            return { content: [createTextContent(`Audit Report (${report_type}):\n${result.stdout}`)] };
           } catch (err: unknown) {
             return { content: [createErrorContent(err instanceof Error ? err.message : String(err))], isError: true };
           }
@@ -920,7 +862,7 @@ export function registerLoggingTools(server: McpServer): void {
             });
 
             const present = results.filter(r => r.present).length;
-            return { content: [createTextContent(JSON.stringify({ summary: { totalRequired: CIS_RULES.length, present, missing: CIS_RULES.length - present, compliancePercent: Math.round((present / CIS_RULES.length) * 100) }, results }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { totalRequired: CIS_RULES.length, present, missing: CIS_RULES.length - present, compliancePercent: Math.round((present / CIS_RULES.length) * 100) }, results }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
@@ -1030,7 +972,7 @@ export function registerLoggingTools(server: McpServer): void {
           try {
             const statusResult = await executeCommand({ command: "sudo", args: ["fail2ban-client", "status"], timeout: 10000, toolName: "log_management" });
             if (statusResult.exitCode !== 0) {
-              return { content: [createTextContent(JSON.stringify({ installed: false, recommendation: "Install fail2ban: sudo apt install fail2ban && sudo systemctl enable fail2ban" }, null, 2))] };
+              return { content: [createTextContent(JSON.stringify({ installed: false, recommendation: "Install fail2ban: sudo apt install fail2ban && sudo systemctl enable fail2ban" }))] };
             }
 
             const jailLine = statusResult.stdout.match(/Jail list:\s*(.*)/);
@@ -1055,7 +997,7 @@ export function registerLoggingTools(server: McpServer): void {
             const recommendedJails = ["sshd", "apache-auth", "nginx-http-auth", "postfix"];
             const missingJails = recommendedJails.filter(j => !jails.includes(j));
 
-            return { content: [createTextContent(JSON.stringify({ installed: true, activeJails: jails.length, jails, missingRecommended: missingJails, findings, summary: { pass: findings.filter(f => f.status === "PASS").length, warn: findings.filter(f => f.status === "WARN").length } }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ installed: true, activeJails: jails.length, jails, missingRecommended: missingJails, findings, summary: { pass: findings.filter(f => f.status === "PASS").length, warn: findings.filter(f => f.status === "WARN").length } }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
@@ -1137,7 +1079,7 @@ export function registerLoggingTools(server: McpServer): void {
             findings.push({ check: "var_log_permissions", status: logPerms.stdout.trim().startsWith("755") || logPerms.stdout.trim().startsWith("750") ? "PASS" : "WARN", value: logPerms.stdout.trim(), description: "/var/log directory permissions" });
 
             const passCount = findings.filter(f => f.status === "PASS").length;
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
@@ -1334,7 +1276,7 @@ export function registerLoggingTools(server: McpServer): void {
               text += "\nFilebeat is not installed.\n";
             } else {
               text += `Version: ${filebeat.version}\n`;
-              text += `Service Running: ${filebeat.serviceRunning ? "yes ✓" : "no ⚠"}\n`;
+              text += `Service Running: ${filebeat.serviceRunning ? "yes OK" : "no WARNING"}\n`;
               text += `Config Path: ${filebeat.configPath}\n`;
 
               if (filebeat.enabledModules.length > 0) {
@@ -1394,7 +1336,7 @@ export function registerLoggingTools(server: McpServer): void {
 
             let text = "SIEM Integration — Log Forwarding Audit\n\n";
             text += `CIS Reference: ${audit.cisBenchmark}\n`;
-            text += `CIS Compliant: ${audit.cisCompliant ? "YES ✓" : "NO ⚠"}\n\n`;
+            text += `CIS Compliant: ${audit.cisCompliant ? "YES OK" : "NO WARNING"}\n\n`;
             text += `Rsyslog Forwarding: ${audit.rsyslogForwarding ? "configured" : "not configured"}\n`;
             text += `Filebeat Running: ${audit.filebeatRunning ? "yes" : "no"}\n`;
 
@@ -1405,14 +1347,14 @@ export function registerLoggingTools(server: McpServer): void {
 
             text += `\nCritical Log Source Coverage:\n`;
             for (const source of audit.criticalSourcesCovered) {
-              text += `  • ${source.source} (${source.path}): ${source.forwarded ? "forwarded ✓" : "NOT forwarded ⚠"}\n`;
+              text += `  • ${source.source} (${source.path}): ${source.forwarded ? "forwarded OK" : "NOT forwarded WARNING"}\n`;
             }
 
             if (audit.missingSourcesCount > 0) {
-              text += `\n⚠ Missing Sources: ${audit.missingSourcesCount}\n`;
+              text += `\nWARNING: Missing Sources: ${audit.missingSourcesCount}\n`;
             }
             if (audit.logRotationInterferes) {
-              text += "\n⚠ Log rotation may interfere with forwarding\n";
+              text += "\nWARNING: Log rotation may interfere with forwarding\n";
             }
             if (audit.recommendations.length > 0) {
               text += "\nRecommendations:\n";
@@ -1467,15 +1409,15 @@ export function registerLoggingTools(server: McpServer): void {
 
             let text = "SIEM Integration — Connectivity Test\n\n";
             text += `Target: ${connectivity.siemHost}:${connectivity.siemPort} (${connectivity.protocol})\n\n`;
-            text += `DNS Resolution: ${connectivity.dnsResolution ? "✓ " : "✗ "}${connectivity.dnsResult}\n`;
-            text += `TCP Connectivity: ${connectivity.tcpConnectivity ? "✓ " : "✗ "}${connectivity.tcpMessage}\n`;
+            text += `DNS Resolution: ${connectivity.dnsResolution ? "OK " : "FAIL "}${connectivity.dnsResult}\n`;
+            text += `TCP Connectivity: ${connectivity.tcpConnectivity ? "OK " : "FAIL "}${connectivity.tcpMessage}\n`;
 
             if (connectivity.protocol === "tls") {
-              text += `TLS Verification: ${connectivity.tlsVerification ? "✓ " : "✗ "}${connectivity.tlsMessage}\n`;
+              text += `TLS Verification: ${connectivity.tlsVerification ? "OK " : "FAIL "}${connectivity.tlsMessage}\n`;
             }
 
-            text += `Firewall: ${connectivity.firewallBlocked ? "⚠ BLOCKED" : connectivity.firewallStatus}\n`;
-            text += `Test Message: ${connectivity.testMessageSent ? "✓ " : "✗ "}${connectivity.testMessageResult}\n`;
+            text += `Firewall: ${connectivity.firewallBlocked ? "WARNING: BLOCKED" : connectivity.firewallStatus}\n`;
+            text += `Test Message: ${connectivity.testMessageSent ? "OK " : "FAIL "}${connectivity.testMessageResult}\n`;
 
             if (connectivity.recommendations.length > 0) {
               text += "\nRecommendations:\n";

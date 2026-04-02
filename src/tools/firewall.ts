@@ -69,6 +69,148 @@ const CHAIN_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_-]{0,28}$/;
 // TOOL-008: Added table name validation
 const NFTABLES_TABLE_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 
+// ── Nftables detection helper ─────────────────────────────────────────────
+/**
+ * Detect whether nftables is the active firewall backend on this system.
+ * Returns { active: true, reason } if nftables is managing the firewall,
+ * meaning iptables-persistent / UFW should NOT be installed on top of it.
+ */
+async function detectNftablesActive(): Promise<{ active: boolean; reason: string }> {
+  // 1. Check if nftables service is running
+  const svcResult = await executeCommand({
+    command: "systemctl",
+    args: ["is-active", "nftables"],
+    toolName: "firewall",
+    timeout: 5000,
+  });
+  const nftServiceActive = svcResult.stdout.trim() === "active";
+
+  // 2. Check if nft binary exists and has a non-trivial ruleset
+  const nftResult = await executeCommand({
+    command: "sudo",
+    args: ["nft", "list", "ruleset"],
+    toolName: "firewall",
+    timeout: 10000,
+  });
+  const hasNftRules =
+    nftResult.exitCode === 0 &&
+    nftResult.stdout.trim().length > 50 &&
+    nftResult.stdout.includes("chain ");
+
+  // 3. Check if nftables is enabled at boot
+  const enabledResult = await executeCommand({
+    command: "systemctl",
+    args: ["is-enabled", "nftables"],
+    toolName: "firewall",
+    timeout: 5000,
+  });
+  const nftEnabled = enabledResult.stdout.trim() === "enabled";
+
+  if (nftServiceActive && hasNftRules) {
+    return { active: true, reason: "nftables service is running with active rules" };
+  }
+  if (hasNftRules && nftEnabled) {
+    return { active: true, reason: "nftables is enabled at boot with active rules" };
+  }
+  if (hasNftRules) {
+    return { active: true, reason: "nftables has active rules loaded" };
+  }
+  if (nftServiceActive) {
+    return { active: true, reason: "nftables service is running" };
+  }
+  return { active: false, reason: "nftables is not active" };
+}
+
+// ── Running services discovery helper ─────────────────────────────────────
+/**
+ * Discover listening ports and established connections from running programs.
+ * Returns a deduplicated list of port/protocol pairs that should be allowed
+ * when setting a DROP policy, so existing services aren't killed.
+ */
+interface ActivePort {
+  protocol: "tcp" | "udp";
+  port: number;
+  process: string;
+  direction: "listen" | "established-out" | "established-in";
+}
+
+async function discoverActivePorts(): Promise<ActivePort[]> {
+  const ports: ActivePort[] = [];
+  const seen = new Set<string>();
+
+  // Discover listening TCP/UDP ports
+  const listenResult = await executeCommand({
+    command: "sudo",
+    args: ["ss", "-tlnpH"],
+    toolName: "firewall",
+    timeout: 10000,
+  });
+  if (listenResult.exitCode === 0) {
+    for (const line of listenResult.stdout.split("\n")) {
+      // Format: LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=...))
+      const match = line.match(/:(\d+)\s+[\d.*:]+\s+users:\(\("([^"]+)"/);
+      if (match) {
+        const port = parseInt(match[1], 10);
+        const process = match[2];
+        const key = `tcp:${port}:listen`;
+        if (!seen.has(key) && port >= 1 && port <= 65535) {
+          seen.add(key);
+          ports.push({ protocol: "tcp", port, process, direction: "listen" });
+        }
+      }
+    }
+  }
+
+  const listenUdpResult = await executeCommand({
+    command: "sudo",
+    args: ["ss", "-ulnpH"],
+    toolName: "firewall",
+    timeout: 10000,
+  });
+  if (listenUdpResult.exitCode === 0) {
+    for (const line of listenUdpResult.stdout.split("\n")) {
+      const match = line.match(/:(\d+)\s+[\d.*:]+\s+users:\(\("([^"]+)"/);
+      if (match) {
+        const port = parseInt(match[1], 10);
+        const process = match[2];
+        const key = `udp:${port}:listen`;
+        if (!seen.has(key) && port >= 1 && port <= 65535) {
+          seen.add(key);
+          ports.push({ protocol: "udp", port, process, direction: "listen" });
+        }
+      }
+    }
+  }
+
+  // Discover established outbound connections (remote ports programs are talking to)
+  const estResult = await executeCommand({
+    command: "sudo",
+    args: ["ss", "-tnpH", "state", "established"],
+    toolName: "firewall",
+    timeout: 10000,
+  });
+  if (estResult.exitCode === 0) {
+    for (const line of estResult.stdout.split("\n")) {
+      // Format: ESTAB 0 0 192.168.1.5:54321 1.2.3.4:443 users:(("curl",pid=...))
+      // We want the remote port (destination) to allow outbound traffic to it
+      const match = line.match(
+        /\s+[\d.]+:\d+\s+[\d.]+:(\d+)\s+users:\(\("([^"]+)"/
+      );
+      if (match) {
+        const port = parseInt(match[1], 10);
+        const process = match[2];
+        const key = `tcp:${port}:established-out`;
+        if (!seen.has(key) && port >= 1 && port <= 65535) {
+          seen.add(key);
+          ports.push({ protocol: "tcp", port, process, direction: "established-out" });
+        }
+      }
+    }
+  }
+
+  return ports;
+}
+
 // ── Registration entry point ───────────────────────────────────────────────
 
 export function registerFirewallTools(server: McpServer): void {
@@ -581,6 +723,7 @@ export function registerFirewallTools(server: McpServer): void {
 
             const fullCmd = `sudo iptables -P ${chain} ${policy}`;
             const ipv6Cmd = `sudo ip6tables -P ${chain} ${policy}`;
+            const injectedRules: string[] = [];
 
             // ── SAFETY CHECK: Prevent DROP policy without essential allow rules ──
             if (policy === "DROP" && (chain === "INPUT" || chain === "FORWARD" || chain === "OUTPUT")) {
@@ -652,8 +795,6 @@ export function registerFirewallTools(server: McpServer): void {
                 );
               }
 
-              const injectedRules: string[] = [];
-
               for (const rule of safetyRules) {
                 const checkResult = await executeCommand({
                   command: "sudo",
@@ -683,7 +824,7 @@ export function registerFirewallTools(server: McpServer): void {
                         isError: true,
                       };
                     }
-                    injectedRules.push(`✅ Auto-added: ${rule.description}`);
+                    injectedRules.push(`Auto-added: ${rule.description}`);
 
                     if (ipv6 && rule.addArgs6) {
                       const add6Result = await executeCommand({
@@ -693,9 +834,9 @@ export function registerFirewallTools(server: McpServer): void {
                         timeout: getToolTimeout("firewall"),
                       });
                       if (add6Result.exitCode !== 0) {
-                        injectedRules.push(`⚠️ IPv6: Failed to add "${rule.description}": ${add6Result.stderr}`);
+                        injectedRules.push(`IPv6: Failed to add "${rule.description}": ${add6Result.stderr}`);
                       } else {
-                        injectedRules.push(`✅ Auto-added (IPv6): ${rule.description}`);
+                        injectedRules.push(`Auto-added (IPv6): ${rule.description}`);
                       }
                     }
                   }
@@ -713,11 +854,99 @@ export function registerFirewallTools(server: McpServer): void {
                 });
                 logChange(safetyEntry);
               }
+
+              // ── AUTO-DISCOVER running services and allow their ports ──
+              // This prevents killing active programs (qbittorrent, apt, etc.)
+              const activePorts = await discoverActivePorts();
+              const serviceRules: string[] = [];
+
+              // Deduplicate: skip ports already covered by hardcoded safety rules
+              const hardcodedPorts = new Set(["tcp:53", "udp:53", "tcp:80", "tcp:443"]);
+
+              for (const ap of activePorts) {
+                const portKey = `${ap.protocol}:${ap.port}`;
+                if (hardcodedPorts.has(portKey)) continue;
+
+                if (chain === "INPUT" && ap.direction === "listen") {
+                  // Allow inbound to listening ports
+                  const checkArgs = ["-C", "INPUT", "-p", ap.protocol, "--dport", String(ap.port), "-j", "ACCEPT"];
+                  const addArgs = ["-A", "INPUT", "-p", ap.protocol, "--dport", String(ap.port), "-j", "ACCEPT"];
+                  const checkR = await executeCommand({
+                    command: "sudo", args: ["iptables", ...checkArgs],
+                    toolName: "firewall", timeout: getToolTimeout("firewall"),
+                  });
+                  if (checkR.exitCode !== 0) {
+                    if (dry_run ?? getConfig().dryRun) {
+                      serviceRules.push(`[DRY-RUN] Would allow INPUT ${ap.protocol}/${ap.port} (${ap.process})`);
+                    } else {
+                      const addR = await executeCommand({
+                        command: "sudo", args: ["iptables", ...addArgs],
+                        toolName: "firewall", timeout: getToolTimeout("firewall"),
+                      });
+                      if (addR.exitCode === 0) {
+                        serviceRules.push(`Auto-allowed INPUT ${ap.protocol}/${ap.port} (${ap.process})`);
+                        if (ipv6) {
+                          await executeCommand({
+                            command: "sudo", args: ["ip6tables", ...addArgs],
+                            toolName: "firewall", timeout: getToolTimeout("firewall"),
+                          });
+                        }
+                      }
+                    }
+                  }
+                } else if (chain === "OUTPUT" && (ap.direction === "listen" || ap.direction === "established-out")) {
+                  // Allow outbound to remote ports that programs are actively using
+                  const dportOrSport = ap.direction === "listen" ? "--sport" : "--dport";
+                  const checkArgs = ["-C", "OUTPUT", "-p", ap.protocol, dportOrSport, String(ap.port), "-j", "ACCEPT"];
+                  const addArgs = ["-A", "OUTPUT", "-p", ap.protocol, dportOrSport, String(ap.port), "-j", "ACCEPT"];
+                  const checkR = await executeCommand({
+                    command: "sudo", args: ["iptables", ...checkArgs],
+                    toolName: "firewall", timeout: getToolTimeout("firewall"),
+                  });
+                  if (checkR.exitCode !== 0) {
+                    if (dry_run ?? getConfig().dryRun) {
+                      serviceRules.push(`[DRY-RUN] Would allow OUTPUT ${ap.protocol}/${dportOrSport.replace("--","")} ${ap.port} (${ap.process})`);
+                    } else {
+                      const addR = await executeCommand({
+                        command: "sudo", args: ["iptables", ...addArgs],
+                        toolName: "firewall", timeout: getToolTimeout("firewall"),
+                      });
+                      if (addR.exitCode === 0) {
+                        serviceRules.push(`Auto-allowed OUTPUT ${ap.protocol}/${dportOrSport.replace("--","")} ${ap.port} (${ap.process})`);
+                        if (ipv6) {
+                          await executeCommand({
+                            command: "sudo", args: ["ip6tables", ...addArgs],
+                            toolName: "firewall", timeout: getToolTimeout("firewall"),
+                          });
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              if (serviceRules.length > 0) {
+                injectedRules.push(...serviceRules);
+                const serviceEntry = createChangeEntry({
+                  tool: "firewall",
+                  action: `Safety: auto-allowed ${serviceRules.length} active service ports before ${chain} DROP`,
+                  target: chain,
+                  after: serviceRules.join("; "),
+                  dryRun: !!(dry_run ?? getConfig().dryRun),
+                  success: true,
+                });
+                logChange(serviceEntry);
+              }
             }
 
             if (dry_run ?? getConfig().dryRun) {
               const cmds = [fullCmd];
               if (ipv6) cmds.push(ipv6Cmd);
+
+              // Include discovered service rules in dry-run output
+              const injectedSummary = injectedRules.length > 0
+                ? `\n\nSafety rules that would be added first:\n  ${injectedRules.join("\n  ")}`
+                : "";
 
               const entry = createChangeEntry({
                 tool: "firewall",
@@ -732,7 +961,7 @@ export function registerFirewallTools(server: McpServer): void {
               return {
                 content: [
                   createTextContent(
-                    `[DRY-RUN] Would execute:\n  ${cmds.join("\n  ")}`
+                    `[DRY-RUN] Would execute:\n  ${cmds.join("\n  ")}${injectedSummary}`
                   ),
                 ],
               };
@@ -939,6 +1168,29 @@ export function registerFirewallTools(server: McpServer): void {
         // ── ufw_status ────────────────────────────────────────────────
         case "ufw_status": {
           try {
+            // Check if nftables is managing firewall directly (not via UFW backend)
+            const nftCheckStatus = await detectNftablesActive();
+            if (nftCheckStatus.active) {
+              // Check if UFW is even installed
+              const ufwCheck = await executeCommand({
+                command: "which",
+                args: ["ufw"],
+                toolName: "firewall",
+                timeout: 5000,
+              });
+              if (ufwCheck.exitCode !== 0) {
+                return {
+                  content: [
+                    createTextContent(
+                      `UFW is not installed. This system is using nftables directly (${nftCheckStatus.reason}). ` +
+                      `Use firewall action=nftables_list to view current rules. ` +
+                      `Installing UFW on a system with active nftables rules is not recommended as it may conflict.`
+                    ),
+                  ],
+                };
+              }
+            }
+
             const args = ["ufw", "status"];
             if (params.verbose) {
               args.push("verbose");
@@ -973,6 +1225,30 @@ export function registerFirewallTools(server: McpServer): void {
         case "ufw_add":
         case "ufw_delete": {
           try {
+            // Guard: refuse UFW rule changes if nftables is active and UFW is not installed
+            const nftCheckUfw = await detectNftablesActive();
+            if (nftCheckUfw.active) {
+              const ufwInstalled = await executeCommand({
+                command: "which",
+                args: ["ufw"],
+                toolName: "firewall",
+                timeout: 5000,
+              });
+              if (ufwInstalled.exitCode !== 0) {
+                return {
+                  content: [
+                    createErrorContent(
+                      `Cannot ${action === "ufw_add" ? "add" : "delete"} UFW rule: UFW is not installed and ` +
+                      `this system is using nftables directly (${nftCheckUfw.reason}). ` +
+                      `Installing UFW on a system with active nftables rules can conflict and break networking. ` +
+                      `Manage firewall rules via nftables instead.`
+                    ),
+                  ],
+                  isError: true,
+                };
+              }
+            }
+
             if (!params.rule_action) {
               return { content: [createErrorContent("Error: 'rule_action' is required for add/delete actions (allow, deny, reject, limit)")], isError: true };
             }
@@ -1324,6 +1600,23 @@ export function registerFirewallTools(server: McpServer): void {
         case "persist_enable": {
           const dry_run = params.dry_run;
           try {
+            // Guard: refuse to install iptables-persistent if nftables is active
+            const nftCheck = await detectNftablesActive();
+            if (nftCheck.active) {
+              return {
+                content: [
+                  createErrorContent(
+                    `Cannot enable iptables persistence: ${nftCheck.reason}. ` +
+                    `Installing iptables-persistent on a system using nftables can conflict ` +
+                    `and break networking. Use nftables native persistence instead ` +
+                    `(nft rules are typically persisted via /etc/nftables.conf and the nftables systemd service). ` +
+                    `To view current nftables rules, use: firewall action=nftables_list`
+                  ),
+                ],
+                isError: true,
+              };
+            }
+
             const da = await getDistroAdapter();
             const fwp = da.fwPersistence;
 
@@ -1478,7 +1771,7 @@ export function registerFirewallTools(server: McpServer): void {
             };
 
             return {
-              content: [createTextContent(JSON.stringify(status, null, 2))],
+              content: [createTextContent(JSON.stringify(status))],
             };
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -1566,9 +1859,33 @@ export function registerFirewallTools(server: McpServer): void {
               findings.push({ check: "iptables_rule_count", status: ruleCount > 0 ? "INFO" : "WARN", value: String(ruleCount), description: "Total iptables rules" });
             }
 
-            // Check UFW status — distinguish "not installed" from "command failed"
+            // Check firewall backend — detect nftables vs UFW vs neither
+            const nftAuditCheck = await detectNftablesActive();
             const ufwWhich = await executeCommand({ command: "which", args: ["ufw"], timeout: 5000, toolName: "firewall" });
-            if (ufwWhich.exitCode === 0) {
+
+            if (nftAuditCheck.active) {
+              // nftables is the active backend
+              findings.push({
+                check: "nftables_active",
+                status: "PASS",
+                value: `active (${nftAuditCheck.reason})`,
+                description: "Firewall active via nftables",
+              });
+              if (ufwWhich.exitCode === 0) {
+                // UFW is also installed — check if it's using nftables backend
+                const ufwResult = await executeCommand({ command: "sudo", args: ["ufw", "status"], timeout: 10000, toolName: "firewall" });
+                if (ufwResult.exitCode === 0 && ufwResult.stdout.includes("Status: active")) {
+                  findings.push({ check: "ufw_active", status: "INFO", value: "active (alongside nftables)", description: "UFW is active — likely using nftables backend" });
+                }
+              } else {
+                findings.push({
+                  check: "ufw_not_needed",
+                  status: "INFO",
+                  value: "not installed",
+                  description: "UFW is not installed — not needed since nftables is managing the firewall. Do NOT install UFW as it may conflict.",
+                });
+              }
+            } else if (ufwWhich.exitCode === 0) {
               // UFW binary exists — try to get status
               const ufwResult = await executeCommand({ command: "sudo", args: ["ufw", "status"], timeout: 10000, toolName: "firewall" });
               if (ufwResult.exitCode === 0) {
@@ -1585,13 +1902,8 @@ export function registerFirewallTools(server: McpServer): void {
                 }
               }
             } else {
-              // UFW binary not found — check if nftables has rules directly
-              const nftDirect = await executeCommand({ command: "sudo", args: ["nft", "list", "ruleset"], timeout: 10000, toolName: "firewall" });
-              if (nftDirect.exitCode === 0 && nftDirect.stdout.trim().length > 50) {
-                findings.push({ check: "nftables_active", status: "PASS", value: "active (nftables native)", description: "Firewall active via nftables (no UFW)" });
-              } else {
-                findings.push({ check: "ufw_installed", status: "FAIL", value: "not installed", description: "No firewall detected (UFW not found, nftables empty)" });
-              }
+              // Neither nftables nor UFW active
+              findings.push({ check: "firewall_missing", status: "FAIL", value: "not installed", description: "No firewall detected (UFW not found, nftables not active)", recommendation: "Install and configure a firewall (nftables recommended for modern systems)" });
             }
 
             // Check ip6tables
@@ -1612,24 +1924,40 @@ export function registerFirewallTools(server: McpServer): void {
               }
             }
 
-            // Check for firewall persistence (distro-aware)
+            // Check for firewall persistence (distro-aware, nftables-aware)
             const daPolicy = await getDistroAdapter();
-            const fwpPolicy = daPolicy.fwPersistence;
-            const persistResult = await executeCommand({ command: fwpPolicy.checkInstalledCmd[0], args: fwpPolicy.checkInstalledCmd.slice(1), timeout: 5000, toolName: "firewall" });
-            const persistInstalled = daPolicy.isDebian ? persistResult.stdout.includes("ii") : persistResult.exitCode === 0;
-            findings.push({
-              check: "firewall_persistence",
-              status: persistInstalled ? "PASS" : "WARN",
-              value: persistInstalled ? "installed" : "not installed",
-              description: `${fwpPolicy.packageName} (rules survive reboot)`,
-              recommendation: persistInstalled
-                ? undefined
-                : "Use firewall with action='persist_enable' to install and activate persistence, then action='persist_save' to persist current rules",
-            });
+            if (nftAuditCheck.active) {
+              // nftables persistence is via nftables.conf + systemd service
+              const nftConfExists = await executeCommand({ command: "test", args: ["-f", "/etc/nftables.conf"], timeout: 3000, toolName: "firewall" });
+              const nftSvcEnabled = await executeCommand({ command: "systemctl", args: ["is-enabled", "nftables"], timeout: 5000, toolName: "firewall" });
+              const nftPersistent = nftConfExists.exitCode === 0 && nftSvcEnabled.stdout.trim() === "enabled";
+              findings.push({
+                check: "firewall_persistence",
+                status: nftPersistent ? "PASS" : "WARN",
+                value: nftPersistent ? "nftables persistence configured" : "nftables persistence not configured",
+                description: "nftables rules persistence (/etc/nftables.conf + systemd service)",
+                recommendation: nftPersistent
+                  ? undefined
+                  : "Ensure /etc/nftables.conf contains your rules and run: sudo systemctl enable nftables",
+              });
+            } else {
+              const fwpPolicy = daPolicy.fwPersistence;
+              const persistResult = await executeCommand({ command: fwpPolicy.checkInstalledCmd[0], args: fwpPolicy.checkInstalledCmd.slice(1), timeout: 5000, toolName: "firewall" });
+              const persistInstalled = daPolicy.isDebian ? persistResult.stdout.includes("ii") : persistResult.exitCode === 0;
+              findings.push({
+                check: "firewall_persistence",
+                status: persistInstalled ? "PASS" : "WARN",
+                value: persistInstalled ? "installed" : "not installed",
+                description: `${fwpPolicy.packageName} (rules survive reboot)`,
+                recommendation: persistInstalled
+                  ? undefined
+                  : "Use firewall with action='persist_enable' to install and activate persistence, then action='persist_save' to persist current rules",
+              });
+            }
 
             const passCount = findings.filter(f => f.status === "PASS").length;
             const failCount = findings.filter(f => f.status === "FAIL").length;
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: failCount, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: failCount, warn: findings.filter(f => f.status === "WARN").length }, findings }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }

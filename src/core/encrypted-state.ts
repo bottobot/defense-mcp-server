@@ -275,10 +275,3 @@ export class SecureStateStore {
 
 // ── Singleton Export ─────────────────────────────────────────────────────────
 
-/**
- * Default singleton SecureStateStore instance.
- *
- * Uses the default state directory and reads the encryption key from
- * the `DEFENSE_MCP_STATE_KEY` environment variable.
- */
-export const secureState = new SecureStateStore();

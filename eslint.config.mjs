@@ -7,8 +7,11 @@
  * @see CICD-009
  */
 import pluginSecurity from "eslint-plugin-security";
+import tseslint from "typescript-eslint";
 
 export default [
+  // TypeScript parser config — required for ESLint to understand .ts files
+  ...tseslint.configs.recommended,
   // Security plugin recommended config
   pluginSecurity.configs.recommended,
   {
@@ -20,6 +23,14 @@ export default [
       // All security plugin rules are included via recommended config above.
       // Override specific rules here if needed:
       // "security/detect-object-injection": "off",  // too many false positives
+
+      // Allow underscore-prefixed unused vars (standard TypeScript convention)
+      "@typescript-eslint/no-unused-vars": ["error", {
+        argsIgnorePattern: "^_",
+        varsIgnorePattern: "^_",
+        caughtErrorsIgnorePattern: "^_",
+        destructuredArrayIgnorePattern: "^_",
+      }],
     },
   },
   // ── Restrict direct child_process imports ──────────────────────────────────

@@ -29,9 +29,7 @@ import {
 import { SafeguardRegistry } from "../core/safeguards.js";
 import { SudoSession } from "../core/sudo-session.js";
 import { readFileSync, existsSync } from "node:fs";
-import { execSync } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
-import { spawnSafe } from "../core/spawn-safe.js";
+import { spawnSafe, execFileSafe, type ChildProcess } from "../core/spawn-safe.js";
 import { secureWriteFileSync } from "../core/secure-fs.js";
 
 // ── TOOL-019 remediation: privilege check helper ───────────────────────────
@@ -58,7 +56,7 @@ function checkPrivileges(): { ok: boolean; message?: string } {
 
   // Fallback: Check if sudo is available without password (NOPASSWD)
   try {
-    execSync("sudo -n true 2>/dev/null", { timeout: 3000, stdio: "ignore" });
+    execFileSafe("sudo", ["-n", "true"], { timeout: 3000, stdio: "ignore" });
     return { ok: true };
   } catch {
     return {
@@ -827,7 +825,7 @@ export function registerHardeningTools(server: McpServer): void {
                   info: findings.length - passCount - failCount - warnCount,
                 },
                 findings,
-              }, null, 2))],
+              }))],
             };
           } catch (error) {
             return {
@@ -865,7 +863,7 @@ export function registerHardeningTools(server: McpServer): void {
             }
 
             const passCount = results.filter(r => r.status === "PASS").length;
-            return { content: [createTextContent(JSON.stringify({ summary: { total: results.length, pass: passCount, fail: results.filter(r => r.status === "FAIL").length, warn: results.filter(r => r.status === "WARN").length }, results }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { total: results.length, pass: passCount, fail: results.filter(r => r.status === "FAIL").length, warn: results.filter(r => r.status === "WARN").length }, results }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
@@ -1065,7 +1063,7 @@ export function registerHardeningTools(server: McpServer): void {
                 },
                 kernelCommandLine: cmd,
                 findings,
-              }, null, 2))],
+              }))],
             };
           } catch (error) {
             return {
@@ -2193,7 +2191,7 @@ export function registerHardeningTools(server: McpServer): void {
                   totalFindings: findings.length,
                   findings: findings.slice(0, 50),
                   rawExposureLine: exposureLine || "Not found",
-                }, null, 2))],
+                }))],
               };
             } else {
               const result = await executeCommand({
@@ -2234,7 +2232,7 @@ export function registerHardeningTools(server: McpServer): void {
                   },
                   flaggedServices: flagged,
                   allServices: services,
-                }, null, 2))],
+                }))],
               };
             }
           } catch (error) {
@@ -2435,7 +2433,7 @@ export function registerHardeningTools(server: McpServer): void {
             }
 
             const passCount = findings.filter(f => f.status === "PASS").length;
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: passCount, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
@@ -2464,7 +2462,7 @@ export function registerHardeningTools(server: McpServer): void {
               }
             }
 
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, warn: findings.filter(f => f.status === "WARN").length }, findings, recommendation: "Set umask 027 in /etc/profile and /etc/login.defs for CIS compliance" }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, warn: findings.filter(f => f.status === "WARN").length }, findings, recommendation: "Set umask 027 in /etc/profile and /etc/login.defs for CIS compliance" }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
@@ -2598,7 +2596,7 @@ export function registerHardeningTools(server: McpServer): void {
               }
             }
 
-            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }, null, 2))] };
+            return { content: [createTextContent(JSON.stringify({ summary: { total: findings.length, pass: findings.filter(f => f.status === "PASS").length, fail: findings.filter(f => f.status === "FAIL").length, warn: findings.filter(f => f.status === "WARN").length }, findings }))] };
           } catch (error) {
             return { content: [createErrorContent(error instanceof Error ? error.message : String(error))], isError: true };
           }
@@ -2761,7 +2759,7 @@ export function registerHardeningTools(server: McpServer): void {
               }
             }
             if (findings.lsusbNote) {
-              text += `\n⚠ ${findings.lsusbNote}\n`;
+              text += `\nWARNING: ${findings.lsusbNote}\n`;
             }
             text += `\nUSB Storage Devices: ${findings.storageDeviceCount ?? 0}\n`;
             if (Array.isArray(findings.storageDevices) && (findings.storageDevices as string[]).length > 0) {
@@ -2842,7 +2840,7 @@ export function registerHardeningTools(server: McpServer): void {
               for (const r of results) {
                 text += `  • ${r.target}: ${r.action} [${r.status}]\n`;
               }
-              text += `\nUSB Storage Module Still Loaded: ${moduleStillLoaded ? "yes ⚠" : "no ✓"}\n`;
+              text += `\nUSB Storage Module Still Loaded: ${moduleStillLoaded ? "yes WARNING" : "no OK"}\n`;
 
               return { content: [createTextContent(text)] };
             } else {

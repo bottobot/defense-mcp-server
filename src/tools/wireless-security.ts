@@ -11,13 +11,12 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spawnSafe } from "../core/spawn-safe.js";
+import { runCommand } from "../core/run-command.js";
 import {
   createTextContent,
   createErrorContent,
   formatToolOutput,
 } from "../core/parsers.js";
-import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -38,67 +37,6 @@ interface KnownAp {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-interface CommandResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-/**
- * Run a command via spawnSafe and collect output as a promise.
- * Handles errors gracefully — returns error info instead of throwing.
- */
-async function runCommand(
-  command: string,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let child: ChildProcess;
-    try {
-      child = spawnSafe(command, args);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      resolve({ stdout: "", stderr: msg, exitCode: -1 });
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        child.kill("SIGTERM");
-        resolve({ stdout, stderr: stderr + "\n[TIMEOUT]", exitCode: -1 });
-      }
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: code ?? -1 });
-      }
-    });
-
-    child.on("error", (err: Error) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: err.message, exitCode: -1 });
-      }
-    });
-  });
-}
 
 /**
  * Load known APs from the configuration file.
@@ -781,8 +719,8 @@ export function registerWirelessSecurityTools(server: McpServer): void {
             let text = "Wireless Security — Bluetooth Audit\n\n";
             text += `Adapter Found: ${audit.adapterFound ? "yes" : "no"}\n`;
             text += `Adapter Status: ${audit.adapterStatus}\n`;
-            text += `Powered: ${audit.powered ? "YES ⚠" : "no"}\n`;
-            text += `Discoverable: ${audit.discoverable ? "YES ⚠⚠" : "no ✓"}\n`;
+            text += `Powered: ${audit.powered ? "YES WARNING" : "no"}\n`;
+            text += `Discoverable: ${audit.discoverable ? "YES WARNING" : "no OK"}\n`;
             text += `Paired Devices: ${audit.pairedDevicesCount}\n`;
 
             if (audit.pairedDevices.length > 0) {
@@ -792,7 +730,7 @@ export function registerWirelessSecurityTools(server: McpServer): void {
               }
             }
 
-            text += `\nBluetooth Service: ${audit.serviceRunning ? "running ⚠" : "not running ✓"}\n`;
+            text += `\nBluetooth Service: ${audit.serviceRunning ? "running WARNING" : "not running OK"}\n`;
             text += `Risk Level: ${audit.riskLevel}\n`;
 
             if (audit.recommendations.length > 0) {
@@ -908,7 +846,7 @@ export function registerWirelessSecurityTools(server: McpServer): void {
             }
 
             if (scan.potentialEvilTwins.length > 0) {
-              text += "\n⚠ Potential Evil Twins:\n";
+              text += "\nWARNING: Potential Evil Twins:\n";
               for (const twin of scan.potentialEvilTwins) {
                 text += `  • SSID: ${twin.ap.ssid} | BSSID: ${twin.ap.bssid} — mimics known AP: ${twin.matchedKnown}\n`;
               }
@@ -959,8 +897,8 @@ export function registerWirelessSecurityTools(server: McpServer): void {
                 const status = wi.inUse
                   ? "IN USE (not disabled)"
                   : wi.disabled
-                    ? "DISABLED ✓"
-                    : "could not disable ⚠";
+                    ? "DISABLED OK"
+                    : "could not disable WARNING";
                 text += `  • ${wi.name}: ${status}\n`;
               }
             }
@@ -970,7 +908,7 @@ export function registerWirelessSecurityTools(server: McpServer): void {
               text += "  Could not check kernel modules\n";
             } else {
               for (const mod of disable.loadedModules) {
-                text += `  • ${mod.name}: ${mod.loaded ? "LOADED" : "not loaded"}${mod.canBlacklist ? " ⚠ can be blacklisted" : ""}\n`;
+                text += `  • ${mod.name}: ${mod.loaded ? "LOADED" : "not loaded"}${mod.canBlacklist ? " WARNING: can be blacklisted" : ""}\n`;
               }
             }
 

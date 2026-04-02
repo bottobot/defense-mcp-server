@@ -277,7 +277,7 @@ async function main() {
   let failed = 0;
   const failedModules: string[] = [];
 
-  function safeRegister(name: string, fn: (server: any) => void) {
+  function safeRegister(name: string, fn: (server: McpServer) => void) {
     try {
       fn(wrappedServer);
       registered++;

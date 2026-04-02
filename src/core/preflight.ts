@@ -339,7 +339,7 @@ export class PreflightEngine {
       this.cacheResult(toolName, result);
 
       console.error(
-        `[preflight] ⚠ No manifest for '${toolName}' — skipping (${Date.now() - startTime}ms)`,
+        `[preflight] WARNING: No manifest for '${toolName}' — skipping (${Date.now() - startTime}ms)`,
       );
       return result;
     }
@@ -428,7 +428,7 @@ export class PreflightEngine {
         );
       } catch (err) {
         console.error(
-          `[preflight] ⚠ Safeguard check failed: ${
+          `[preflight] WARNING: Safeguard check failed: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -471,14 +471,14 @@ export class PreflightEngine {
     );
     if (manifest.sudo !== "never") {
       const sudoStatus = privileges.satisfied
-        ? "session active ✓"
+        ? "session active OK"
         : `${privileges.issues.length} issue(s)`;
       console.error(
         `[preflight] Privileges: sudo ${manifest.sudo} — ${sudoStatus}`,
       );
     }
     console.error(
-      `[preflight] ${passed ? "✓" : "✗"} Pre-flight ${passed ? "passed" : "FAILED"} (${duration}ms)`,
+      `[preflight] ${passed ? "OK" : "FAIL"} Pre-flight ${passed ? "passed" : "FAILED"} (${duration}ms)`,
     );
 
     return result;
@@ -671,7 +671,7 @@ export class PreflightEngine {
    *
    * @example Passing
    * ```
-   * ✅ Pre-flight passed for 'firewall_iptables_list'
+   * PASS: Pre-flight passed for 'firewall_iptables_list'
    *   Dependencies: 2/2 available (iptables, ip6tables)
    *   Privileges: sudo session active
    *   Ready to execute.
@@ -679,7 +679,7 @@ export class PreflightEngine {
    *
    * @example Failing
    * ```
-   * ❌ Pre-flight FAILED for 'compliance_oscap_scan'
+   * Pre-flight FAILED for 'compliance_oscap_scan'
    *   Missing dependencies:
    *     • oscap (binary) — Install with: sudo apt-get install -y libopenscap8
    *   Privilege issues:
@@ -699,7 +699,7 @@ export class PreflightEngine {
           ? ` (auto-installed ${autoInstalledCount} ${autoInstalledCount === 1 ? "dependency" : "dependencies"})`
           : "";
       lines.push(
-        `✅ Pre-flight passed for '${result.toolName}'${autoNote}`,
+        `Pre-flight passed for '${result.toolName}'${autoNote}`,
       );
 
       // Dependencies line
@@ -743,7 +743,7 @@ export class PreflightEngine {
       lines.push("  Ready to execute.");
     } else {
       // ── Failing summary ──────────────────────────────────────────────
-      lines.push(`❌ Pre-flight FAILED for '${result.toolName}'`);
+      lines.push(`Pre-flight FAILED for '${result.toolName}'`);
 
       // Missing dependencies
       if (result.dependencies.missing.length > 0) {
@@ -778,7 +778,7 @@ export class PreflightEngine {
       ) {
         lines.push("  Safety blockers:");
         for (const blocker of result.safeguards.blockers) {
-          lines.push(`    🛑 ${blocker}`);
+          lines.push(`    ${blocker}`);
         }
       }
 
@@ -791,8 +791,8 @@ export class PreflightEngine {
   /**
    * Generate a shorter status message for prepending to tool output.
    *
-   * - Passed (no issues): `"[pre-flight ✓] All checks passed (2 deps, sudo active)"`
-   * - Passed (warnings): `"[pre-flight ✓] Passed with warnings: optional dep 'nmap' not found"`
+   * - Passed (no issues): `"[pre-flight OK] All checks passed (2 deps, sudo active)"`
+   * - Passed (warnings): `"[pre-flight OK] Passed with warnings: optional dep 'nmap' not found"`
    * - Failed: returns the full error summary from {@link formatSummary}
    */
   formatStatusMessage(result: PreflightResult): string {
@@ -820,10 +820,10 @@ export class PreflightEngine {
       const missingNames = optionalMissing
         .map((c) => c.name)
         .join("', '");
-      return `[pre-flight ✓] Passed with warnings: optional dep '${missingNames}' not found`;
+      return `[pre-flight OK] Passed with warnings: optional dep '${missingNames}' not found`;
     }
 
-    return `[pre-flight ✓] All checks passed (${depCount} deps${privStatus})`;
+    return `[pre-flight OK] All checks passed (${depCount} deps${privStatus})`;
   }
 
   // ── Cache management ───────────────────────────────────────────────────

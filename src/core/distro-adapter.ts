@@ -642,10 +642,3 @@ export async function getDistroAdapter(): Promise<DistroAdapter> {
   return cachedAdapter;
 }
 
-/**
- * Returns the cached adapter if already initialized, or null.
- * Use when you can't await (synchronous contexts).
- */
-export function getDistroAdapterSync(): DistroAdapter | null {
-  return cachedAdapter;
-}

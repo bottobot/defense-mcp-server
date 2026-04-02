@@ -199,7 +199,7 @@ export function registerPatchManagementTools(server: McpServer): void {
                   status: packages.length === 0 ? "UP_TO_DATE" : securityPkgs.length > 0 ? "SECURITY_UPDATES_PENDING" : "UPDATES_AVAILABLE",
                 },
                 packages: displayPkgs.slice(0, 100),
-              }, null, 2))],
+              }))],
             };
           } catch (error) {
             return {
@@ -223,7 +223,7 @@ export function registerPatchManagementTools(server: McpServer): void {
                   supported: false,
                   message: `Automatic updates are not natively supported on ${da.distro.name}.`,
                   recommendation: au.installHint,
-                }, null, 2))],
+                }))],
               };
             }
 
@@ -346,8 +346,8 @@ export function registerPatchManagementTools(server: McpServer): void {
                   ? `CRITICAL: Install auto-updates: ${au.installHint}`
                   : failCount > 0
                   ? "WARNING: Automatic security updates not fully configured"
-                  : "PASS: Automatic security updates properly configured",
-              }, null, 2))],
+                  : "Automatic security updates properly configured",
+              }))],
             };
           } catch (error) {
             return {
@@ -369,7 +369,7 @@ export function registerPatchManagementTools(server: McpServer): void {
                   distro: da.summary,
                   error: "Package integrity checking not supported on this distribution",
                   recommendation: ic.installHint,
-                }, null, 2))],
+                }))],
               };
             }
 
@@ -437,7 +437,7 @@ export function registerPatchManagementTools(server: McpServer): void {
                 note: changed.length > 0
                   ? "Modified files detected. Review if changes are legitimate (config edits) or suspicious (potential compromise)."
                   : "All checked files match their package checksums.",
-              }, null, 2))],
+              }))],
             };
           } catch (error) {
             const errMsg = error instanceof Error ? error.message : String(error);
@@ -447,7 +447,7 @@ export function registerPatchManagementTools(server: McpServer): void {
                 content: [createTextContent(JSON.stringify({
                   error: `${da?.integrity.toolName ?? "Integrity tool"} not available`,
                   recommendation: da?.integrity.installHint ?? "Install the appropriate integrity checking tool",
-                }, null, 2))],
+                }))],
               };
             }
             return {
@@ -588,7 +588,7 @@ export function registerPatchManagementTools(server: McpServer): void {
                   ...(unmitigated.length > 0 ? [`${unmitigated.length} CPU vulnerabilities not fully mitigated`] : []),
                   ...(installedKernels.length > 3 ? [`Multiple old kernels installed — consider removing unused: ${cleanupHint}`] : []),
                 ],
-              }, null, 2))],
+              }))],
             };
           } catch (error) {
             return {

@@ -15,9 +15,8 @@ import {
   createTextContent,
   createErrorContent,
 } from "../core/parsers.js";
-import { spawnSafe } from "../core/spawn-safe.js";
+import { spawnSafe, type ChildProcess } from "../core/spawn-safe.js";
 import { secureWriteFileSync } from "../core/secure-fs.js";
-import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 
 // ── Suspicious port list for IOC scanning ──────────────────────────────────
@@ -254,10 +253,10 @@ export function registerIncidentResponseTools(server: McpServer): void {
                   timeout: 5000,
                 });
                 const size = sizeResult.stdout.trim();
-                lines.push(`  ✓ ${step.name}: ${step.desc} (${size} bytes)`);
+                lines.push(`  OK ${step.name}: ${step.desc} (${size} bytes)`);
                 successCount++;
               } else {
-                lines.push(`  ✗ ${step.name}: ${step.desc} [FAILED: ${result.stderr.trim()}]`);
+                lines.push(`  FAIL ${step.name}: ${step.desc} [FAILED: ${result.stderr.trim()}]`);
                 failCount++;
               }
             }
@@ -1341,7 +1340,7 @@ export function registerIncidentResponseTools(server: McpServer): void {
                   `Evidence Path: ${evidence_path}`,
                   `Current SHA-256: ${currentHash}`,
                   `Recorded SHA-256: ${recordedHash ?? "NOT FOUND"}`,
-                  `Integrity: ${hashMatch ? "✓ VERIFIED — hashes match" : "✗ MISMATCH — evidence may be tampered"}`,
+                  `Integrity: ${hashMatch ? "OK VERIFIED — hashes match" : "FAIL MISMATCH — evidence may be tampered"}`,
                 ];
 
                 return { content: [createTextContent(lines.join("\n"))] };

@@ -11,6 +11,7 @@ on:
 # This is a repository-level setting, not a CI workflow check.
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   test:
@@ -53,14 +54,19 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      # CICD-007: SAST / static analysis step
-      - name: Static analysis (lint)
-        run: npx tsc --noEmit --strict
-        # Note: For full SAST, configure CodeQL via .github/workflows/codeql.yml
-
       # CICD-008: Run tests with coverage enforcement (thresholds in vitest.config.ts)
       - name: Run tests with coverage
         run: npx vitest run --coverage
+
+      - name: Coverage report on PR
+        if: github.event_name == 'pull_request'
+        uses: davelosert/vitest-coverage-report-action@c0c9b09c93750ee1d8335d14e94ce3d6fc61df50 # v2
+        with:
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
+
+      - name: License compliance check
+        run: npx license-checker --production --failOn 'GPL-3.0;AGPL-3.0'
 
       - name: Build
         run: npm run build

@@ -508,8 +508,8 @@ export function registerAppHardeningTools(server: McpServer): void {
         case "audit": {
           try {
             const sections: string[] = [];
-            sections.push("🔍 Application Security Audit");
-            sections.push("=".repeat(55));
+            sections.push("Application Security Audit");
+            sections.push("");
 
             const apps = await detectRunningApps();
 
@@ -527,10 +527,7 @@ export function registerAppHardeningTools(server: McpServer): void {
             let totalRisks = 0;
 
             for (const app of apps) {
-              const riskIcon = app.profile.riskLevel === "critical" ? "⛔" :
-                app.profile.riskLevel === "high" ? "🔴" : app.profile.riskLevel === "medium" ? "🟡" : "🟢";
-
-              sections.push(`── ${riskIcon} ${app.profile.name} ──`);
+              sections.push(`── ${app.profile.name} ──`);
               sections.push(`  Category:     ${app.profile.category}`);
               sections.push(`  Risk Level:   ${app.profile.riskLevel.toUpperCase()}`);
               sections.push(`  Running as:   ${app.user}`);
@@ -541,19 +538,19 @@ export function registerAppHardeningTools(server: McpServer): void {
                 sections.push(`  Listening Ports:`);
                 for (const lp of app.listenPorts) {
                   const external = !lp.address.includes("127.0.0.1") && !lp.address.includes("::1");
-                  sections.push(`    ${lp.protocol}/${lp.port} on ${lp.address} [${external ? "⚠️ EXTERNAL" : "✅ localhost"}]`);
+                  sections.push(`    ${lp.protocol}/${lp.port} on ${lp.address} [${external ? "WARNING: EXTERNAL" : "localhost"}]`);
                 }
               }
 
               sections.push(`  Security Concerns:`);
               for (const concern of app.profile.securityConcerns) {
-                sections.push(`    ⚠️ ${concern}`);
+                sections.push(`    WARNING: ${concern}`);
                 totalRisks++;
               }
 
               sections.push(`  Top Recommendations:`);
               for (const rec of app.profile.recommendations.slice(0, 3)) {
-                sections.push(`    💡 ${rec}`);
+                sections.push(`    ${rec}`);
               }
               if (app.profile.recommendations.length > 3) {
                 sections.push(`    ... +${app.profile.recommendations.length - 3} more (use action=recommend)`);
@@ -599,26 +596,26 @@ export function registerAppHardeningTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push(`🛡️ Hardening Guide: ${profile.name}`);
-            sections.push("=".repeat(55));
+            sections.push(`Hardening Guide: ${profile.name}`);
+            sections.push("");
             sections.push(`Category: ${profile.category} | Risk: ${profile.riskLevel.toUpperCase()}`);
 
             sections.push("\n── Security Concerns ──");
             for (const concern of profile.securityConcerns) {
-              sections.push(`  ⚠️ ${concern}`);
+              sections.push(`  WARNING: ${concern}`);
             }
 
             sections.push("\n── Network Hardening ──");
             if (profile.requiredPorts.length > 0) {
               sections.push("  Ports that MUST remain open (core functionality):");
               for (const p of profile.requiredPorts) {
-                sections.push(`    ✅ ${p.protocol}/${p.port} — ${p.purpose}`);
+                sections.push(`    ${p.protocol}/${p.port} — ${p.purpose}`);
               }
             }
             if (profile.localhostOnlyPorts.length > 0) {
               sections.push("  Ports to restrict to localhost/LAN:");
               for (const p of profile.localhostOnlyPorts) {
-                sections.push(`    🔒 ${p.protocol}/${p.port} — ${p.purpose}`);
+                sections.push(`    ${p.protocol}/${p.port} — ${p.purpose}`);
               }
             }
             sections.push("  Firewall strategy:");
@@ -645,11 +642,11 @@ export function registerAppHardeningTools(server: McpServer): void {
             sections.push("\n── Filesystem Permissions ──");
             sections.push("  Writable paths (required for operation):");
             for (const p of profile.writablePaths) {
-              sections.push(`    📝 ${p}`);
+              sections.push(`    ${p}`);
             }
             sections.push("  Read-only paths:");
             for (const p of profile.readablePaths) {
-              sections.push(`    📖 ${p}`);
+              sections.push(`    ${p}`);
             }
 
             return { content: [createTextContent(sections.join("\n"))] };
@@ -679,8 +676,8 @@ export function registerAppHardeningTools(server: McpServer): void {
             const effectiveDryRun = dry_run ?? getConfig().dryRun;
             const sections: string[] = [];
 
-            sections.push(`🔥 Firewall Rules for ${profile.name}`);
-            sections.push("=".repeat(55));
+            sections.push(`Firewall Rules for ${profile.name}`);
+            sections.push("");
             sections.push(`LAN CIDR: ${lan_cidr}`);
             sections.push(effectiveDryRun ? "\n[DRY RUN] Rules that would be applied:\n" : "\nApplying rules:\n");
 
@@ -714,7 +711,7 @@ export function registerAppHardeningTools(server: McpServer): void {
                 if (result.exitCode === 0) applied++;
                 else failed++;
               }
-              sections.push(`\n✅ Applied ${applied} rules, ❌ ${failed} failed`);
+              sections.push(`\nApplied ${applied} rules, ${failed} failed`);
             }
 
             sections.push("\n── Additional Recommendations ──");
@@ -779,11 +776,11 @@ export function registerAppHardeningTools(server: McpServer): void {
             }
 
             const sections: string[] = [];
-            sections.push(`🔒 Systemd Hardening: ${profile.name}`);
-            sections.push("=".repeat(55));
+            sections.push(`Systemd Hardening: ${profile.name}`);
+            sections.push("");
 
             if (!svcName) {
-              sections.push(`\n⚠️ No running systemd service found for ${profile.name}.`);
+              sections.push(`\nWARNING: No running systemd service found for ${profile.name}.`);
               sections.push("Provide service_name manually if the service uses a different name.");
               sections.push("\nRecommended override content for when the service is configured:\n");
             } else {
@@ -821,11 +818,11 @@ export function registerAppHardeningTools(server: McpServer): void {
 
               if (writeResult.exitCode === 0) {
                 await executeCommand({ toolName: "app_hardening", command: "sudo", args: ["systemctl", "daemon-reload"], timeout: 10000 });
-                sections.push(`\n✅ Override written to ${overridePath}`);
-                sections.push("✅ systemd daemon reloaded");
-                sections.push(`\n⚠️ Restart the service to apply: sudo systemctl restart ${svcName}`);
+                sections.push(`\nOverride written to ${overridePath}`);
+                sections.push("systemd daemon reloaded");
+                sections.push(`\nRestart the service to apply: sudo systemctl restart ${svcName}`);
               } else {
-                sections.push(`\n❌ Failed to write override: ${writeResult.stderr}`);
+                sections.push(`\nFailed to write override: ${writeResult.stderr}`);
               }
             }
 
