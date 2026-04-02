@@ -1,6 +1,6 @@
 {
   "name": "defense-mcp-server",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Defense MCP Server — 31 defensive security tools with 250+ actions for system hardening, compliance, and threat detection on Linux",
   "type": "module",
   "main": "build/index.js",
