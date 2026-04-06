@@ -124,11 +124,6 @@ process.on("unhandledRejection", (reason) => {
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 async function main() {
-  const server = new McpServer({
-    name: "defense-mcp-server",
-    version: VERSION,
-  });
-
   // ── Phase 1: Dependency Validation & Auto-Install ────────────────────────
   //
   // Before registering tools, validate that all required system binaries
@@ -268,65 +263,78 @@ async function main() {
     // Non-fatal — third-party check failure must not block startup
   }
 
-  // Wrap server with pre-flight middleware
-  const wrappedServer = createPreflightServer(server);
+  // ── Phase 2: Tool registration ────────────────────────────────────────────
+  //
+  // registerAllTools() creates a fresh McpServer, wraps it with pre-flight
+  // middleware, and registers every tool module. For stdio we call it once;
+  // for HTTP we call it per session so each client gets its own instance
+  // (the MCP SDK only allows one transport per McpServer).
 
-  // ── Phase 2: Register all defensive tool modules (with error isolation) ──
+  function registerAllTools(): { server: McpServer; registered: number; failed: number; failedModules: string[] } {
+    const srv = new McpServer({
+      name: "defense-mcp-server",
+      version: VERSION,
+    });
+    const wrapped = createPreflightServer(srv);
 
-  let registered = 0;
-  let failed = 0;
-  const failedModules: string[] = [];
+    let registered = 0;
+    let failed = 0;
+    const failedModules: string[] = [];
 
-  function safeRegister(name: string, fn: (server: McpServer) => void) {
-    try {
-      fn(wrappedServer);
-      registered++;
-    } catch (err) {
-      failed++;
-      failedModules.push(name);
-      console.error(`[startup] ⚠ Failed to register ${name} tools: ${err instanceof Error ? err.message : err}`);
+    function safeRegister(name: string, fn: (s: McpServer) => void) {
+      try {
+        fn(wrapped);
+        registered++;
+      } catch (err) {
+        failed++;
+        failedModules.push(name);
+        console.error(`[startup] ⚠ Failed to register ${name} tools: ${err instanceof Error ? err.message : err}`);
+      }
     }
+
+    // Sudo privilege management (must be registered first — prerequisite for other tools)
+    safeRegister("sudo-management", registerSudoManagementTools);
+
+    // Original tool modules
+    safeRegister("firewall", registerFirewallTools);
+    safeRegister("hardening", registerHardeningTools);
+    safeRegister("integrity", registerIntegrityTools);
+    safeRegister("logging", registerLoggingTools);
+    safeRegister("network-defense", registerNetworkDefenseTools);
+    safeRegister("compliance", registerComplianceTools);
+    safeRegister("malware", registerMalwareTools);
+    safeRegister("backup", registerBackupTools);
+    safeRegister("access-control", registerAccessControlTools);
+    safeRegister("encryption", registerEncryptionTools);
+    safeRegister("container-security", registerContainerSecurityTools);
+    safeRegister("meta", registerMetaTools);
+    safeRegister("patch-management", registerPatchManagementTools);
+    safeRegister("secrets", registerSecretsTools);
+    safeRegister("incident-response", registerIncidentResponseTools);
+
+    // New tool modules
+    safeRegister("supply-chain-security", registerSupplyChainSecurityTools);
+    safeRegister("zero-trust-network", registerZeroTrustNetworkTools);
+    safeRegister("ebpf-security", registerEbpfSecurityTools);
+    safeRegister("app-hardening", registerAppHardeningTools);
+
+    // v0.6.0 tool modules
+    safeRegister("api-security", registerApiSecurityTools);
+    safeRegister("cloud-security", registerCloudSecurityTools);
+    safeRegister("deception", registerDeceptionTools);
+    safeRegister("dns-security", registerDnsSecurityTools);
+    safeRegister("process-security", registerProcessSecurityTools);
+    safeRegister("threat-intel", registerThreatIntelTools);
+    safeRegister("vulnerability-management", registerVulnerabilityManagementTools);
+    safeRegister("waf", registerWafTools);
+    safeRegister("wireless-security", registerWirelessSecurityTools);
+
+    return { server: srv, registered, failed, failedModules };
   }
 
-  // Sudo privilege management (must be registered first — prerequisite for other tools)
-  safeRegister("sudo-management", registerSudoManagementTools);
-
-  // Original tool modules
-  safeRegister("firewall", registerFirewallTools);
-  safeRegister("hardening", registerHardeningTools);
-  safeRegister("integrity", registerIntegrityTools);
-  safeRegister("logging", registerLoggingTools);
-  safeRegister("network-defense", registerNetworkDefenseTools);
-  safeRegister("compliance", registerComplianceTools);
-  safeRegister("malware", registerMalwareTools);
-  safeRegister("backup", registerBackupTools);
-  safeRegister("access-control", registerAccessControlTools);
-  safeRegister("encryption", registerEncryptionTools);
-  safeRegister("container-security", registerContainerSecurityTools);
-  safeRegister("meta", registerMetaTools);
-  safeRegister("patch-management", registerPatchManagementTools);
-  safeRegister("secrets", registerSecretsTools);
-  safeRegister("incident-response", registerIncidentResponseTools);
-
-  // New tool modules
-  safeRegister("supply-chain-security", registerSupplyChainSecurityTools);
-  safeRegister("zero-trust-network", registerZeroTrustNetworkTools);
-  safeRegister("ebpf-security", registerEbpfSecurityTools);
-  safeRegister("app-hardening", registerAppHardeningTools);
-
-  // v0.6.0 tool modules
-  safeRegister("api-security", registerApiSecurityTools);
-  safeRegister("cloud-security", registerCloudSecurityTools);
-  safeRegister("deception", registerDeceptionTools);
-  safeRegister("dns-security", registerDnsSecurityTools);
-  safeRegister("process-security", registerProcessSecurityTools);
-  safeRegister("threat-intel", registerThreatIntelTools);
-  safeRegister("vulnerability-management", registerVulnerabilityManagementTools);
-  safeRegister("waf", registerWafTools);
-  safeRegister("wireless-security", registerWirelessSecurityTools);
-
-  // Fail hard if no modules loaded at all
-  if (registered === 0) {
+  // Validate that tool registration works (fail-fast on startup)
+  const initial = registerAllTools();
+  if (initial.registered === 0) {
     throw new Error("No tool modules loaded — server cannot start");
   }
 
@@ -334,11 +342,12 @@ async function main() {
 
   const transportMode = process.env.MCP_TRANSPORT ?? "stdio";
   const registrationMsg =
-    `Registered ${registered} tool modules with consolidated defensive security tools` +
-    `${failed > 0 ? ` (${failed} failed: ${failedModules.join(", ")})` : ""}`;
+    `Registered ${initial.registered} tool modules with consolidated defensive security tools` +
+    `${initial.failed > 0 ? ` (${initial.failed} failed: ${initial.failedModules.join(", ")})` : ""}`;
 
   if (transportMode === "http") {
     const port = parseInt(process.env.MCP_PORT ?? "3100", 10);
+    const apiKey = process.env.MCP_API_KEY ?? "";
 
     // Server card for Smithery discovery
     const serverCard = {
@@ -347,7 +356,7 @@ async function main() {
         version: VERSION,
         description: "31 defensive security tools (250+ actions) for Linux system hardening, compliance, and threat detection",
       },
-      authentication: { required: false },
+      authentication: { required: !!apiKey },
       tools: [
         { name: "access_control", description: "Access control: SSH, PAM, sudo, user audit, password policy, shell restriction" },
         { name: "api_security", description: "API security: local API discovery, auth audit, rate limiting, TLS verify, CORS check" },
@@ -385,17 +394,17 @@ async function main() {
       prompts: [],
     };
 
-    // Track active transports by session ID
-    const sessions = new Map<string, StreamableHTTPServerTransport>();
+    // Track active sessions: each gets its own McpServer + transport pair
+    const sessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
 
     const httpServer = createServer(async (req, res) => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const pathname = url.pathname;
 
-      // CORS for Smithery Gateway
+      // CORS headers
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id, smithery-*");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id, smithery-*");
       res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
 
       if (req.method === "OPTIONS") {
@@ -403,18 +412,29 @@ async function main() {
         return;
       }
 
-      // Health check
+      // Health check (unauthenticated)
       if (req.method === "GET" && pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", version: VERSION, tools: registered }));
+        res.end(JSON.stringify({ status: "ok", version: VERSION, tools: initial.registered }));
         return;
       }
 
-      // Smithery server card
+      // Smithery server card (unauthenticated)
       if (req.method === "GET" && pathname === "/.well-known/mcp/server-card.json") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(serverCard));
         return;
+      }
+
+      // API key authentication (when MCP_API_KEY is set)
+      if (apiKey) {
+        const authHeader = req.headers["authorization"] ?? "";
+        const provided = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+        if (provided !== apiKey) {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Unauthorized", message: "Valid Bearer token required" }));
+          return;
+        }
       }
 
       // MCP Streamable HTTP endpoint
@@ -422,32 +442,33 @@ async function main() {
         const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
         if (req.method === "GET" || req.method === "POST") {
-          // Reuse existing session or create new one
-          let transport = sessionId ? sessions.get(sessionId) : undefined;
-          if (!transport) {
-            transport = new StreamableHTTPServerTransport({
+          // Reuse existing session or create a new McpServer + transport pair
+          let session = sessionId ? sessions.get(sessionId) : undefined;
+          if (!session) {
+            const { server: sessionServer } = registerAllTools();
+            const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: () => crypto.randomUUID(),
             });
-            await server.connect(transport);
-            // Store session after first request so we can retrieve it by ID
+            await sessionServer.connect(transport);
+            session = { server: sessionServer, transport };
             transport.onclose = () => {
-              const sid = [...sessions.entries()].find(([, t]) => t === transport)?.[0];
+              const sid = [...sessions.entries()].find(([, s]) => s.transport === transport)?.[0];
               if (sid) sessions.delete(sid);
             };
           }
-          await transport.handleRequest(req, res);
+          await session.transport.handleRequest(req, res);
           // Capture session ID from response headers if new session
           if (!sessionId) {
             const newSid = res.getHeader("mcp-session-id") as string | undefined;
-            if (newSid && transport) sessions.set(newSid, transport);
+            if (newSid && session) sessions.set(newSid, session);
           }
           return;
         }
 
         if (req.method === "DELETE") {
           if (sessionId && sessions.has(sessionId)) {
-            const transport = sessions.get(sessionId)!;
-            await transport.handleRequest(req, res);
+            const session = sessions.get(sessionId)!;
+            await session.transport.handleRequest(req, res);
             sessions.delete(sessionId);
           } else {
             res.writeHead(404).end("Session not found");
@@ -462,13 +483,15 @@ async function main() {
     httpServer.listen(port, () => {
       console.error(`Defense MCP Server v${VERSION} running on HTTP port ${port}`);
       console.error(registrationMsg);
+      console.error(`[startup] Authentication: ${apiKey ? "ENABLED (MCP_API_KEY)" : "DISABLED — set MCP_API_KEY to require Bearer auth"}`);
       console.error("[startup] MCP endpoint: http://0.0.0.0:" + port + "/mcp");
       console.error("[startup] Health check: http://0.0.0.0:" + port + "/health");
       console.error("[startup] Server card: http://0.0.0.0:" + port + "/.well-known/mcp/server-card.json");
     });
   } else {
+    // stdio mode: single server instance, single transport
     const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await initial.server.connect(transport);
     console.error(`Defense MCP Server v${VERSION} running on stdio`);
     console.error(registrationMsg);
   }
