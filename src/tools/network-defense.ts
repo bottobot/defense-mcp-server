@@ -725,7 +725,7 @@ export function registerNetworkDefenseTools(server: McpServer): void {
               for (const block of blocks) {
                 if (block.includes("vlan")) {
                   const ifMatch = /^\d+:\s+(\S+?)(?:@(\S+))?:/.exec(block);
-                  const vlanIdMatch = /vlan.*?id\s+(\d+)/i.exec(block);
+                  const vlanIdMatch = /\bid\s+(\d+)/i.exec(block);
                   if (ifMatch && vlanIdMatch) {
                     vlans.push({
                       interface: ifMatch[1],

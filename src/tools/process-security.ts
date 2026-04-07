@@ -11,6 +11,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { runCommand } from "../core/run-command.js";
+
+/** Escape user input for safe use in RegExp (prevents ReDoS). */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 import {
   createTextContent,
   createErrorContent,
@@ -155,7 +161,7 @@ async function auditRunning(
 
   // Filter by name pattern
   if (filter) {
-    const pattern = new RegExp(filter, "i");
+    const pattern = new RegExp(escapeRegExp(filter), "i");
     processes = processes.filter((p) => pattern.test(p.command));
   }
 
@@ -324,7 +330,7 @@ async function checkCapabilities(
       if (filter) {
         const cmdResult = await runCommand("cat", [`/proc/${checkPid}/comm`]);
         if (cmdResult.exitCode !== 0) continue;
-        const pattern = new RegExp(filter, "i");
+        const pattern = new RegExp(escapeRegExp(filter), "i");
         if (!pattern.test(cmdResult.stdout.trim())) continue;
       }
 
@@ -505,7 +511,7 @@ async function detectAnomalies(
     processList = processList.filter((p) => p.pid === pid);
   }
   if (filter) {
-    const pattern = new RegExp(filter, "i");
+    const pattern = new RegExp(escapeRegExp(filter), "i");
     processList = processList.filter((p) => pattern.test(p.comm));
   }
 

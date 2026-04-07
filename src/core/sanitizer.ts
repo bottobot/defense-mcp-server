@@ -19,6 +19,54 @@ const CONTROL_CHAR_RE = /[\x00-\x08\x0e-\x1f\x7f]/;
  */
 const PATH_TRAVERSAL_RE = /(^|[\/\\])\.\.([\/\\]|$)/;
 
+/** Safe IPv4 validation without regex backtracking. */
+function isValidIPv4(input: string): boolean {
+  const [ipPart, cidrPart, ...extra] = input.split("/");
+  if (extra.length > 0) return false;
+  const octets = ipPart.split(".");
+  if (octets.length !== 4) return false;
+  for (const o of octets) {
+    if (!/^\d{1,3}$/.test(o)) return false;
+    const n = parseInt(o, 10);
+    if (n < 0 || n > 255) return false;
+  }
+  if (cidrPart !== undefined) {
+    if (!/^\d{1,2}$/.test(cidrPart)) return false;
+    const prefix = parseInt(cidrPart, 10);
+    if (prefix < 0 || prefix > 32) return false;
+  }
+  return true;
+}
+
+/** Safe IPv6 validation without regex backtracking. */
+function isValidIPv6(input: string): boolean {
+  // Strip scope ID (e.g. %eth0) and CIDR prefix
+  let body = input;
+  if (body.includes("%")) body = body.split("%")[0];
+  let cidr: string | undefined;
+  if (body.includes("/")) {
+    const parts = body.split("/");
+    if (parts.length !== 2) return false;
+    body = parts[0];
+    cidr = parts[1];
+  }
+  if (!body.includes(":")) return false;
+  const segments = body.split(":");
+  if (segments.length < 3 || segments.length > 8) return false;
+  const hasDoubleColon = input.includes("::");
+  if (hasDoubleColon && body.split("::").length > 2) return false;
+  for (const seg of segments) {
+    if (seg.length > 4) return false;
+    if (seg !== "" && !/^[0-9a-fA-F]{1,4}$/.test(seg)) return false;
+  }
+  if (cidr !== undefined) {
+    if (!/^\d{1,3}$/.test(cidr)) return false;
+    const prefix = parseInt(cidr, 10);
+    if (prefix < 0 || prefix > 128) return false;
+  }
+  return true;
+}
+
 /**
  * Validates a target string as hostname, IPv4, IPv6, or CIDR notation.
  * Throws on invalid input.
@@ -38,38 +86,33 @@ export function validateTarget(target: string, _config?: DefenseConfig): string 
     throw new Error(`Target contains control characters: ${trimmed}`);
   }
 
-  // IPv4 with optional CIDR
-  const ipv4Re =
-    /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
-  // IPv6 (simplified)
-  const ipv6Re =
-    /^[0-9a-fA-F:]+(%[a-zA-Z0-9]+)?(\/\d{1,3})?$/;
   // Hostname
   const hostnameRe =
     /^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,253}[a-zA-Z0-9])?$/;
 
-  if (
-    !ipv4Re.test(trimmed) &&
-    !ipv6Re.test(trimmed) &&
-    !hostnameRe.test(trimmed)
-  ) {
-    throw new Error(`Invalid target format: ${trimmed}`);
-  }
-
-  // Validate IPv4 octets if it looks like IPv4
-  if (ipv4Re.test(trimmed)) {
+  // Check if it looks like an IPv4 address (has dots and digits) for specific errors
+  const looksLikeIPv4 = /^\d+\.\d+\.\d+\.\d+(\/\d+)?$/.test(trimmed);
+  if (looksLikeIPv4 && !isValidIPv4(trimmed)) {
     const ipPart = trimmed.split("/")[0];
     const octets = ipPart.split(".").map(Number);
     if (octets.some((o) => o < 0 || o > 255)) {
       throw new Error(`Invalid IPv4 address: ${trimmed}`);
     }
-    // Validate CIDR prefix
     if (trimmed.includes("/")) {
       const prefix = parseInt(trimmed.split("/")[1], 10);
       if (prefix < 0 || prefix > 32) {
         throw new Error(`Invalid CIDR prefix: ${trimmed}`);
       }
     }
+    throw new Error(`Invalid target format: ${trimmed}`);
+  }
+
+  if (
+    !isValidIPv4(trimmed) &&
+    !isValidIPv6(trimmed) &&
+    !hostnameRe.test(trimmed)
+  ) {
+    throw new Error(`Invalid target format: ${trimmed}`);
   }
 
   return trimmed;
@@ -104,13 +147,11 @@ export function validatePortRange(range: string): string {
     );
   }
 
-  const portRangeRe = /^(\d{1,5}(-\d{1,5})?,)*\d{1,5}(-\d{1,5})?$/;
-  if (!portRangeRe.test(trimmed)) {
+  // Validate individual port numbers and ranges (split-based, no regex backtracking)
+  const parts = trimmed.split(",");
+  if (parts.some(p => !/^\d{1,5}(-\d{1,5})?$/.test(p))) {
     throw new Error(`Invalid port range format: ${trimmed}`);
   }
-
-  // Validate individual port numbers and ranges
-  const parts = trimmed.split(",");
   for (const part of parts) {
     if (part.includes("-")) {
       const [startStr, endStr] = part.split("-");

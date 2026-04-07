@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { createRequire } from "node:module";
 
 // ── Dynamic version from package.json ────────────────────────────────────────
@@ -430,7 +431,9 @@ async function main() {
       if (apiKey) {
         const authHeader = req.headers["authorization"] ?? "";
         const provided = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-        if (provided !== apiKey) {
+        const a = Buffer.from(provided);
+        const b = Buffer.from(apiKey);
+        if (a.length !== b.length || !timingSafeEqual(a, b)) {
           res.writeHead(401, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Unauthorized", message: "Valid Bearer token required" }));
           return;
